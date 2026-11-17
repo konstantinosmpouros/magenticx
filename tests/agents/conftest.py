@@ -427,6 +427,26 @@ class FakeSkillStore:
                 "admitted_count": sum(1 for e in entries if e.refusal is None),
             }
 
+    async def reconcile_platform_skills(self, names, refusal):
+        names = set(names)
+
+        def covered(row):
+            return row["skill_id"] in names or row.get("name") in names
+
+        for key, row in self.catalogue.items():
+            if covered(row) and row.get("refusal") != refusal:
+                row["refusal"] = refusal
+            if row.get("refusal") == refusal:
+                self.manifests.pop(key, None)
+            if row.get("refusal") == refusal and not covered(row) and key[0] in self.sources:
+                self.sources[key[0]]["source_ref"] = None
+        return [
+            {"source_id": k[0], "skill_id": k[1], "content_ref": row.get("content_ref"),
+             "source_ref": row.get("source_ref")}
+            for k, row in sorted(self.catalogue.items())
+            if row.get("refusal") == refusal and row.get("withdrawn_at") is None and covered(row)
+        ]
+
     async def record_source_error(self, source_id, reason):
         state = self.sources.setdefault(source_id, {"source_ref": "", "skill_count": 0, "admitted_count": 0})
         state["last_error"] = reason

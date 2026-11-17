@@ -56,6 +56,7 @@ from harness.conversation_files import ConversationFiles, ConversationFileStore
 from harness.filesystem import (
     build_workspace_backend,
     filesystem_middleware,
+    layout,
     resolve_branch_thread_id,
     workspace_write_deny,
 )
@@ -305,6 +306,7 @@ class DeepAgent(BaseAgent, ABC):
             reference_files=self.reference_files,
             default_skills_dir=self.default_skills_dir,
             declared_skills=self.declared_skills,
+            platform_skills_dir=self.platform_skills_dir,
             # The shared scratch store is keyed by the branch (plan 41 §3.7): a
             # task run (its own thread) reads its root's ``branch_thread_id``
             # from the context, so the whole tree shares one scratch.
@@ -621,6 +623,7 @@ class DeepAgent(BaseAgent, ABC):
             ),
             has_reference=self._has_reference,
             has_default_skills=self._has_default_skills,
+            has_platform_skills=self.platform_skills_dir is not None,
             search_past_convs=bool(ctx.get("search_past_convs")),
             # The same registry SourcesMiddleware reads: the citing rule is
             # stated only when a tool will really hand out source ids.
@@ -703,6 +706,7 @@ class DeepAgent(BaseAgent, ABC):
         permissions = workspace_write_deny(
             include_reference=self._has_reference,
             include_default_skills=self._has_default_skills,
+            include_platform_skills=self.platform_skills_dir is not None,
         ) + command_permissions(self.command_spec)
 
         # A background task's run (plan 41) builds its node of the tree, from
@@ -1022,11 +1026,24 @@ class DeepAgent(BaseAgent, ABC):
         the path otherwise, and a bare ``/skills/`` derives ``Skills`` — rendering
         as the duplicative "**Skills Skills**" its own docs warn about.
         """
-        sources: list[str | tuple[str, str]] = [("/skills/", "Your")]
+        sources: list[str | tuple[str, str]] = []
+        if self.platform_skills_dir is not None:
+            # First = lowest precedence: the platform's document skills (plan
+            # 44) are there for every agent, but an agent's own or a user's
+            # skill of the same name wins.
+            sources.append(("/platform_skills/", "Platform"))
+        sources.append(("/skills/", "Your"))
         if self._has_default_skills:
             sources.append(("/default_skills/", "Built-in"))
         return sources
 
+
+    @property
+    def platform_skills_dir(self) -> Path | None:
+        """The platform skills folder this run mounts (plan 44), or ``None``.
+        One answer for the mount, the write-deny rule, the skills source and
+        the prompt line."""
+        return layout.platform_skills_root()
 
     @property
     def _has_default_skills(self) -> bool:

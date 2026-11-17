@@ -65,7 +65,7 @@ sequenceDiagram
 | Identity | `--user 1000:1000`, `--cap-drop ALL`, `no-new-privileges`, env `PATH`/`HOME`/`LANG` only |
 | Limits | 60 s default / 300 s max, 1 GiB memory (no swap), 1 CPU, 128 processes, 64 KiB per output stream returned, 100 MiB disk per call |
 | Files | ≤ 100 files and 20 MiB in; ≤ 25 MiB per file and 50 MiB out; only new or changed regular files return (symlinks, FIFOs and devices are skipped and logged) |
-| Libraries | Python 3.12 + pandas, numpy, openpyxl, matplotlib, python-docx, python-pptx, reportlab, Pillow; no `pip install` |
+| Libraries | Python 3.12 + pandas, numpy, openpyxl, matplotlib, python-docx, python-pptx, reportlab, pypdf, pdfplumber, Pillow; Node with docx, pptxgenjs, pdf-lib; LibreOffice headless (render to PDF, recalculate formulas), pandoc, qpdf, poppler; fonts with Greek. Since sandbox v0.1.2 (`sandbox/box/toolchain.sh`); no `pip install` |
 
 Kill reasons come back in plain words: `timeout`, `memory`, `output_limit`, `disk_limit`, `error`. Every call writes one `sandbox_exec` audit record (hashed user id, command sha256 and an 80-character prefix, exit, duration, kill reason, byte and file counts), never output or file content.
 

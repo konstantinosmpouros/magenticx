@@ -765,6 +765,52 @@ class SkillStore(BaseStore):
                             (source_id, source_ref, len(entries), admitted),
                         )
 
+    async def reconcile_platform_skills(
+        self, names: Iterable[str], refusal: str
+    ) -> list[dict[str, Any]]:
+        """Keep the catalogue in line with the platform skills (plan 44).
+
+        A remote row whose id or name is a platform skill is refused with
+        ``refusal`` and its file manifest dropped, so it can neither be found
+        nor added: the platform's local copy is the only one. A row refused this
+        way whose name is no longer a platform skill makes its source re-sync
+        from scratch on the next pass (its ``source_ref`` is cleared), which
+        re-admits it on its own merits. Runs every pass, since a source whose
+        upstream did not move is otherwise skipped as "unchanged".
+
+        Returns the live platform-covered rows (``source_id``, ``skill_id``,
+        ``content_ref``, ``source_ref``), for the update-available check.
+        """
+        names = list(names)
+        async with self._pool.connection() as conn:
+            async with conn.transaction():
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "UPDATE skill_catalogue SET refusal = %s, updated_at = now() "
+                        "WHERE (skill_id = ANY(%s) OR name = ANY(%s)) "
+                        "AND refusal IS DISTINCT FROM %s",
+                        (refusal, names, names, refusal),
+                    )
+                    await cur.execute(
+                        "DELETE FROM remote_skill_manifest m USING skill_catalogue c "
+                        "WHERE m.source_id = c.source_id AND m.skill_id = c.skill_id "
+                        "AND c.refusal = %s",
+                        (refusal,),
+                    )
+                    await cur.execute(
+                        "UPDATE remote_skill_sources SET source_ref = NULL "
+                        "WHERE source_id IN (SELECT source_id FROM skill_catalogue "
+                        "WHERE refusal = %s AND NOT (skill_id = ANY(%s) OR name = ANY(%s)))",
+                        (refusal, names, names),
+                    )
+                    await cur.execute(
+                        "SELECT source_id, skill_id, content_ref, source_ref FROM skill_catalogue "
+                        "WHERE refusal = %s AND withdrawn_at IS NULL "
+                        "AND (skill_id = ANY(%s) OR name = ANY(%s)) ORDER BY source_id, skill_id",
+                        (refusal, names, names),
+                    )
+                    return list(await cur.fetchall())
+
     async def record_source_error(self, source_id: str, reason: str) -> None:
         """Note a failed pass without touching the catalogue.
 

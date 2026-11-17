@@ -39,6 +39,11 @@ _REFERENCE = """\
 _DEFAULT_SKILLS = """\
 - `/default_skills/` — the skills you ship with. **Read-only.**"""
 
+_PLATFORM_SKILLS = """\
+- `/platform_skills/` — built-in skills for Word, Excel, PowerPoint and PDF
+  files. **Read-only.** The sandbox has the same files at the same path, so run
+  their scripts as `/platform_skills/<skill>/scripts/…`."""
+
 _SKILLS = """\
 - `/skills/` — skills the user enabled for you. **Read-only.**"""
 
@@ -58,6 +63,8 @@ def filesystem_prompt(context: PromptContext) -> str:
         lines.append(_REFERENCE)
     if context.has_default_skills:
         lines.append(_DEFAULT_SKILLS)
+    if context.has_platform_skills:
+        lines.append(_PLATFORM_SKILLS)
     lines.append(_SKILLS)
 
     if not context.has_conversation and len(lines) == 1:

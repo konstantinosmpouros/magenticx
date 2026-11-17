@@ -224,6 +224,7 @@ Skills reach an agent through two mounts, and the split is by *when the content 
 
 | Mount | Tier | Backed by | Writable |
 | --- | --- | --- | --- |
+| `/platform_skills/` (every deep agent) | platform | the image, at `harness/skill_registry/platform_skills/` (plan 44); the sandbox box has the same files at the same path | no |
 | `/default_skills/` (platform agent) | ① | the image, at `global/agents/<slug>/skills/` | no |
 | `/default_skills/` (user-authored agent) | ① | `agent_runtime`, resolved from the spec's `skills:` against the author's pool | no |
 | `/skills/` | ② | `agent_runtime`, the `agent_skills` rows for this (user, agent) | no |

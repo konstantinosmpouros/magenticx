@@ -361,14 +361,15 @@ skills/
         helpers.py       ← optional Python helpers (not auto-loaded)
 ```
 
-`load_skills()` returns the **skill sources** for this run, in precedence order, passed to `create_deep_agent(skills=...)` and consumed by `SkillsMiddleware`. There are two tiers:
+`load_skills()` returns the **skill sources** for this run, in precedence order, passed to `create_deep_agent(skills=...)` and consumed by `SkillsMiddleware`. There are three tiers:
 
 | Tier | Route | Contents | Writable? |
 | --- | --- | --- | --- |
+| platform | `/platform_skills/` | every deep agent's document skills (docx, xlsx, pptx, pdf), from `harness/skill_registry/platform_skills/` in the image; first, so the lowest precedence | no |
 | ② user-enabled | `/skills/` | what the user turned on for this (user, agent) pair — the `agent_skills` rows in `agent_runtime` | no |
 | ① built-in | `/default_skills/` | the skills the agent **ships with**, from its spec's `skills:` | no |
 
-Each source is a `(route, label)` tuple; the label renders as `**<label> Skills**` in the system prompt (`Your` / `Built-in`). Pass explicit labels — deepagents otherwise derives one from the path, and a bare `/skills/` derives `Skills`, rendering as the duplicative "Skills Skills" its own docs warn about.
+Each source is a `(route, label)` tuple; the label renders as `**<label> Skills**` in the system prompt (`Platform` / `Your` / `Built-in`). The platform tier (plan 44) follows one answer, `DeepAgent.platform_skills_dir` (`PLATFORM_SKILLS_ENABLED` and the folder present): the mount, its write-deny rule, the source and the prompt line all derive from it. The sandbox box carries the same files at the same path, so a `SKILL.md`'s `python3 /platform_skills/<name>/scripts/…` runs in `execute` as written; how they are built, pinned and updated is in [remote-skills](../flows/remote-skills.md#platform-skills). Pass explicit labels — deepagents otherwise derives one from the path, and a bare `/skills/` derives `Skills`, rendering as the duplicative "Skills Skills" its own docs warn about.
 
 **Order is load-bearing.** deepagents merges sources left to right and *later sources win* on a name clash (`all_skills[skill["name"]] = skill` in `before_agent`), so the defaults go **last**: a user cannot neutralise a skill the agent ships with by putting a same-named one in their pool. Combined with the read-only mount, "the user may add skills but never remove the built-in ones" is **structural** — the enable/disable endpoint only ever touches `/skills/`, so no code path can drop a default.
 

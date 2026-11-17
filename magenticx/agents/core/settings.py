@@ -536,6 +536,17 @@ class FilesystemSettings(BaseSettings):
         validation_alias="MAGENTICX_GLOBAL_ROOT",
     )
 
+    # Platform skills (plan 44): skills every deep agent gets, shipped in the
+    # image (agents/harness/skill_registry/platform_skills/<name>/, Anthropic's document skills) and
+    # mounted read-only at /platform_skills/. The sandbox box carries the same
+    # tree at the same path, so a skill's scripts run there as written. The
+    # switch turns the tier off for every agent (the folder stays in the image).
+    platform_skills_root: Path = Field(
+        Path(__file__).resolve().parents[1] / "harness" / "skill_registry" / "platform_skills",
+        validation_alias="PLATFORM_SKILLS_ROOT",
+    )
+    platform_skills_enabled: bool = Field(True, validation_alias="PLATFORM_SKILLS_ENABLED")
+
     # Ceiling on an image handed to the model by `view_image`. Unlike the stream
     # preview this is the *model's* copy, so the cap guards context cost and a
     # decode of something pathological — not display size.

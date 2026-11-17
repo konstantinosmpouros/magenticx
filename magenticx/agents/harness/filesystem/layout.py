@@ -69,6 +69,15 @@ def global_agent_default_skills_root(agent_slug: str) -> Path:
     return global_agent_dir(agent_slug) / "skills"
 
 
+def platform_skills_root() -> Path | None:
+    """The skills every deep agent gets (plan 44), or ``None`` when the tier is
+    switched off or the folder is missing. Build-time content in the image,
+    mounted read-only at ``/platform_skills/``."""
+    cfg = settings.filesystem
+    root = cfg.platform_skills_root
+    return root if cfg.platform_skills_enabled and root.is_dir() else None
+
+
 def global_skills_root() -> Path:
     """The admin-curated skills catalogue (``<category>/<skill>/SKILL.md``)."""
     return global_root() / "skills"
@@ -80,5 +89,6 @@ __all__ = [
     "global_agents_root",
     "global_root",
     "global_skills_root",
+    "platform_skills_root",
     "safe_segment",
 ]

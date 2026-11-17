@@ -474,6 +474,8 @@ A model newer than the pinned `langchain-openai` needs both facts stated. An unk
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `MAGENTICX_GLOBAL_ROOT` | `/var/magenticx/global` | The global plane on the `magenticx_data` volume: built-in agent definitions and the skills catalogue (build-time content). |
+| `PLATFORM_SKILLS_ENABLED` | `true` | The platform skills tier (plan 44): Anthropic's document skills (docx, xlsx, pptx, pdf), mounted read-only at `/platform_skills/` in every deep agent. `false` drops the mount, and the next remote sync re-admits the catalogue copies it had refused. |
+| `PLATFORM_SKILLS_ROOT` | `harness/skill_registry/platform_skills` (in the image) | Where the platform skills are read from. Tests point it elsewhere; leave it in deployments. |
 | `CONVERSATION_FILE_MAX_BYTES` | `104857600` (100 MB) | Largest single conversation file (plan 36). A technical safety limit — one file is held in memory to encrypt and write it — not a quota: there is none, and no TTL. An over-cap `write_file`/`edit_file` returns an error the model can act on. |
 | `CONVERSATION_INPUT_CACHE_BYTES` | `134217728` (128 MB) | Process-wide cache of upload bytes read from the bridge for `/conversation/input/`, keyed by content hash. `0` disables it. |
 | `BRIDGE_CONVERSATIONS_PATH` | `/v1/internal/conversations` | The bridge's internal routes behind `/conversation/input/` (on `DIALOGUE_BRIDGE_URL`). |

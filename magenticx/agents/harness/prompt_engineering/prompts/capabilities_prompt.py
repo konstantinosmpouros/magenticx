@@ -63,7 +63,10 @@ _SANDBOX = """\
     you see; write every result to `/conversation/output/` — those files come
     back to the conversation (then `present_artifact` them). Nothing else persists.
   - Python 3.12 with pandas, numpy, openpyxl, matplotlib, python-docx,
-    python-pptx, reportlab and Pillow. No network and no `pip install`.
+    python-pptx, reportlab, pypdf, pdfplumber and Pillow; Node with docx,
+    pptxgenjs and pdf-lib; LibreOffice (`soffice --headless`), pandoc, qpdf
+    and poppler (`pdftoppm`, `pdftotext`). Render what you made to PDF and an
+    image to check it before you present it. No network and no `pip install`.
   - Limits: about a minute per call by default, 1 GB of memory."""
 
 #: Platform-wide, but only meaningful to an agent that can delegate: the AG-UI

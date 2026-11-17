@@ -22,7 +22,7 @@ import hashlib
 import json
 import random
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, Optional
 from urllib.parse import urljoin
 
@@ -50,6 +50,7 @@ from harness.skill_registry.remote.sources import (
     needs_licence_file,
     risk_refusal,
 )
+from harness.skill_registry.platform import PLATFORM_REFUSAL, platform_skills
 from harness.skill_registry.store import CatalogueEntry, SkillStore
 
 logger = get_logger(__name__)
@@ -63,6 +64,9 @@ _STRUCTURAL = frozenset({
     "invalid name", "contains a symlink", "contains a submodule", "too many files",
     "file too large", "skill too large", "unsafe path", "path too deep",
     "contains an executable", "no SKILL.md",
+    # The platform ships a skill of this name (plan 44): decided by name, so it
+    # is re-checked every pass and never cached against a blob.
+    PLATFORM_REFUSAL,
 })
 
 
@@ -280,8 +284,19 @@ async def _sync_github(
     entries: list[CatalogueEntry] = []
     manifests: dict[str, list[tuple[str, str, int]]] = {}
     to_read: list[tuple[_Candidate, list[tuple[str, str, int]], str]] = []
+    platform = platform_skills()
     for candidate in candidates:
         base_path = f"{source.skills_root.strip('/')}/{candidate.skill_id}"
+        if platform is not None and platform.covers(candidate.skill_id):
+            # The platform's local copy is the only one (plan 44): catalogued,
+            # never stored, never read. Its content ref still names the
+            # upstream version, for the update-available check.
+            entries.append(CatalogueEntry(
+                skill_id=candidate.skill_id, name=candidate.skill_id, category=candidate.category,
+                risk=candidate.risk, source_ref=commit, entry_path=base_path,
+                content_ref=content_ref_for(_manifest(candidate)), refusal=PLATFORM_REFUSAL,
+            ))
+            continue
         structural = _structural_refusal(candidate, source)
         if structural:
             entries.append(CatalogueEntry(
@@ -387,12 +402,15 @@ async def _sync_well_known(
 
     entries: list[CatalogueEntry] = []
     seen: set[str] = set()
+    platform = platform_skills()
     for item in items:
         entry = _well_known_entry(source, item)
         if not entry.skill_id or entry.skill_id in seen:
             outcome.refused["malformed or duplicate entry"] += 1
             continue
         seen.add(entry.skill_id)
+        if platform is not None and platform.covers(entry.skill_id, entry.name):
+            entry = replace(entry, refusal=PLATFORM_REFUSAL)
         entries.append(entry)
 
     await store.apply_source_sync(
@@ -456,6 +474,7 @@ async def run_sync_pass(
         async with RemoteSkillClient(transport) as client:
             # Sequential on purpose: peak memory is one parsed tree, not four.
             outcomes = [await sync_source(store, client, source) for source in SOURCES]
+        await reconcile_platform_skills(store)
     logger.info(
         "remote_skills_sync_completed",
         "Remote skill sync pass completed",
@@ -466,6 +485,37 @@ async def run_sync_pass(
         reads=sum(o.reads for o in outcomes),
     )
     return outcomes
+
+
+async def reconcile_platform_skills(store: SkillStore) -> None:
+    """Refuse every remote copy of a platform skill and drop its files (plan 44),
+    and say when upstream has a newer version than the local one.
+
+    Runs after every pass, because a source whose upstream did not move is
+    skipped as "unchanged" and would otherwise keep rows admitted before the
+    platform shipped the skill. The update itself is local, never a database
+    write: ``scripts/platform_skills.py update``.
+    """
+    platform = platform_skills()
+    rows = await store.reconcile_platform_skills(sorted(platform.names) if platform else [], PLATFORM_REFUSAL)
+    if platform is None:
+        return
+    repos = {source.source_id: source.repo for source in SOURCES}
+    for row in rows:
+        pinned = platform.upstream.get(row["skill_id"])
+        if (
+            platform.is_upstream_repo(repos.get(row["source_id"]))
+            and pinned and row.get("content_ref") and row["content_ref"] != pinned
+        ):
+            logger.warning(
+                "platform_skill_update_available",
+                "Upstream has a newer version of a platform skill; update it locally "
+                "with scripts/platform_skills.py update",
+                skill=row["skill_id"],
+                source_id=row["source_id"],
+                upstream_commit=row.get("source_ref"),
+                pinned_commit=platform.commit,
+            )
 
 
 async def run_remote_skill_sync_loop() -> None:

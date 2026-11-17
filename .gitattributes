@@ -1,0 +1,4 @@
+# Platform skills (plan 44) ship byte for byte as built by scripts/platform_skills.py:
+# their SOURCE file pins a hash of every file, the sandbox box carries the same
+# bytes, and their scripts run on Linux. No line-ending conversion on checkout.
+magenticx/agents/harness/skill_registry/platform_skills/** -text

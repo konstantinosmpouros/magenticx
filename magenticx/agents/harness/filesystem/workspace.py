@@ -77,9 +77,17 @@ _DEFAULT_SKILLS_WRITE_DENY = FilesystemPermission(
     operations=["write"], paths=["/default_skills{,/**}"], mode="deny"
 )
 
+# Platform skills (plan 44): every deep agent's, shipped in the image.
+_PLATFORM_SKILLS_WRITE_DENY = FilesystemPermission(
+    operations=["write"], paths=["/platform_skills{,/**}"], mode="deny"
+)
+
 
 def workspace_write_deny(
-    *, include_reference: bool = False, include_default_skills: bool = False
+    *,
+    include_reference: bool = False,
+    include_default_skills: bool = False,
+    include_platform_skills: bool = False,
 ) -> list[FilesystemPermission]:
     """The write-deny ladder for a run, matched to the routes it actually mounts.
 
@@ -95,6 +103,8 @@ def workspace_write_deny(
         rules.append(_REFERENCE_WRITE_DENY)
     if include_default_skills:
         rules.append(_DEFAULT_SKILLS_WRITE_DENY)
+    if include_platform_skills:
+        rules.append(_PLATFORM_SKILLS_WRITE_DENY)
     return rules
 
 
@@ -109,6 +119,7 @@ def build_workspace_backend(
     reference_files: Mapping[str, str] | None = None,
     default_skills_dir: Path | None = None,
     declared_skills: Sequence[str] = (),
+    platform_skills_dir: Path | None = None,
     branch_thread_id: str | None = None,
 ) -> Callable[[Any], CompositeBackend]:
     """Return a factory minting this run's ``CompositeBackend``.
@@ -124,6 +135,7 @@ def build_workspace_backend(
         /large_tool_results/    → agent_runtime rows        (offloaded tool results)
         /conversation_history/  → agent_runtime rows        (offloaded history)
         /default_skills/        → image folder OR agent_runtime rows (read-only, optional)
+        /platform_skills/       → image folder (read-only, every deep agent; plan 44)
         /reference/             → image folder OR agent_runtime rows OR a draft (read-only, optional)
         default                 → agent_runtime rows        (the branch scratch store, plan 41)
                                   via BranchScratchBackend, or RemoteSandboxBackend
@@ -242,6 +254,13 @@ def build_workspace_backend(
             "/large_tool_results/": ConversationFilesBackend(files, LARGE_TOOL_RESULTS_ROOT, loop=loop),
             "/conversation_history/": ConversationFilesBackend(files, CONVERSATION_HISTORY_ROOT, loop=loop),
         })
+        if platform_skills_dir is not None:
+            # Every deep agent's document skills (plan 44): build-time content,
+            # the same tree the sandbox box carries at the same path, so a
+            # SKILL.md's `python /platform_skills/<name>/scripts/…` runs there.
+            routes["/platform_skills/"] = FilesystemBackend(
+                root_dir=str(platform_skills_dir), virtual_mode=True
+            )
         if default_skills_dir is not None:
             # A platform agent's tier ① ships in its image folder, so it is
             # mounted straight from there — build-time content, identical for

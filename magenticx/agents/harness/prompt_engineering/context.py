@@ -31,6 +31,8 @@ class PromptContext:
     has_reference: bool = False
     #: ``/default_skills/`` is mounted (skills the agent ships with).
     has_default_skills: bool = False
+    #: ``/platform_skills/`` is mounted (every deep agent's document skills, plan 44).
+    has_platform_skills: bool = False
     #: Cross-conversation recall is opted in.
     search_past_convs: bool = False
     #: At least one of the agent's tools hands out source ids (it has an

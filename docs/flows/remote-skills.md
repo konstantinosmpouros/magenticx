@@ -99,6 +99,17 @@ Once added, a skill **never changes underneath the user**: their pool row pins t
 
 ---
 
+## Platform skills
+
+Plan 44. Four skills ship **with the platform**, locally, never in Postgres: Anthropic's document skills `docx`, `xlsx`, `pptx`, `pdf` (Apache-2.0 since 2026-11-06), in `magenticx/agents/harness/skill_registry/platform_skills/`. Every deep agent mounts them read-only at `/platform_skills/`, and the sandbox box (`sandbox/box/platform_skills`) carries the same bytes at the same path, so their scripts run in `execute` as their `SKILL.md` says.
+
+| Step | What happens |
+| --- | --- |
+| **Build** | `scripts/platform_skills.py` takes them from `anthropics/skills` at one commit and adapts them: a "Platform notes" block in each `SKILL.md` (`execute`, absolute `/platform_skills/<name>/scripts/…` paths, nothing installable, `view_image`, `present_artifact`), and text for tools the box lacks (markitdown, OCR, pdftk, ImageMagick) replaced. Each skill keeps its `LICENSE.txt` and gains a `CHANGES.md` (Apache-2.0 §4(b)). `SOURCE` records the repo, the commit, each skill's upstream content ref and a hash of the adapted tree; tests in both repos recompute that hash. |
+| **Sync** | A remote skill whose id or name is a platform skill is catalogued with the refusal `a platform skill`: never read, no manifest, not searchable, not addable (a 404 like any refusal). `reconcile_platform_skills` runs after every pass, so rows admitted before the platform shipped the skill are refused and their manifests dropped even when their source is "unchanged". |
+| **Update** | When the catalogue's upstream content ref of a platform skill differs from the one pinned in `SOURCE`, the sync logs `platform_skill_update_available` (skill, upstream commit, pinned commit). Nothing is written: the update is local, `python scripts/platform_skills.py update [<commit>]`, which rebuilds the folder and copies it to the sibling `sandbox` repo. Review the diff, run both repos' tests, release the sandbox first. |
+| **Off** | `PLATFORM_SKILLS_ENABLED=false` drops the mount; the next pass clears the refused sources' `source_ref`, so the following pass re-admits their copies on their own merits. |
+
 ## Sharp Edges and Behavioral Notes
 
 - **`REMOTE_SKILLS_ENABLED` is the kill switch, on by default.** Set it false and no sync starts, no request leaves the service, search returns an empty page with `remote_enabled: false` (the UI explains it), and Add answers 503. Skills users already added keep working — reading a copy does not check the flag.
@@ -118,7 +129,8 @@ Once added, a skill **never changes underneath the user**: their pool row pins t
 | --- | --- | --- |
 | Allowlist + every gate | [magenticx/agents/harness/skill_registry/remote/sources.py](../../magenticx/agents/harness/skill_registry/remote/sources.py) | `SOURCES`, `ALLOWED_HOSTS`, `evaluate_licence`, `check_skill_md`, caps |
 | Outbound HTTP | [magenticx/agents/harness/skill_registry/remote/client.py](../../magenticx/agents/harness/skill_registry/remote/client.py) | redirect allowlist per hop, byte ceilings, `head_commit` via `info/refs` |
-| Daily sync | [magenticx/agents/harness/skill_registry/remote/sync.py](../../magenticx/agents/harness/skill_registry/remote/sync.py) | `sync_source`, `run_sync_pass`, `run_remote_skill_sync_loop`, `content_ref_for` |
+| Daily sync | [magenticx/agents/harness/skill_registry/remote/sync.py](../../magenticx/agents/harness/skill_registry/remote/sync.py) | `sync_source`, `run_sync_pass`, `reconcile_platform_skills`, `run_remote_skill_sync_loop`, `content_ref_for` |
+| Platform skills | [magenticx/agents/harness/skill_registry/platform.py](../../magenticx/agents/harness/skill_registry/platform.py), `platform_skills/`, [scripts/platform_skills.py](../../scripts/platform_skills.py) | `PLATFORM_REFUSAL`, `platform_skills()`, `SOURCE`, the `update` command |
 | Add-time download | [magenticx/agents/harness/skill_registry/remote/fetch.py](../../magenticx/agents/harness/skill_registry/remote/fetch.py) | `fetch_remote_copy`, `unpack_archive`, `_gunzip_bounded` |
 | Tables, search SQL, remote reads | [magenticx/agents/harness/skill_registry/store.py](../../magenticx/agents/harness/skill_registry/store.py) | `_DDL`, `search_catalogue`, `apply_source_sync`, `add_remote`, `read_files` |
 | Add decision, provenance | [magenticx/agents/harness/skill_registry/user_registry.py](../../magenticx/agents/harness/skill_registry/user_registry.py) | `add_remote_to_user`, `search_catalogue`, `_provenance` |
