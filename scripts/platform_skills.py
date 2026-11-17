@@ -194,11 +194,18 @@ def _add_notes(skill_md: str, name: str) -> str:
 
 
 def tree_hash(root: Path) -> str:
-    """sha256 over every file's relative path and bytes (SOURCE excluded)."""
+    """sha256 over every file's relative path and bytes (SOURCE excluded).
+
+    Ordered by the path *string*: ``Path`` objects compare case-insensitively on
+    Windows and case-sensitively on Linux, so sorting them gives ``SKILL.md`` a
+    different place on each and the same tree two hashes.
+    """
     digest = hashlib.sha256()
-    for path in sorted(p for p in root.rglob("*") if p.is_file() and p.name != "SOURCE" and "__pycache__" not in p.parts):
-        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
-        digest.update(path.read_bytes() + b"\0")
+    files = {p.relative_to(root).as_posix(): p for p in root.rglob("*")
+             if p.is_file() and p.name != "SOURCE" and "__pycache__" not in p.parts}
+    for rel in sorted(files):
+        digest.update(rel.encode() + b"\0")
+        digest.update(files[rel].read_bytes() + b"\0")
     return digest.hexdigest()
 
 
