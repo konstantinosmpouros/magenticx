@@ -242,6 +242,14 @@ def build(upstream: Path, commit: str, out: Path) -> None:
         extra = "".join(f"- `{rel}`: adapted (see the diff against upstream).\n" for rel in changed)
         (out / name / "CHANGES.md").write_text(
             CHANGES.format(name=name, repo=REPO_URL, commit=commit, extra=extra), encoding="utf-8", newline="\n")
+    # Upstream is LF. A CR here means the clone converted line endings (git's
+    # autocrlf on Windows): the scripts would carry CRLF to Linux and the tree
+    # hash would differ between this checkout and CI's. Refuse to ship that.
+    crlf = [p.relative_to(out).as_posix() for p in out.rglob("*")
+            if p.is_file() and p.suffix != ".png" and b"\r\n" in p.read_bytes()]
+    if crlf:
+        raise SystemExit(f"CRLF in {len(crlf)} file(s), e.g. {crlf[:3]}: clone upstream with "
+                         "`git -c core.autocrlf=false clone` (the `update` command does)")
     upstream_lines = "".join(f"upstream:{name} {upstream_ref(upstream, commit, name)}\n" for name in SKILLS)
     (out / "SOURCE").write_text(f"repo {REPO_URL}\ncommit {commit}\n{upstream_lines}tree {tree_hash(out)}\n",
                                 encoding="utf-8", newline="\n")
