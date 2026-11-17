@@ -132,6 +132,45 @@ def test_a_paper_with_a_bad_url_is_left_uncited(sources):
     assert "cite" in papers[0] and "cite" not in papers[1] and papers[2] == "not a paper"
 
 
+def test_a_read_paper_result_is_one_source_the_paper_s_abs_page(sources):
+    content = _fixture("read_paper")
+    original = json.loads(content)
+
+    found, rewritten = sources.extract_sources("read_paper", content)
+
+    [paper] = found
+    assert paper.url == "https://arxiv.org/abs/2610.00223v1" and paper.tool == "read_paper"
+    assert paper.id == _sha6("https://arxiv.org/abs/2610.00223v1")
+    # The first markdown heading, without its emphasis.
+    assert paper.title == "A Holistic Assessment of the Carbon Footprint of Noor, a Very Large Arabic Language Model"
+    # The abstract, past the author blocks the conversion put in front of it.
+    assert paper.snippet.startswith("As ever larger language models grow more ubiquitous")
+    assert len(paper.snippet) <= 300
+    data = json.loads(rewritten)
+    assert next(iter(data)) == "cite" and data["cite"] == f"[src:{paper.id}]"
+    assert {k: v for k, v in data.items() if k != "cite"} == original  # the paper itself untouched
+
+
+def test_a_read_paper_without_an_abstract_heading_takes_the_first_prose(sources):
+    markdown = "# Title Here\n\nShort line\n\n" + " ".join(["word"] * 20) + "\n\n## Next"
+    found, _ = sources.extract_sources("read_paper", json.dumps(
+        {"status": "success", "paper_id": "hep-th/9901001v2", "content": markdown}))
+    [paper] = found
+    assert paper.url == "https://arxiv.org/abs/hep-th/9901001v2"
+    assert paper.title == "Title Here" and paper.snippet == " ".join(["word"] * 20)
+
+
+@pytest.mark.parametrize("content", [
+    json.dumps({"status": "error", "message": "Paper 1001.00001 not found in storage."}),  # not downloaded
+    json.dumps({"status": "success", "paper_id": "../../etc/passwd", "content": "# x"}),   # not an arXiv id
+    json.dumps({"status": "success", "paper_id": "2301.07041", "content": None}),          # no paper
+    json.dumps(["not", "an", "object"]),
+    "not json at all",
+])
+def test_a_read_paper_without_a_paper_is_left_uncited(sources, content):
+    assert sources.extract_sources("read_paper", content) == ([], content)
+
+
 # ---------------------------------------------------------- pass-through cases
 @pytest.mark.parametrize("tool, content", [
     ("read_file", "Title: X\nURL: https://a.example/\n"),       # no extractor
@@ -192,6 +231,16 @@ def test_the_same_page_gets_the_same_id_whatever_its_tracking(sources):
     assert a[0].url == "https://www.example.com/a/"
 
 
+def test_an_id_matches_only_its_own_url(sources):
+    url = "https://www.Example.com/page/?utm_source=x#top"
+    full = hashlib.sha256(b"https://example.com/page").hexdigest()
+
+    assert sources.id_matches_url(full[:6], url) and sources.id_matches_url(full[:8], url)
+    assert not sources.id_matches_url(full[:7], url)  # neither length the contract has
+    assert not sources.id_matches_url(sources.source_id("https://example.com/other"), url)
+    assert not sources.id_matches_url(full[:6], "not a url")
+
+
 def test_a_clash_on_six_characters_extends_both_ids_to_eight(sources):
     # Find two URLs whose 6-hex prefixes collide (a deterministic search).
     seen: dict[str, str] = {}
@@ -243,7 +292,8 @@ def test_an_id_outside_the_contract_is_refused(sources, bad_id):
 
 
 def test_only_the_registered_tools_have_extractors(sources):
-    assert set(sources.EXTRACTORS) == {"tavily-search", "tavily-extract", "tavily-crawl", "search_papers"}
+    assert set(sources.EXTRACTORS) == {"tavily-search", "tavily-extract", "tavily-crawl", "search_papers",
+                                       "read_paper"}
     assert sources.has_extractor("tavily-search") and not sources.has_extractor("tavily-map")
     assert not sources.has_extractor(None)
     # Any MCP tool may cite: it is read generically.

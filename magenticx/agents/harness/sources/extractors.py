@@ -11,7 +11,9 @@ the result so the model sees that id next to the page (plan 42 §3.8):
   becomes ``[src:ID] Title: …``.
 * **arXiv** (``search_papers``) answers JSON with a ``papers`` list; each paper
   with a usable ``url`` gets ``"cite": "[src:ID]"`` as its first key, and the
-  JSON is written back with ``indent=2``.
+  JSON is written back with ``indent=2``. ``read_paper`` answers one paper as
+  JSON (``paper_id`` + the paper as markdown); its one source is the paper's
+  ``arxiv.org/abs/`` page, marked by a ``cite`` first key the same way.
 
 Any other MCP tool is read by :func:`extract_generic` (JSON objects with a link,
 ``Title:``/``URL:`` blocks, markdown links), so a newly installed search server
@@ -203,6 +205,81 @@ def extract_papers(content: str, *, tool: str) -> tuple[list[Source], str]:
     return sources, json.dumps({**data, "papers": rewritten}, indent=2, ensure_ascii=False)
 
 
+#: An arXiv identifier, as the server's ``read_paper`` schema accepts it: the
+#: new form (``2301.07041``, ``2301.07041v2``) and the old (``hep-th/9901001``).
+_ARXIV_ID = re.compile(r"^(\d{4}\.\d{4,5}(v\d+)?|[a-z-]+(\.[A-Z]{2})?/\d{7}(v\d+)?)$")
+#: Where an arXiv paper's landing page is; ``read_paper``'s one source.
+_ARXIV_ABS_URL = "https://arxiv.org/abs/"
+#: A paragraph shorter than this many words is a heading, an author line or an
+#: affiliation, never the abstract.
+_MIN_PROSE_WORDS = 12
+_MARKDOWN_HEADING = re.compile(r"^\s*#+\s*")
+_ABSTRACT_HEADING = re.compile(r"^\W*abstract\W*$", re.IGNORECASE)
+
+
+def _paper_title(markdown: str) -> str:
+    """The paper's title: its first markdown heading, without the emphasis.
+
+    The server converts the PDF to markdown, which puts the title first as
+    ``# **Part one,** **part two**``. No heading → no title (the card shows the URL).
+    """
+    for line in markdown.splitlines()[:40]:
+        if _MARKDOWN_HEADING.match(line):
+            return _MARKDOWN_HEADING.sub("", line).replace("**", "").replace("__", "").strip()
+    return ""
+
+
+def _paper_snippet(markdown: str) -> str:
+    """The abstract's opening, or else the first paragraph of prose.
+
+    The PDF-to-markdown conversion interleaves the author blocks with the
+    abstract, so the snippet starts at the first paragraph of at least
+    :data:`_MIN_PROSE_WORDS` words after the ``Abstract`` heading (after the
+    title when there is none), and runs on until a heading or enough text.
+    """
+    paragraphs = [" ".join(part.split()) for part in markdown[: 8 * _SNIPPET_SCAN_CHARS].split("\n\n")]
+    start = next((index + 1 for index, text in enumerate(paragraphs)
+                  if _ABSTRACT_HEADING.match(text.replace("*", ""))), 0)
+    parts: list[str] = []
+    for text in paragraphs[start:]:
+        if not parts:
+            if len(text.split()) >= _MIN_PROSE_WORDS and not text.startswith("#"):
+                parts.append(text)
+            continue
+        if not text or text.startswith(("#", "**")) or sum(map(len, parts)) >= _SNIPPET_SCAN_CHARS:
+            break
+        parts.append(text)
+    return " ".join(parts)
+
+
+def extract_read_paper(content: str, *, tool: str) -> tuple[list[Source], str]:
+    """The one source of an arXiv ``read_paper`` result: the paper it read.
+
+    The server answers JSON ``{"status": "success", "paper_id": …, "content":
+    <the paper as markdown>}`` (``{"status": "error", "message": …}`` when the
+    paper was not downloaded first). The source is the paper's landing page,
+    ``https://arxiv.org/abs/<paper_id>``, titled by the markdown's first
+    heading, its snippet the abstract. The model sees the marker as a
+    ``"cite"`` first key, as with ``search_papers``; the paper itself is
+    written back untouched (``ensure_ascii=False`` only re-spells escapes).
+    An error, or an id that is not an arXiv id, has no source.
+    """
+    data = json.loads(content)
+    if not isinstance(data, dict) or data.get("status") != "success":
+        return [], content
+    paper_id = data.get("paper_id")
+    markdown = data.get("content")
+    if not isinstance(paper_id, str) or not _ARXIV_ID.match(paper_id) or not isinstance(markdown, str):
+        return [], content
+    resolved = _resolve(tool, [_Found(url=f"{_ARXIV_ABS_URL}{paper_id}", title=_paper_title(markdown),
+                                      snippet=_paper_snippet(markdown))])
+    sources = _unique(resolved)
+    if not sources:
+        return [], content
+    rewritten = {"cite": marker(sources[0].id), **{key: value for key, value in data.items() if key != "cite"}}
+    return sources, json.dumps(rewritten, indent=2, ensure_ascii=False)
+
+
 # -------------------------------------------------------------------- generic
 #: Keys that hold a page's link, title and summary in the JSON most search
 #: servers answer. The first one present wins.
@@ -318,6 +395,7 @@ EXTRACTORS: Mapping[str, Extractor] = MappingProxyType({
     "tavily-extract": partial(extract_tavily, tool="tavily-extract"),
     "tavily-crawl": partial(extract_tavily, tool="tavily-crawl"),
     "search_papers": partial(extract_papers, tool="search_papers"),
+    "read_paper": partial(extract_read_paper, tool="read_paper"),
 })
 
 
@@ -377,6 +455,7 @@ __all__ = [
     "Extractor",
     "extract_generic",
     "extract_papers",
+    "extract_read_paper",
     "extract_sources",
     "extract_tavily",
     "has_extractor",

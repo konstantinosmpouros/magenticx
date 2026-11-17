@@ -1,17 +1,17 @@
 """Sub-agents with sub-agents of their own: the definition and the build.
 
-deepagents builds the main agent's own sub-agents and nothing below them. A
-sub-agent that delegates in turn gets a ``SubAgentMiddleware`` from our build
-path, and every spec below depth 1 is built there in full. Pinned here:
+Every sub-agent is a background task (plan 41): each level of the tree gets the
+async task tools over the level below it, and a task run builds its own node
+of the tree from its path. Pinned here:
 
 * **the definition** — at most ``MAX_SUBAGENT_DEPTH`` levels, unique sibling
-  names, no name repeated below itself, and tools only ever narrowing on the
-  way down (``AgentSpec`` for YAML and user agents, ``validate_subagent_tree``
-  for agents written in code);
-* **the build** — every level carries the platform middleware, the base stack
-  deepagents gives depth 1 (planning, filesystem with the workspace's rules,
-  summarization, PatchToolCalls), the run's approval gates (which a spec can
-  add to but never clear a locked one from), and never ``ask_user``;
+  names, no name repeated below itself, every node a spec (no compiled
+  sub-agent), and tools only ever narrowing on the way down (``AgentSpec`` for
+  YAML and user agents, ``validate_subagent_tree`` for agents written in code);
+* **the build** — every node carries the platform middleware and the base
+  stack (planning, filesystem with the workspace's rules, summarization), the
+  run's approval gates (which a spec can add to but never clear a locked one
+  from), task tools only over its own children, and never ``ask_user``;
 * **the YAML agent** declares the same tree.
 """
 from __future__ import annotations
@@ -22,8 +22,6 @@ from typing import Any
 import pytest
 from deepagents.backends import StateBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
-from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
-from deepagents.middleware.subagents import SubAgentMiddleware
 from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.tools import tool
 from pydantic import ValidationError
@@ -229,16 +227,32 @@ def test_a_code_defined_tree_is_held_to_the_same_rules(tree_module):
     looped["subagents"] = [looped]
     with pytest.raises(ValueError, match="contains itself"):
         tree_module.validate_subagent_tree([looped])
-    with pytest.raises(ValueError, match="cannot declare sub-agents"):
-        tree_module.validate_subagent_tree([{"name": "x", "description": "d", "runnable": object(), "subagents": [sub("c", "d", "p")]}])
+    # A task run rebuilds its node from the tree, so every node is a spec.
+    with pytest.raises(ValueError, match="cannot run as a background task"):
+        tree_module.validate_subagent_tree([{"name": "x", "description": "d", "runnable": object()}])
+    with pytest.raises(ValueError, match="cannot run as a background task"):
+        tree_module.validate_subagent_tree([sub("r", "d", "p", subagents=[{"name": "c", "description": "d", "runnable": object()}])])
+    with pytest.raises(ValueError, match="not a spec dict"):
+        tree_module.validate_subagent_tree([object()])
 
 
 # ---------------------------------------------------------------------------
-# The build
+# The build: the orchestrator, and each task node
 # ---------------------------------------------------------------------------
+class _Tasks:
+    """Stands in for ``AsyncTaskMiddleware``: records the specs it was given."""
+
+    def __init__(self, *, async_subagents):
+        self.names = [spec["name"] for spec in async_subagents]
+
+
 @pytest.fixture
-def build(deep_agent_module, monkeypatch):
-    """Run the real build_deep_agent; capture what reaches create_deep_agent."""
+def build(deep_agent_module, agents_service, monkeypatch):
+    """Run the real build_deep_agent for the orchestrator (``path=()``) or one
+    task node; capture what reaches create_deep_agent."""
+    specs = importlib.import_module("harness.async_tasks.specs")
+    token = importlib.import_module("harness.async_tasks.token")
+    monkeypatch.setattr(deep_agent_module, "AsyncTaskMiddleware", _Tasks)
 
     class Bare(deep_agent_module.DeepAgent):
         name = "nested-build"
@@ -246,22 +260,32 @@ def build(deep_agent_module, monkeypatch):
         def register_agent(self):
             return None
 
-    def _build(subagents, *, interrupt_on=None):
+    def _build(subagents, path=(), *, interrupt_on=None):
         captured: dict[str, Any] = {}
         monkeypatch.setattr(deep_agent_module, "create_deep_agent", lambda **kwargs: captured.update(kwargs))
-        agent = Bare()
+        agent = Bare(config={
+            "context": {"user_id": "u", "conversation_id": "c", "run_id": "r", "use_memory": False},
+            "run_config": {"configurable": {"thread_id": "branch"}},
+        })
         monkeypatch.setattr(agent, "_build_composite_backend", lambda: StateBackend())
+        monkeypatch.setattr(agent, "_builtin_tools", lambda: [])
         agent.tools = [search, lookup, ask_user]
+        if path:
+            agent.async_task_node = specs.TaskNode(
+                task_id="task-1", depth=len(path), path=tuple(path), user_id="u", conversation_id="c",
+                root_run_id="r", branch_thread_id="branch", agent_slug="nested-build",
+                definition_version="v1", inherited=token.InheritedContext(),
+            )
         agent.build_deep_agent(model=MODEL, middleware=[], interrupt_on=interrupt_on or {}, subagents=subagents)
         return captured
 
     return _build
 
 
-def _nested(spec: dict) -> dict[str, dict]:
-    """The specs a top-level (or nested) spec delegates to, by name."""
-    [task] = [m for m in spec["middleware"] if isinstance(m, SubAgentMiddleware)]
-    return {child["name"]: child for child in task._subagents}
+def _children(built: dict) -> list[str] | None:
+    """The sub-agents a built node can start, or None when it has no task tools."""
+    tasks = [m for m in built["middleware"] if isinstance(m, _Tasks)]
+    return tasks[0].names if tasks else None
 
 
 def _tree(tree_module):
@@ -282,6 +306,16 @@ def _tree(tree_module):
     ]
 
 
+NODES = (
+    ("general-purpose",),
+    ("researcher",),
+    ("writer",),
+    ("researcher", "fact-checker"),
+    ("researcher", "fact-checker", "source-verifier"),
+    ("researcher", "citer"),
+)
+
+
 def _platform(middlewares) -> tuple[type, ...]:
     return (
         middlewares.ToolErrorMiddleware,
@@ -291,77 +325,98 @@ def _platform(middlewares) -> tuple[type, ...]:
     )
 
 
-def test_every_level_carries_the_platform_middleware(build, tree_module, middlewares):
-    top = {s["name"]: s for s in build(_tree(tree_module))["subagents"]}
-    researcher = top["researcher"]
-    checker = _nested(researcher)["fact-checker"]
-    verifier = _nested(checker)["source-verifier"]
-    citer = _nested(researcher)["citer"]
-
-    for spec in (top["general-purpose"], researcher, top["writer"], checker, verifier, citer):
-        stack = spec["middleware"]
-        for cls in _platform(middlewares):
-            assert sum(isinstance(m, cls) for m in stack) == 1, (spec["name"], cls.__name__)
-    # Below depth 1 our build adds what deepagents adds at depth 1.
-    for spec in (checker, verifier, citer):
-        stack = spec["middleware"]
-        for cls in (TodoListMiddleware, FilesystemMiddleware, PatchToolCallsMiddleware):
-            assert sum(isinstance(m, cls) for m in stack) == 1, (spec["name"], cls.__name__)
-        assert any(type(m).__name__.endswith("SummarizationMiddleware") for m in stack), spec["name"]
-    # Only a sub-agent with sub-agents has a `task` tool of its own.
-    assert [s["name"] for s in (researcher, checker) if any(isinstance(m, SubAgentMiddleware) for m in s["middleware"])] == [
-        "researcher", "fact-checker"
-    ]
-    assert not any(isinstance(m, SubAgentMiddleware) for m in verifier["middleware"] + citer["middleware"])
-    assert "subagents" not in researcher
+def test_the_orchestrator_starts_its_own_sub_agents_as_tasks(build, tree_module):
+    built = build(_tree(tree_module))
+    # deepagents builds no sub-agent itself: no blocking `task` tool anywhere.
+    assert built["subagents"] is None
+    # The general-purpose sub-agent is added, the nested ones are not its to start.
+    assert _children(built) == ["general-purpose", "researcher", "writer"]
 
 
-def test_no_subagent_at_any_depth_has_ask_user(build, tree_module):
-    top = {s["name"]: s for s in build(_tree(tree_module))["subagents"]}
-    researcher = top["researcher"]
-    checker = _nested(researcher)["fact-checker"]
-    specs = [*top.values(), checker, _nested(checker)["source-verifier"], _nested(researcher)["citer"]]
+def test_every_node_carries_the_platform_middleware(build, tree_module, middlewares):
+    for path in NODES:
+        stack = build(_tree(tree_module), path)["middleware"]
+        for cls in (*_platform(middlewares), TodoListMiddleware, FilesystemMiddleware):
+            assert sum(isinstance(m, cls) for m in stack) == 1, (path, cls.__name__)
+        assert any(type(m).__name__.endswith("SummarizationMiddleware") for m in stack), path
 
-    for spec in specs:
-        assert "ask_user" not in [t.name for t in spec["tools"]], spec["name"]
-    # Inheriting means the tools of the agent above, minus ask_user; an explicit
+
+def test_only_a_node_with_sub_agents_gets_task_tools_and_only_over_its_own(build, tree_module):
+    children = {path: _children(build(_tree(tree_module), path)) for path in NODES}
+    assert children == {
+        ("general-purpose",): None,
+        ("researcher",): ["fact-checker", "citer"],
+        ("writer",): None,
+        ("researcher", "fact-checker"): ["source-verifier"],
+        ("researcher", "fact-checker", "source-verifier"): None,
+        ("researcher", "citer"): None,
+    }
+
+
+def test_no_node_at_any_depth_has_ask_user(build, tree_module):
+    tools = {path: [t.name for t in build(_tree(tree_module), path)["tools"]] for path in NODES}
+    for path, names in tools.items():
+        assert "ask_user" not in names, path
+    # Inheriting means the tools of the node above, minus ask_user; an explicit
     # list is kept (minus ask_user); an empty one stays empty.
-    assert [t.name for t in researcher["tools"]] == ["search", "lookup"]
-    assert [t.name for t in checker["tools"]] == ["lookup"]
-    assert [t.name for t in _nested(checker)["source-verifier"]["tools"]] == ["lookup"]
-    assert _nested(researcher)["citer"]["tools"] == []
+    assert tools[("researcher",)] == ["search", "lookup"]
+    assert tools[("researcher", "fact-checker")] == ["lookup"]
+    assert tools[("researcher", "fact-checker", "source-verifier")] == ["lookup"]
+    assert tools[("researcher", "citer")] == []
 
 
 def test_gates_apply_at_every_depth_and_a_locked_one_cannot_be_cleared(build, tree_module):
-    top = {s["name"]: s for s in build(_tree(tree_module), interrupt_on={"search": True})["subagents"]}
-    checker = _nested(top["researcher"])["fact-checker"]
-    verifier = _nested(checker)["source-verifier"]
+    def gates(path):
+        return build(_tree(tree_module), path, interrupt_on={"search": True})["interrupt_on"]
 
+    checker, verifier = gates(("researcher", "fact-checker")), gates(("researcher", "fact-checker", "source-verifier"))
     # The run's gates reach depth 3 (the agent's own `search`, the builtin
-    # defaults such as `task`), the spec adds its own, and `execute` stays
-    # locked although the spec tried to clear it.
-    for spec in (checker, verifier):
-        gates = spec["interrupt_on"]
-        assert gates["search"] is True and gates["task"] is True and gates["execute"] is True, spec["name"]
-    assert checker["interrupt_on"]["lookup"] is True
-    assert "lookup" not in verifier["interrupt_on"]
-    assert "ask_user" not in checker["interrupt_on"]
-    # deepagents compiles `interrupt_on` into the sub-agent's graph as its
-    # approval step; that the gated tool really pauses at depth is pinned by
-    # the full run in test_nested_subagent_example.py.
+    # defaults such as `start_async_task`), the spec adds its own, and `execute`
+    # stays locked although the spec tried to clear it.
+    for node in (checker, verifier):
+        assert node["search"] is True and node["start_async_task"] is True and node["execute"] is True
+    assert checker["lookup"] is True
+    assert "lookup" not in verifier
+    assert "ask_user" not in checker
 
 
-def test_a_delegating_subagent_is_told_how_to_use_its_own_subagents(build, tree_module, agents_service):
+def test_a_delegating_node_is_told_how_to_use_its_own_subagents(build, tree_module, agents_service):
     prompts = importlib.import_module("harness.prompt_engineering.prompts.capabilities_prompt")
-    top = {s["name"]: s for s in build(_tree(tree_module))["subagents"]}
-    researcher = top["researcher"]
-    checker = _nested(researcher)["fact-checker"]
 
-    assert researcher["system_prompt"].startswith("You are the researcher.")
-    assert prompts.DELEGATING_SUBAGENT_PROMPT in researcher["system_prompt"]
-    assert prompts.DELEGATING_SUBAGENT_PROMPT in checker["system_prompt"]
-    assert prompts.DELEGATING_SUBAGENT_PROMPT not in _nested(checker)["source-verifier"]["system_prompt"]
-    assert prompts.DELEGATING_SUBAGENT_PROMPT not in top["writer"]["system_prompt"]
+    def prompt(path):
+        return build(_tree(tree_module), path)["system_prompt"]
+
+    assert prompt(("researcher",)).startswith("You are the researcher.")
+    assert prompts.DELEGATING_SUBAGENT_PROMPT in prompt(("researcher",))
+    assert prompts.DELEGATING_SUBAGENT_PROMPT in prompt(("researcher", "fact-checker"))
+    assert prompts.DELEGATING_SUBAGENT_PROMPT not in prompt(("researcher", "fact-checker", "source-verifier"))
+    assert prompts.DELEGATING_SUBAGENT_PROMPT not in prompt(("writer",))
+
+
+def test_no_blocking_task_tool_is_built(deep_agent_module, agents_service, monkeypatch):
+    """Through the real create_deep_agent: deepagents would add its blocking
+    general-purpose sub-agent and the `task` tool; the build switches it off."""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class Bare(deep_agent_module.DeepAgent):
+        name = "no-task-build"
+
+        def register_agent(self):
+            return None
+
+    agent = Bare(config={
+        "context": {"user_id": "u", "conversation_id": "c", "run_id": "r", "use_memory": False},
+        "run_config": {"configurable": {"thread_id": "branch"}},
+    })
+    monkeypatch.setattr(agent, "_build_composite_backend", lambda: StateBackend())
+    monkeypatch.setattr(agent, "_builtin_tools", lambda: [])
+    graph = agent.build_deep_agent(
+        model=MODEL, middleware=[], interrupt_on={},
+        subagents=[{"name": "researcher", "description": "d", "system_prompt": "p"}],
+    )
+    tools = set(graph.nodes["tools"].bound.tools_by_name)
+    assert "task" not in tools
+    assert {"start_async_task", "check_async_task", "update_async_task", "cancel_async_task", "list_async_tasks"} <= tools
 
 
 def test_a_tree_too_deep_fails_the_build(build, tree_module):
@@ -369,6 +424,11 @@ def test_a_tree_too_deep_fails_the_build(build, tree_module):
     deep = sub("a", "d", "p", subagents=[sub("b", "d", "p", subagents=[sub("c", "d", "p", subagents=[sub("d", "d", "p")])])])
     with pytest.raises(ValueError, match="4 levels below the agent"):
         build([deep])
+
+
+def test_a_compiled_sub_agent_fails_the_build(build):
+    with pytest.raises(ValueError, match="cannot run as a background task"):
+        build([{"name": "x", "description": "d", "runnable": object()}])
 
 
 # ---------------------------------------------------------------------------
@@ -384,13 +444,12 @@ def test_every_omni_subagent_can_delegate_two_levels_down(build, tree_module, ag
     specs = agent.register_subagents()
     tree_module.validate_subagent_tree(specs)
 
-    built = build(specs)["subagents"]
     # Declared once by Omni, so the build adds no second general-purpose.
-    assert [s["name"] for s in built] == ["general-purpose", "researcher", "writer"]
-    for top in built:
-        helper = _nested(top)["helper"]
-        sub_helper = _nested(helper)["sub-helper"]
-        assert not any(isinstance(m, SubAgentMiddleware) for m in sub_helper["middleware"])
+    assert _children(build(specs)) == ["general-purpose", "researcher", "writer"]
+    for top in ("general-purpose", "researcher", "writer"):
+        assert _children(build(specs, (top,))) == ["helper"]
+        assert _children(build(specs, (top, "helper"))) == ["sub-helper"]
+        assert _children(build(specs, (top, "helper", "sub-helper"))) is None
 
 
 def test_the_yaml_agent_declares_the_tree(agents_service, spec_module):

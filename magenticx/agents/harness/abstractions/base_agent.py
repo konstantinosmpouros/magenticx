@@ -316,15 +316,6 @@ class BaseAgent:
         raise NotImplementedError
 
 
-    def _stream_kwargs(self) -> Dict[str, Any]:
-        """Extra keyword arguments for the runnable's ``astream``.
-
-        Empty by default; a deep agent adds ``subgraphs=True`` so its sub-agent
-        chunks arrive namespaced.
-        """
-        return {}
-
-
     def _stream_config(self) -> Mapping[str, Any]:
         """The ``RunnableConfig`` one stream runs with — ``run_config`` by default.
 
@@ -419,7 +410,6 @@ class BaseAgent:
                 stream_input,
                 config=self._traced_config(),
                 stream_mode=self.stream_mode,
-                **self._stream_kwargs(),
             ):
                 if isinstance(chunk, (str, bytes)):
                     yield chunk.encode("utf-8") if isinstance(chunk, str) else chunk

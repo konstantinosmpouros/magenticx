@@ -10,18 +10,23 @@ from sqlalchemy.orm import selectinload
 from core.database import AgentTable, AttachmentTable, ConversationTable, MessageTable, UserTable
 from schema import (
     ConversationDetail,
+    ConversationSource,
     ConversationSummary,
     InferenceStartPayload,
     InferenceStartResponse,
     MessageIn,
     MessageOut,
 )
-from utils.agents import get_agent_by_id
+from utils.agents import get_agent_by_id, insert_conversation_sources
 from utils.commands import check_invocation
 from utils.conversations import _preview, init_conv, init_message
 from utils.inference import resolve_inference_message_path
 from utils.inference_runs import build_run_out_from_message, create_inference_run_record
-from utils.shared_conv import create_conversation_from_share_record, load_active_share
+from utils.shared_conv import (
+    create_conversation_from_share_record,
+    load_active_share,
+    snapshot_sources,
+)
 from utils.titles import resolve_conversation_title
 from utils.validators import load_conversation_full, validate_convId_full
 
@@ -74,6 +79,8 @@ async def start_inference_flow(
 ) -> InferenceStartResponse:
     user_id = user.id
     mode = payload.mode
+    # A continued share's frozen citation sources, kept for the new conversation below.
+    shared_sources: list[ConversationSource] = []
     if mode == "new":
         conversation, parent_message_id, agent = await _create_new_conversation_start(db, user, payload)
     elif mode == "send":
@@ -83,7 +90,9 @@ async def start_inference_flow(
     elif mode == "retry":
         conversation, parent_message_id, agent = await _create_retry_start(db, user_id, payload)
     elif mode == "shared_continue":
-        conversation, parent_message_id, agent = await _create_shared_continue_start(db, user, payload)
+        conversation, parent_message_id, agent, shared_sources = await _create_shared_continue_start(
+            db, user, payload
+        )
     else:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported inference start mode.")
 
@@ -97,7 +106,9 @@ async def start_inference_flow(
     # so any client path necessarily ends before the real parent. Retry is the
     # only start mode where the client can provide a path ending at the run parent.
     message_path = payload.messagePath if mode == "retry" else None
-    return await create_run_and_respond(
+    # Read before create_run_and_respond expires every loaded row.
+    conversation_id = conversation.id
+    started = await create_run_and_respond(
         db=db,
         user_id=user_id,
         conversation=conversation,
@@ -107,6 +118,12 @@ async def start_inference_flow(
         mode=mode,
         scheduled_task_id=scheduled_task_id,
     )
+    if shared_sources:
+        # After the commit, so a start that failed leaves no sources behind;
+        # before the run launches, so its first load already resolves the copied
+        # answers' citations. Best-effort: a failure is logged, never raised.
+        await insert_conversation_sources(user_id, conversation_id, shared_sources)
+    return started
 
 
 async def create_run_and_respond(
@@ -272,7 +289,13 @@ async def _create_shared_continue_start(
     db: AsyncSession,
     user: UserTable,
     payload: InferenceStartPayload,
-) -> tuple[ConversationTable, str, AgentTable]:
+) -> tuple[ConversationTable, str, AgentTable, list[ConversationSource]]:
+    """Import a full share as the viewer's own conversation and add their message.
+
+    Also returns the snapshot's frozen citation sources (plan 42): the copied
+    answers' markers name the sharer's sources, which the new conversation's
+    own registry does not have until the caller stores them under it.
+    """
     if not payload.sharedConversationToken:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="sharedConversationToken is required for shared conversation inference starts.")
     message = _require_message(payload)
@@ -284,7 +307,7 @@ async def _create_shared_continue_start(
         first_message=message,
     )
     agent = await _resolve_agent_or_400(payload.agentId or conversation.agent_id, fallback_id=conversation.agent_id)
-    return conversation, parent_message_id, agent
+    return conversation, parent_message_id, agent, snapshot_sources(share)
 
 
 def _touch_conversation_from_user_message(conversation: ConversationTable, message: MessageIn) -> None:

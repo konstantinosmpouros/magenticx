@@ -102,16 +102,14 @@ async def _lifespan(app: FastAPI):
         # unreachable; cross-turn resume depends on it.
         await init_durable_checkpointer(app)
         pool = app.state.checkpointer_pool
-        # Background tasks (plan 41). The tables always exist (conversation
-        # delete and account purge reap them); the runner only with the flag.
+        # Background tasks (plan 41): every sub-agent runs on this runner.
         task_store = AsyncTaskStore(pool)
         if settings.checkpointer.setup_on_startup:
             await task_store.setup()
-        if settings.async_tasks.enabled:
-            task_runner = TaskRunner(task_store, TaskStreamPublisher())
-            set_task_runner(task_runner)
-            # Runs a restart cut settle as errors; their parents are told.
-            await task_runner.recover()
+        task_runner = TaskRunner(task_store, TaskStreamPublisher())
+        set_task_runner(task_runner)
+        # Runs a restart cut settle as errors; their parents are told.
+        await task_runner.recover()
         # Plan 30: the skill catalogue is the remote sources, indexed daily.
         # Returns at once when REMOTE_SKILLS_ENABLED is false, so no request
         # ever leaves the service.

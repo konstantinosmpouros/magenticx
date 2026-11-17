@@ -236,7 +236,7 @@ class YamlDeepAgent(DeepAgent):
 
         **Nested sub-agents** come out the same way, under the ``subagents`` key
         of the spec above them (``harness.abstractions.subagent_tree``), and
-        ``build_deep_agent`` gives that sub-agent a ``task`` tool for them. The
+        that sub-agent's task run gets the async task tools for them. The
         rules repeat one level down: an empty ``tools`` inherits the tools of
         the sub-agent above (``AgentSpec`` keeps an explicit list inside them).
         """
@@ -303,12 +303,6 @@ class YamlDeepAgent(DeepAgent):
         return sa.model or self._spec.model.subagents.get(sa.name) or self._spec.model.main
 
     # ------------------------------------------------------------------
-    @property
-    def async_subagents_supported(self) -> bool:
-        """A trial's draft is in no store a task run could rebuild it from, so
-        a trial keeps blocking sub-agents (plan 41)."""
-        return not self._trial
-
     def definition_fingerprint(self) -> str:
         """A hash of the whole definition: the spec, the prompt it resolved to,
         and every authored file. Any save that changes what runs changes it,

@@ -7,10 +7,15 @@ Internal-caller only — the bridge checks the session and ownership first.
 from fastapi import APIRouter, Depends, status
 
 from core.security.internal_trust import require_internal_caller
-from schema import ConversationSourcesResponse, CopyConversationSourcesRequest
+from schema import (
+    ConversationSourcesResponse,
+    CopyConversationSourcesRequest,
+    InsertConversationSourcesRequest,
+)
 from utils.conversation_sources import (
     copy_conversation_sources,
     delete_conversation_sources,
+    insert_conversation_sources,
     list_conversation_sources,
 )
 
@@ -25,6 +30,22 @@ router = APIRouter(prefix="/users/{user_id}/conversations/{conversation_id}/sour
 async def read_conversation_sources(user_id: str, conversation_id: str) -> ConversationSourcesResponse:
     """The conversation's sources, newest first, at most 500."""
     return ConversationSourcesResponse(sources=await list_conversation_sources(user_id, conversation_id))
+
+
+@router.post(
+    "",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_internal_caller)],
+)
+async def insert_sources(
+    user_id: str, conversation_id: str, payload: InsertConversationSourcesRequest
+) -> None:
+    """Keep the given sources for the conversation (upsert, at most 500).
+
+    A conversation continued from a share link gets the snapshot's sources
+    here, so the copied answers' citations resolve in the new conversation.
+    """
+    await insert_conversation_sources(user_id, conversation_id, payload.sources)
 
 
 @router.post(

@@ -340,10 +340,10 @@ Appending coalesces consecutive delta events so the stored log stays block-lossl
 
 - `TEXT_MESSAGE_CHUNK`/`TEXT_MESSAGE_CONTENT` with the same `messageId` + namespace merge into one event with a concatenated `delta`; the merged event keeps the `seq` of the **last** merged wire event and gains `timestampEnd`.
 - `TOOL_CALL_ARGS` with the same `toolCallId` merge the same way.
-- `SUBAGENT_EVENT` envelopes merge one level down when they share a `task_id` and carry mergeable inner deltas.
+- `SUBAGENT_EVENT` envelopes merge one level down when they share a `task_id` and carry mergeable inner deltas. The agents service no longer emits them (every sub-agent is a background task since plan 41's cut-over); the rule stays for the legacy streams of older answers.
 - `THINKING_TEXT_MESSAGE_CONTENT` is **deliberately never coalesced** — each thinking event is a discrete thought step emitted by the agent, and merging them would collapse steps on hydration that the live stream rendered separately.
 - `TOOL_CALL_RESULT` content (top-level and SUBAGENT_EVENT-wrapped) is truncated at `settings.inference.tool_result_max_chars` (default 16000) with a `"truncated": true` flag; the agent saw the full output, only the stored/streamed copy is cut.
-- Every other event passes through unchanged. In particular the citation event of plan 42 — CUSTOM `SOURCES`, value `{"tool_call_id", "sources": [{id, url, title, snippet, tool}]}`, emitted right after its tool card and wrapped in `SUBAGENT_EVENT` for a sub-agent — has no coalesce key and is not a tool result, so it is stored, streamed, snapshotted and persisted to `messages.raw_events` exactly as the agents service sent it (two consecutive `SOURCES` events stay two entries). A background task's captured log (`conversation_tasks.raw_events`) keeps it the same way. The logs are capped by event count, not bytes (`REDIS_STREAM_MAXLEN` for the stream, `ASYNC_TASKS_RAW_EVENTS_MAX` for a task's log, whose oldest events are dropped past it), so a ~15 KB `SOURCES` event is never cut; a task log trimmed past its cap can lose an old one, which is why the sources are also stored per conversation and read through `GET /v1/conversations/{uid}/{cid}/sources` (see [conversation-management.md](conversation-management.md)).
+- Every other event passes through unchanged. In particular the citation event of plan 42 — CUSTOM `SOURCES`, value `{"tool_call_id", "sources": [{id, url, title, snippet, tool}]}`, emitted right after its tool card — has no coalesce key and is not a tool result, so it is stored, streamed, snapshotted and persisted to `messages.raw_events` exactly as the agents service sent it (two consecutive `SOURCES` events stay two entries). A background task's captured log (`conversation_tasks.raw_events`) keeps it the same way. The logs are capped by event count, not bytes (`REDIS_STREAM_MAXLEN` for the stream, `ASYNC_TASKS_RAW_EVENTS_MAX` for a task's log, whose oldest events are dropped past it), so a ~15 KB `SOURCES` event is never cut; a task log trimmed past its cap can lose an old one, which is why the sources are also stored per conversation and read through `GET /v1/conversations/{uid}/{cid}/sources` (see [conversation-management.md](conversation-management.md)).
 
 Alongside the log, `apply_event` still maintains flat aggregates — `content`, `thoughts`, `plan`, `subagents` (`tasks`/`interrupts`/`beforeAgent`; the heavyweight `events` key is no longer accumulated), `pending_interrupts` — but these serve previews, search, voice read-aloud, export, and the HITL pause decision only. **They are never the source of the rendered timeline**; that is always a fold over `raw_events`.
 
@@ -469,9 +469,9 @@ When the underlying LangGraph graph hits `__interrupt__`, the upstream `/stream`
 The bridge's `InferenceRunRuntime.apply_event` registers pending interrupt **identities** in `pending_interrupt_ids`, keyed by `interrupt.id`:
 
 - Top-level `CUSTOM HITL_INTERRUPT` → `register_interrupt(value)`
-- `CUSTOM SUBAGENT_EVENT` whose inner `event` is a `CUSTOM HITL_INTERRUPT` → `register_interrupt(inner.value)`
+- `CUSTOM SUBAGENT_EVENT` whose inner `event` is a `CUSTOM HITL_INTERRUPT` → `register_interrupt(inner.value)` (the blocking `task` path's shape; no longer emitted since plan 41's cut-over — an approval inside a background task pauses the task, not the run, see [async-subagents](async-subagents.md))
 
-A **sub-agent interrupt arrives through both shapes** (same `interrupt.id`), so registration dedupes — the second envelope is a no-op. This must never be a bare counter: counting both envelopes (+2) while each resume resolves one (−1) drifts the count upward across resume legs, and the run then waits for a resume forever after its genuine completion.
+In those legacy streams a **sub-agent interrupt arrives through both shapes** (same `interrupt.id`), so registration dedupes — the second envelope is a no-op. This must never be a bare counter: counting both envelopes (+2) while each resume resolves one (−1) drifts the count upward across resume legs, and the run then waits for a resume forever after its genuine completion.
 
 When `_do_stream` returns "completed", `_run` inspects the set:
 
@@ -517,7 +517,7 @@ The agents service compiles every `/stream` and `/resume` request against **one 
 **Checkpoint lifecycle — durable, reaped only on conversation delete.** The checkpoint is durable history, not scratch space:
 
 - `/stream` no longer releases anything on entry — a re-issued run must keep its committed checkpoint so it can resume.
-- At the end of every `/stream` and `/resume` leg, the agents service probes `compiled.aget_state(run_config).interrupts` via `utils.release_checkpoint_unless_paused`. This now manages **only the in-process namespace-binding cache** (keyed by `run_id`): if an interrupt is parked → keep the bindings so the next `/resume` rehydrates them; otherwise drop them. It **never deletes the Postgres checkpoint**. Threads are removed only by the conversation-delete reap (`adelete_thread`).
+- At the end of every `/stream` and `/resume` leg, the agents service probes `compiled.aget_state(run_config).interrupts` via `utils.release_checkpoint_unless_paused`. This now manages **only the normalizer's in-process run memory** (keyed by `run_id`: the background-task launches it already announced): if an interrupt is parked → keep it for the next `/resume`; otherwise drop it. It **never deletes the Postgres checkpoint**. Threads are removed only by the conversation-delete reap (`adelete_thread`).
 
 ### Decision payload shape
 
@@ -659,7 +659,7 @@ The original shared conversation is not mutated. The copied conversation belongs
 | Agents resume endpoint | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `resume_agent()` route |
 | Durable checkpointer accessor | [magenticx/agents/harness/checkpointer/store.py](../../magenticx/agents/harness/checkpointer/store.py) | `set_checkpointer()`, `get_checkpointer()`, `has_checkpointer_initialized()` — single process-wide `AsyncPostgresSaver` |
 | Copy-on-fork seeding | [magenticx/agents/harness/checkpointer/fork.py](../../magenticx/agents/harness/checkpointer/fork.py) | `seed_thread_from_checkpoint()` (used by `/stream` on `fork_from`) |
-| Namespace-cache release | [magenticx/agents/utils/checkpointer.py](../../magenticx/agents/utils/checkpointer.py) | `release_checkpoint_unless_paused()` — drops the per-`run_id` namespace cache only; never deletes Postgres |
+| Run-memory release | [magenticx/agents/utils/checkpointer.py](../../magenticx/agents/utils/checkpointer.py) | `release_checkpoint_unless_paused()` — drops the normalizer's per-`run_id` run memory only; never deletes Postgres |
 | Payload-mode decision + thread allocation | [magenticx/dialogue_bridge/utils/inference_runs.py](../../magenticx/dialogue_bridge/utils/inference_runs.py) | `_run()` (delta_resume / delta_fork / full_seed), `create_inference_run_record(mode=...)` |
 | Committed-ancestor lookup | [magenticx/dialogue_bridge/utils/inference.py](../../magenticx/dialogue_bridge/utils/inference.py) | `nearest_committed_ai()`, `prepare_inference_history()` |
 | Conversation reap (checkpoints + filesystem) | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `reap_conversation()` route |

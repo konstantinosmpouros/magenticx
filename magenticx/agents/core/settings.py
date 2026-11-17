@@ -831,15 +831,12 @@ class LangfuseSettings(BaseSettings):
 class AsyncTasksSettings(BaseSettings):
     """Async sub-agents (plan 41): every sub-agent runs as a background task.
 
-    ``enabled`` is on by default: every sub-agent is an async background task.
-    It is not set in any compose file. ``ASYNC_SUBAGENTS_ENABLED=false`` remains
-    only as an emergency switch back to the blocking ``task`` tool until the
-    cut-over removes that path. The caps fail closed: a refused start is a tool
-    error the model reads, never a hang.
+    There is no other way to run a sub-agent (the blocking ``task`` tool was
+    removed at the cut-over), so there is no switch. The caps fail closed: a
+    refused start is a tool error the model reads, never a hang.
     """
     model_config = _BASE_MODEL_CONFIG
 
-    enabled: bool = Field(True, validation_alias="ASYNC_SUBAGENTS_ENABLED")
     # Concurrent unsettled tasks (pending, running, waiting on children) per user.
     max_active_per_user: int = Field(16, ge=1, le=1000, validation_alias="ASYNC_TASKS_MAX_ACTIVE_PER_USER")
     # Unsettled children one parent (the orchestrator's branch, or a task) may have.

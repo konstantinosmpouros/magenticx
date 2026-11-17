@@ -185,32 +185,18 @@ def _runtime_context(config: Mapping[str, Any]) -> Any:
 def in_subagent(config: Mapping[str, Any] | None, *, context: Any = None) -> bool:
     """Whether this tool call runs inside a sub-agent.
 
-    Two kinds of sub-agent, two signals:
-
-    * **In-graph** (deepagents' blocking ``task``): LangGraph runs a tool as a
-      task in its agent's ``tools`` node, and deepagents runs a sub-agent
-      inside the parent's ``task`` tool — so a main-agent tool's checkpoint
-      namespace is one ``tools:<id>`` segment and a sub-agent's at least two
-      (``tools:<id>|tools:<id>``). The full path is in ``configurable`` (and
-      ``metadata.langgraph_checkpoint_ns``); ``metadata.checkpoint_ns`` holds
-      only the first segment, so it cannot tell the two apart.
-    * **Async task** (plan 41): it runs top-level on its own thread, so its
-      namespace looks like a main agent's. The runner marks its context with
-      ``async_task_id`` instead — read from the run's LangGraph context, or
-      from ``context``, the agent's context the tool was built with.
+    Every sub-agent is a background task (plan 41) running top-level on its
+    own thread, so its checkpoint namespace looks like a main agent's. The
+    runner marks its context with ``async_task_id`` instead — read from the
+    run's LangGraph context, or from ``context``, the agent's context the tool
+    was built with. (A task is never even given the tool; this is the refusal
+    behind that.)
     """
     if is_async_task_context(context):
         return True
     if not isinstance(config, Mapping):
         return False
-    if is_async_task_context(_runtime_context(config)):
-        return True
-    namespace = (config.get("configurable") or {}).get("checkpoint_ns") or (
-        config.get("metadata") or {}
-    ).get("langgraph_checkpoint_ns")
-    if not isinstance(namespace, str):
-        return False
-    return sum(1 for segment in namespace.split("|") if segment.startswith("tools:")) > 1
+    return is_async_task_context(_runtime_context(config))
 
 
 def _as_dict(question: Any) -> dict[str, Any]:

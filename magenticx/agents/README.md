@@ -142,7 +142,7 @@ sequenceDiagram
 
 - If `config.run_config.configurable.thread_id` is missing, a UUID is generated automatically.
 - MCP tools are attached only when MCP is on and the agent declares them in `agent.yaml` (or the user enabled them in Settings → Agents) and they match live tool identities. The request carries no tool list.
-- Deep agents additionally filter out tool names reserved by the deep-agent runtime such as `task`, `write_todos`, `ls`, `read_file`, and `execute`.
+- Deep agents additionally filter out tool names reserved by the deep-agent runtime such as `start_async_task`, `write_todos`, `ls`, `read_file`, and `execute`.
 - LangGraph checkpointing uses in-memory savers only. No persistent checkpoint store is configured in this service.
 - Stream failures are converted into a `RUN_ERROR` SSE payload instead of a partially broken HTTP response.
 
@@ -218,7 +218,7 @@ The stream is `text/event-stream` and carries AG-UI compatible frames such as:
 - thinking start/end and thought content
 - assistant text start/chunk/content/end
 - tool start/args/result/end
-- custom events for plan snapshots, sub-agent activity, and HITL interrupts
+- custom events for plan snapshots, background tasks started (`TASK_LAUNCHED`) or reported (`TASK_SETTLED_INLINE`), and HITL interrupts
 
 ## 6. AG-UI Streaming Normalization
 
@@ -228,12 +228,12 @@ Raw LangGraph and DeepAgent chunks are not sent directly to clients. They are no
 flowchart TD
     A[Raw runtime chunk] --> B{Mode}
     B -->|messages| C[Assistant text chunks]
-    B -->|updates| D[Tool calls / plans / HITL / sub-agent events]
+    B -->|updates| D[Tool calls / plans / HITL / task notifications]
 
     D --> E{Special case}
     E -->|__interrupt__| F[HITL_INTERRUPT custom event]
     E -->|write_todos| G[PLAN_SNAPSHOT custom event]
-    E -->|task| H[TASK_SUBAGENT custom event]
+    E -->|start_async_task| H[TASK_LAUNCHED custom event]
     E -->|other tool| I[TOOL_CALL_START / ARGS]
 
     C --> J[TEXT_MESSAGE events]
@@ -244,11 +244,11 @@ flowchart TD
 ### Normalization rules that matter
 
 - `messages` mode is used for assistant text and tool result messages.
-- `updates` mode is used for tool intent, plans, sub-agent activity, and interrupts.
+- `updates` mode is used for tool intent, plans, pulled task notifications, and interrupts.
 - `__interrupt__` is translated into a dedicated `HITL_INTERRUPT` custom event.
 - `write_todos` is collapsed into a single plan snapshot event instead of a normal tool lifecycle.
-- `task` is collapsed into sub-agent assignment and nested sub-agent stream envelopes.
-- Sub-agent namespaces are wrapped into `SUBAGENT_EVENT` envelopes so the UI can correlate nested activity with delegated tasks.
+- `start_async_task` / `update_async_task` become `TASK_LAUNCHED` once their result names the task.
+- Nothing runs nested in a run's graph: every sub-agent is a background task streaming on its own thread (see `docs/flows/async-subagents.md`).
 
 ## 7. Agent Registry
 
@@ -365,8 +365,8 @@ flowchart TD
     C --> D[register sub-agents]
     D --> E[register main deep agent]
     E --> F[astream payload]
-    F --> G[researcher sub-agent]
-    F --> H[writer sub-agent]
+    F --> G[researcher task]
+    F --> H[writer task]
     F --> I[configured MCP tools]
 ```
 
@@ -379,7 +379,7 @@ Implementation notes:
 
 - The main runtime is built via `create_deep_agent(...)`.
 - Skills live under `deep_agents/omni_agent/skills/`.
-- AG-UI normalization handles nested sub-agent events coming back from the deep-agent runtime.
+- Every sub-agent runs as a background task on its own thread (plan 41); its events reach the UI through the task drill-down, not the orchestrator's stream.
 
 ## 9. Tool Loading and MCP Integration
 

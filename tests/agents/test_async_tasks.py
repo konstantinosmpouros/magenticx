@@ -373,9 +373,8 @@ def _tree_agent_class(agents_service):
 
 @pytest_asyncio.fixture
 async def env(agents_service, monkeypatch):
-    """The service with async sub-agents on, a runner over the fake store, fakeredis."""
+    """The service with a runner over the fake store, and fakeredis."""
     settings = agents_service.settings_module.settings
-    settings.async_tasks.enabled = True
     settings.mcp.mcp_gateway_url = ""
     GATES.clear()
     WAITING.clear()
@@ -683,16 +682,9 @@ async def test_notification_matches_what_the_middleware_records(env):
     assert "evil" not in replayed[1].additional_kwargs
 
 
-async def test_flag_off_keeps_the_blocking_task_tool(env):
-    env.settings.async_tasks.enabled = False
-    agent = env.definition.build(config=_root_config(env))
-    await agent.ensure_built()
-    names = set(agent.compiled.get_graph().nodes)
-    tools = _tool_names(agent)
-    assert "task" in tools and "start_async_task" not in tools, names
-
-
-async def test_flag_on_gives_the_five_task_tools(env):
+async def test_an_agent_gets_the_five_task_tools(env):
+    # (No blocking `task` beside them: test_no_blocking_task_tool_is_built, with
+    # a real model spec — these scripted model instances cannot be keyed.)
     agent = env.definition.build(config=_root_config(env))
     await agent.ensure_built()
     tools = _tool_names(agent)

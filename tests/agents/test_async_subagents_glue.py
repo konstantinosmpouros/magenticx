@@ -6,14 +6,12 @@ What is pinned here:
   a task notification deepagents pulled into a running run into
   ``TASK_SETTLED_INLINE`` — the shapes the UI parses (plan 41 §14.4) — and a
   notification is never rendered as the user's text;
-* ``start_async_task`` owns the delegation gate, and ``task`` /
-  ``start_async_task`` are one gate under two names at every layer, so stored
-  preferences (migrated to the new name) and stored definitions (still on the
-  old one) gate whichever tool the run has;
-* ``AgentSpec`` reads ``hitl.task`` as ``hitl.start_async_task``;
+* ``start_async_task`` owns the delegation gate, and the blocking ``task``
+  tool is gone from every list;
+* ``AgentSpec`` reads a stored ``hitl.task`` as ``hitl.start_async_task``;
 * an async task run is a sub-agent for ``ask_user`` (the ``async_task_id``
   context marker), though its namespace looks like a main agent's;
-* the background-delegation guidance appears only when the run says so.
+* the background-delegation guidance appears only for an agent that delegates.
 """
 from __future__ import annotations
 
@@ -299,19 +297,22 @@ def test_a_failed_update_stays_a_visible_errored_tool_call(normalizer):
     assert _kinds(ended)[:2] == ["TOOL_CALL_START", "TOOL_CALL_ARGS"]
 
 
-def test_the_blocking_task_tool_still_emits_its_subagent_events(normalizer):
-    # Until cut-over the old path stays: TASK_SUBAGENT on the call,
-    # SUBAGENT_COMPLETED on the result, no TASK_LAUNCHED.
+def test_a_call_to_the_removed_task_tool_is_an_ordinary_tool_card(normalizer):
+    # A run paused before the cut-over may still resume onto a `task` call: the
+    # tool no longer exists, so its result is LangGraph's "not a valid tool"
+    # error, shown as any other errored tool call — never a sub-agent card.
     norm = normalizer.AGUIStreamNormalizer(thread_id="t-sync")
     call = AIMessage(
         content="",
         tool_calls=[{"id": "task-1", "name": "task", "args": {"subagent_type": "a", "description": "d"}}],
     )
     started = norm.handle_chunk(("updates", {"model": {"messages": [call]}}))
-    ended = norm.handle_chunk(("messages", ToolMessage(content="done", tool_call_id="task-1", name="task")))
+    ended = norm.handle_chunk(("messages", ToolMessage(
+        content="Error: task is not a valid tool", tool_call_id="task-1", name="task", status="error")))
 
-    assert _kinds(started) == ["TASK_SUBAGENT"]
-    assert _kinds(ended) == ["SUBAGENT_COMPLETED"]
+    assert _kinds(started) == ["TOOL_CALL_START", "TOOL_CALL_ARGS"]
+    assert _kinds(ended) == ["TOOL_CALL_RESULT", "TOOL_CALL_END"]
+    assert _decode(ended[0])["error"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +427,7 @@ def test_text_then_a_pulled_result_keeps_the_text_stream_intact(normalizer):
 
 
 # ---------------------------------------------------------------------------
-# Gates: one delegation gate under two names
+# Gates and the tool lists: start_async_task is the delegation gate
 # ---------------------------------------------------------------------------
 def _resolve(gates, *, own=None, approvals=None):
     return gates.resolve_interrupt_on(
@@ -437,56 +438,20 @@ def _resolve(gates, *, own=None, approvals=None):
 def test_start_async_task_is_gated_by_default_and_the_follow_ups_are_not(gates):
     resolved = _resolve(gates)
     assert resolved["start_async_task"] is True
-    assert resolved["task"] is True
+    assert "task" not in resolved
     for name in ("check_async_task", "update_async_task", "cancel_async_task", "list_async_tasks"):
         assert name not in resolved
 
 
-@pytest.mark.parametrize("key", ["task", "start_async_task"])
-def test_a_user_clearing_either_name_clears_both(gates, key):
-    resolved = _resolve(gates, approvals={key: False})
-    assert "task" not in resolved
+def test_a_user_can_clear_the_delegation_gate_but_never_execute(gates):
+    resolved = _resolve(gates, approvals={"start_async_task": False, "execute": False})
     assert "start_async_task" not in resolved
+    assert resolved["execute"] is True
 
 
-@pytest.mark.parametrize("key", ["task", "start_async_task"])
-def test_an_agents_own_gate_under_either_name_gates_both(gates, key):
-    resolved = _resolve(gates, own={key: False}, approvals={key: True})
-    assert resolved["task"] is True
-    assert resolved["start_async_task"] is True
-
-
-@pytest.mark.parametrize("key", ["task", "start_async_task"])
-def test_an_agent_clearing_either_name_clears_both(gates, key):
-    resolved = _resolve(gates, own={key: False})
-    assert not resolved.get("task")
-    assert not resolved.get("start_async_task")
-
-
-def test_a_migrated_preference_gates_the_blocking_task_while_async_is_off(gates):
-    # The bridge rewrote the stored `task` preference as `start_async_task`;
-    # the run still has only `task` until the flag flips.
-    resolved = _resolve(gates, own={"task": False}, approvals={"start_async_task": True})
-    assert resolved["task"] is True
-
-
-def test_a_layer_stating_both_names_keeps_each(gates):
-    resolved = _resolve(gates, approvals={"task": True, "start_async_task": False})
-    assert resolved["task"] is True
-    assert "start_async_task" not in resolved
-
-
-def test_the_alias_never_reaches_execute(gates):
-    assert _resolve(gates, approvals={"task": False, "execute": False})["execute"] is True
-
-
-def test_with_gate_aliases_copies_only_missing_names(gates):
-    assert gates.with_gate_aliases({"task": True}) == {"task": True, "start_async_task": True}
-    assert gates.with_gate_aliases({"start_async_task": False}) == {
-        "start_async_task": False,
-        "task": False,
-    }
-    assert gates.with_gate_aliases(None) == {}
+def test_an_agents_own_gate_is_a_layer_the_user_overrides(gates):
+    assert not _resolve(gates, own={"start_async_task": False}).get("start_async_task")
+    assert _resolve(gates, own={"start_async_task": False}, approvals={"start_async_task": True})["start_async_task"] is True
 
 
 def test_the_async_task_tools_are_reserved_names(builtins):
@@ -498,36 +463,29 @@ def test_the_async_task_tools_are_reserved_names(builtins):
         "list_async_tasks",
     ):
         assert builtins.is_builtin(name)
+    # The blocking `task` tool is gone: no run has it, so it reserves nothing.
+    assert not builtins.is_builtin("task")
 
 
-def test_the_builder_lists_the_delegation_tools_of_the_mode_it_runs(builtins):
-    off = {t["name"]: t for t in builtins.builtin_tool_catalog()}
-    on = {t["name"]: t for t in builtins.builtin_tool_catalog(async_subagents=True)}
+def test_the_builder_lists_the_async_delegation_tools(builtins):
+    listed = {t["name"]: t for t in builtins.builtin_tool_catalog()}
 
-    assert "task" in off and "start_async_task" not in off
-    assert "task" not in on
-    assert on["start_async_task"]["hitlDefault"] is True
+    assert "task" not in listed
+    assert listed["start_async_task"]["hitlDefault"] is True
     for name in ("check_async_task", "update_async_task", "cancel_async_task", "list_async_tasks"):
-        assert on[name]["hitlDefault"] is False
+        assert listed[name]["hitlDefault"] is False
 
 
-def test_a_runs_delegation_tool_follows_the_flag(builtins):
-    def available(name, flag):
+def test_every_run_has_the_delegation_tools(builtins):
+    for name in ("start_async_task", "check_async_task", "update_async_task", "cancel_async_task", "list_async_tasks"):
         present, reason = builtins.resolve_availability(
             builtins.BUILTIN_BY_NAME[name],
-            use_memory=True,
-            search_past_convs=True,
+            use_memory=False,
+            search_past_convs=False,
             has_conversation=True,
             sandbox_enabled=False,
-            async_subagents=flag,
         )
-        return present, reason
-
-    assert available("task", False) == (True, None)
-    assert available("start_async_task", True) == (True, None)
-    assert available("task", True)[0] is False
-    assert available("start_async_task", False)[0] is False
-    assert available("start_async_task", False)[1]
+        assert (present, reason) == (True, None), name
 
 
 # ---------------------------------------------------------------------------
@@ -565,11 +523,10 @@ def test_a_re_saved_definition_carries_only_the_new_key(agent_spec):
     assert dumped["hitl"] == {"start_async_task": True}
 
 
-def test_the_normalised_gate_still_gates_the_blocking_task(agent_spec, gates):
-    spec = _spec(agent_spec, {"task": False})
-    resolved = _resolve(gates, own=spec.hitl)
-    assert not resolved.get("task")
-    assert not resolved.get("start_async_task")
+def test_a_stored_task_gate_reaches_start_async_task(agent_spec, gates):
+    # A definition stored before the cut-over still gates (or clears) delegation.
+    assert not _resolve(gates, own=_spec(agent_spec, {"task": False}).hitl).get("start_async_task")
+    assert _resolve(gates, own=_spec(agent_spec, {"task": True}).hitl)["start_async_task"] is True
 
 
 def test_the_seed_omni_definition_loads_with_the_new_key(agent_spec):
@@ -598,7 +555,7 @@ def test_the_task_marker_is_read_from_the_run_context(ask_user, context, expecte
 
 
 def test_a_top_level_task_run_is_a_sub_agent(ask_user):
-    # One `tools:` segment: by namespace alone it would pass for the main agent.
+    # Its namespace looks like a main agent's: only the context marker tells.
     config = {
         "configurable": {
             "checkpoint_ns": "tools:7f1c",
@@ -664,13 +621,11 @@ def test_a_task_run_refuses_through_a_real_deep_agent(ask_user):
 
 
 # ---------------------------------------------------------------------------
-# Prompts: background delegation only when the run has it
+# Prompts: background delegation only for an agent that delegates
 # ---------------------------------------------------------------------------
-def test_the_async_delegation_rules_appear_only_when_the_run_has_them(pe):
-    on = pe.compose_system_prompt(
-        "x", pe.PromptContext(has_conversation=True, has_subagents=True, async_subagents=True)
-    )
-    off = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True, has_subagents=True))
+def test_the_async_delegation_rules_appear_only_when_the_agent_delegates(pe):
+    on = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True, has_subagents=True))
+    off = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True))
 
     for verb in ("start_async_task", "update_async_task", "cancel_async_task", "check_async_task"):
         assert f"`{verb}`" in on
@@ -682,40 +637,18 @@ def test_the_async_delegation_rules_appear_only_when_the_run_has_them(pe):
 def test_resuming_a_task_goes_through_update_not_a_new_task(pe):
     # "Resume it" must continue the same task (same thread, its work so far),
     # never launch a duplicate.
-    on = pe.compose_system_prompt(
-        "x", pe.PromptContext(has_conversation=True, has_subagents=True, async_subagents=True)
-    )
+    on = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True, has_subagents=True))
     assert "**resume, continue or restart**" in on
     assert "Never start a new task with `start_async_task` for work an existing task" in on
     nested = importlib.import_module("harness.prompt_engineering.prompts.capabilities_prompt")
-    assert "resume or continue a task" in nested.DELEGATING_ASYNC_SUBAGENT_PROMPT
+    assert "resume or continue a task" in nested.DELEGATING_SUBAGENT_PROMPT
 
 
+def test_a_delegating_sub_agent_is_told_how_to_start_its_own_tasks(caps):
+    prompt = caps.delegating_subagent_prompt("Base.")
 
-def test_the_async_rules_need_an_agent_that_can_delegate(pe):
-    alone = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True, async_subagents=True))
-    assert "start_async_task" not in alone
-
-
-def test_a_delegating_sub_agent_gets_the_wording_of_its_mode(caps):
-    blocking = caps.delegating_subagent_prompt("Base.")
-    background = caps.delegating_subagent_prompt("Base.", async_subagents=True)
-
-    assert blocking == f"Base.\n\n{caps.DELEGATING_SUBAGENT_PROMPT}"
-    assert "wait for every result" in blocking
-    assert background == f"Base.\n\n{caps.DELEGATING_ASYNC_SUBAGENT_PROMPT}"
-    assert "`start_async_task`" in background
-    assert "do not poll" in background
-    assert "`task`" not in background
-
-
-def test_the_tools_page_leaves_out_the_delegation_mode_it_does_not_run(builtins):
-    # `task` is not "unavailable for this run" once sub-agents are async — no
-    # run on the deployment can have it — so the agent's Tools page omits it.
-    replaced = builtins.replaced_by_delegation_mode
-    by_name = builtins.BUILTIN_BY_NAME
-    assert replaced(by_name["task"], async_subagents=True) is True
-    assert replaced(by_name["start_async_task"], async_subagents=True) is False
-    assert replaced(by_name["task"], async_subagents=False) is False
-    assert replaced(by_name["start_async_task"], async_subagents=False) is True
-    assert replaced(by_name["write_file"], async_subagents=True) is False
+    assert prompt == f"Base.\n\n{caps.DELEGATING_SUBAGENT_PROMPT}"
+    assert caps.delegating_subagent_prompt(None) == caps.DELEGATING_SUBAGENT_PROMPT
+    assert "`start_async_task`" in prompt
+    assert "do not poll" in prompt
+    assert "`task`" not in prompt

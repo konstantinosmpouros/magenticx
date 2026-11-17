@@ -127,13 +127,17 @@ time only the attempt that answered, never a 429 wait.
 
 The accumulator (`InferenceRunRuntime`) sums each call once, keyed by its
 message id. It also groups the call by **(scope, agent, model)**:
-- **Scope** is `main` for a call at the top level, or `subagent` for one
-  wrapped in `SUBAGENT_EVENT`, or `compaction` for the main agent's summary
-  call when it compacts (`TOKEN_USAGE` with `purpose: compaction`, plan 34).
-- **Agent** names the sub-agent through a `task_id → subagent_type` map built
-  from `TASK_SUBAGENT`.
-- A call first seen bare and then wrapped moves to its sub-agent; it is never
-  counted twice.
+- **Scope** is `main` for a call at the top level, or `compaction` for the
+  main agent's summary call when it compacts (`TOKEN_USAGE` with
+  `purpose: compaction`, plan 34). Every sub-agent is a background task
+  (plan 41): its spend is booked separately when the task settles, with scope
+  `subagent` and its tree path as the agent, on the answer that launched the
+  tree ([async-subagents](async-subagents.md)).
+- Answers recorded before plan 41's cut-over may also hold the blocking
+  `task` path's `SUBAGENT_EVENT` envelopes: a call wrapped in one is `subagent`
+  scope, named through a `task_id → subagent_type` map built from
+  `TASK_SUBAGENT`, and a call first seen bare and then wrapped moves to its
+  sub-agent; it is never counted twice.
 
 `TOOL_USAGE` is folded the same way (`_accumulate_tool_usage`): deduped by
 `tool_call_id`, grouped by **(scope, agent, tool)**, `errors` += 1 when

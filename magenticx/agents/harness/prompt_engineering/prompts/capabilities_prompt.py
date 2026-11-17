@@ -77,11 +77,11 @@ _ORCHESTRATOR = """\
   `present_artifact` call made by a sub-agent is ignored, and the user never
   sees the file."""
 
-#: For an orchestrator whose sub-agents run as background tasks (plan 41,
-#: ``async_subagents``). deepagents' own async middleware lists the sub-agent
-#: types and the tools' mechanics; this says how a turn should go around them:
-#: the launch does not block, so the conversation goes on, and the result
-#: arrives by itself — polling for it only burns turns.
+#: For an orchestrator: its sub-agents run as background tasks (plan 41).
+#: deepagents' own async middleware lists the sub-agent types and the tools'
+#: mechanics; this says how a turn should go around them: the launch does not
+#: block, so the conversation goes on, and the result arrives by itself —
+#: polling for it only burns turns.
 _ASYNC_SUBAGENTS = """\
 - **Delegate in the background** with `start_async_task`. It starts the
   sub-agent and returns a task id at once, while the sub-agent works on its
@@ -111,26 +111,12 @@ _ASYNC_SUBAGENTS = """\
     waiting for their approval, and carry on with anything else."""
 
 
-#: For a sub-agent that has sub-agents of its own. deepagents' `task` guidance
-#: (when to delegate, how a sub-agent's life goes) reaches it through its own
-#: SubAgentMiddleware, exactly as it reaches the main agent; this adds what is
-#: different one level down: its reply is not the user's answer, and it cannot
-#: hand a document to the user itself.
+#: For a background task that has sub-agents of its own (plan 41). deepagents'
+#: async middleware lists them and the tools' mechanics; this adds what is
+#: different one level down: its reply is not the user's answer, it cannot hand
+#: a document to the user itself, and each result arrives as a notification —
+#: "do not poll, you will be told".
 DELEGATING_SUBAGENT_PROMPT = """\
-## Your Own Sub-agents
-
-You are a sub-agent, and you can delegate parts of your task to sub-agents of
-your own with the `task` tool. Each one starts with nothing but the task you
-give it: put everything it needs in the description and say exactly what it
-should return. Launch independent tasks together, and wait for every result
-before you reply. Only your final message goes back to the agent that called
-you, so fold your sub-agents' findings into it — including the paths of any
-files they wrote; neither you nor they can present a file to the user."""
-
-#: The same, for a task whose sub-agents run as background tasks too (plan 41):
-#: the launch returns at once and each result arrives as a notification, so
-#: "wait for every result" becomes "do not poll, you will be told".
-DELEGATING_ASYNC_SUBAGENT_PROMPT = """\
 ## Your Own Sub-agents
 
 You are a sub-agent, and you can delegate parts of your task to sub-agents of
@@ -149,15 +135,10 @@ started you, so fold your sub-agents' findings into it — including the paths
 of any files they wrote; neither you nor they can present a file to the user."""
 
 
-def delegating_subagent_prompt(system_prompt: str | None, *, async_subagents: bool = False) -> str:
-    """A sub-agent's own instructions, plus how to use its sub-agents.
-
-    ``async_subagents`` picks the background-task wording (plan 41); off, the
-    blocking ``task`` wording stays exactly as before.
-    """
-    section = DELEGATING_ASYNC_SUBAGENT_PROMPT if async_subagents else DELEGATING_SUBAGENT_PROMPT
+def delegating_subagent_prompt(system_prompt: str | None) -> str:
+    """A sub-agent's own instructions, plus how to use its sub-agents."""
     base = (system_prompt or "").strip()
-    return f"{base}\n\n{section}" if base else section
+    return f"{base}\n\n{DELEGATING_SUBAGENT_PROMPT}" if base else DELEGATING_SUBAGENT_PROMPT
 
 
 def capabilities_prompt(context: PromptContext) -> str:
@@ -166,9 +147,7 @@ def capabilities_prompt(context: PromptContext) -> str:
         return ""
     body = _BODY
     if context.has_subagents:
-        body = f"{body}\n{_ORCHESTRATOR}"
-        if context.async_subagents:
-            body = f"{body}\n{_ASYNC_SUBAGENTS}"
+        body = f"{body}\n{_ORCHESTRATOR}\n{_ASYNC_SUBAGENTS}"
     if context.has_ask_user:
         body = f"{body}\n{_ASK_USER}"
     if context.sandbox_enabled:
@@ -177,7 +156,6 @@ def capabilities_prompt(context: PromptContext) -> str:
 
 
 __all__ = [
-    "DELEGATING_ASYNC_SUBAGENT_PROMPT",
     "DELEGATING_SUBAGENT_PROMPT",
     "capabilities_prompt",
     "delegating_subagent_prompt",

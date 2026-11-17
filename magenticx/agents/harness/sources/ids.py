@@ -77,6 +77,22 @@ def source_id(url: str) -> str:
     return _digest(normalise_url(url))[:SHORT_ID_LENGTH]
 
 
+def id_matches_url(candidate: str, url: str) -> bool:
+    """Whether ``candidate`` is an id ``url`` can have: the 6-character id, or
+    the 8-character one it gets after a clash. False for a URL without a host.
+
+    For sources that arrive from outside a tool call (a share snapshot's,
+    inserted into a continued conversation): an id that is not its URL's would
+    make a citation open a page other than the one the answer was written from.
+    """
+    if len(candidate) not in (SHORT_ID_LENGTH, LONG_ID_LENGTH):
+        return False
+    try:
+        return _digest(normalise_url(url)).startswith(candidate)
+    except ValueError:
+        return False
+
+
 def assign_ids(normalised_urls: Iterable[str]) -> dict[str, str]:
     """An id for each distinct normalised URL of one tool result.
 
@@ -99,6 +115,7 @@ __all__ = [
     "LONG_ID_LENGTH",
     "SHORT_ID_LENGTH",
     "assign_ids",
+    "id_matches_url",
     "normalise_url",
     "source_id",
     "strip_tracking",

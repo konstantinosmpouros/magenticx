@@ -608,7 +608,7 @@ class _FakeAgent:
 async def test_release_checkpoint_unless_paused_empty_run_id(agents_service, monkeypatch):
     util = agents_service.checkpointer_util
     released: list[str] = []
-    monkeypatch.setattr(util, "release_namespace_bindings", lambda run_id: released.append(run_id))
+    monkeypatch.setattr(util, "release_run_memory", lambda run_id: released.append(run_id))
     await util.release_checkpoint_unless_paused(object(), "")
     assert released == []
 
@@ -616,7 +616,7 @@ async def test_release_checkpoint_unless_paused_empty_run_id(agents_service, mon
 async def test_release_checkpoint_unless_paused_keeps_on_pending_interrupt(agents_service, monkeypatch):
     util = agents_service.checkpointer_util
     released: list[str] = []
-    monkeypatch.setattr(util, "release_namespace_bindings", lambda run_id: released.append(run_id))
+    monkeypatch.setattr(util, "release_run_memory", lambda run_id: released.append(run_id))
 
     agent = _FakeAgent(
         compiled=_FakeCompiled(snapshot=_FakeSnapshot(interrupts=["pending"])),
@@ -629,7 +629,7 @@ async def test_release_checkpoint_unless_paused_keeps_on_pending_interrupt(agent
 async def test_release_checkpoint_unless_paused_releases_when_no_interrupt(agents_service, monkeypatch):
     util = agents_service.checkpointer_util
     released: list[str] = []
-    monkeypatch.setattr(util, "release_namespace_bindings", lambda run_id: released.append(run_id))
+    monkeypatch.setattr(util, "release_run_memory", lambda run_id: released.append(run_id))
 
     agent = _FakeAgent(
         compiled=_FakeCompiled(snapshot=_FakeSnapshot(interrupts=[])),
@@ -642,7 +642,7 @@ async def test_release_checkpoint_unless_paused_releases_when_no_interrupt(agent
 async def test_release_checkpoint_unless_paused_releases_on_probe_failure(agents_service, monkeypatch):
     util = agents_service.checkpointer_util
     released: list[str] = []
-    monkeypatch.setattr(util, "release_namespace_bindings", lambda run_id: released.append(run_id))
+    monkeypatch.setattr(util, "release_run_memory", lambda run_id: released.append(run_id))
 
     agent = _FakeAgent(
         compiled=_FakeCompiled(raises=True),
@@ -655,7 +655,7 @@ async def test_release_checkpoint_unless_paused_releases_on_probe_failure(agents
 async def test_release_checkpoint_unless_paused_no_aget_state(agents_service, monkeypatch):
     util = agents_service.checkpointer_util
     released: list[str] = []
-    monkeypatch.setattr(util, "release_namespace_bindings", lambda run_id: released.append(run_id))
+    monkeypatch.setattr(util, "release_run_memory", lambda run_id: released.append(run_id))
 
     # Agent without a `.compiled.aget_state` → falls straight to release.
     agent = _FakeAgent(compiled=None, run_config={})

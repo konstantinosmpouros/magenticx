@@ -11,8 +11,8 @@ import type { RunTimeline, SubagentBlock } from "@/shared/lib/types";
 
 /**
  * A sub-agent that delegates in turn, with the events in the exact shape the
- * agents service emits them (tests/agents/test_agui_nested_subagents.py drives
- * a real nested deepagents run through the normalizer to pin that shape):
+ * agents service emitted them before the plan 41 cut-over (blocking `task`
+ * sub-agents; answers stored then still replay these events):
  *
  *  - the nested `task` call (TASK_SUBAGENT) arrives inside the parent's envelope;
  *  - the nested sub-agent's own events arrive as top-level SUBAGENT_EVENTs keyed

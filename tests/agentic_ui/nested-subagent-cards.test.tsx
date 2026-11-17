@@ -23,8 +23,9 @@ import { foldTimeline, subagentRunStatus } from "@/features/inference/timeline";
 import type { RunTimeline, SubagentBlock } from "@/shared/lib/types";
 
 /**
- * The nested example agent (tests/agents/fixtures/agents/nested-research-demo:
- * main → researcher → fact-checker), as the chat draws it — from the events the
+ * A nested example agent recorded before the plan 41 cut-over (stored answers
+ * keep these blocking-`task` events; the recording agent is gone):
+ * main → researcher → fact-checker, as the chat draws it — from the events the
  * agents service streamed for it through its real build path, paused on the
  * `task` gate at both levels and approved:
  *

@@ -19,7 +19,7 @@ counted as an error, timed like any other call. Should a tool raise past it
 unchanged — there is no message to stamp, and ``GraphBubbleUp`` (a HITL pause,
 a parent command) is control flow that must reach the runner untouched.
 
-A ``Command`` result (``task``, state-writing tools) is stamped on the
+A ``Command`` result (state-writing tools) is stamped on the
 ToolMessage it carries for this call, with ``output_chars`` 0: its real output
 is a state update, not text the model reads back.
 """

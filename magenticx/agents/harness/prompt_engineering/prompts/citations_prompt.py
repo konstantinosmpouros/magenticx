@@ -10,7 +10,9 @@ The section states the outcome in a few lines (the prompt-engineering review of
 said — the tool descriptions do not repeat it — and it is gated on
 ``has_source_tools``, so an agent without a search tool composes exactly the
 prompt it had before. Background tasks get it too: a task's result keeps its
-markers, and the orchestrator carries them into its answer.
+markers, and the orchestrator carries them into its answer. A file is not
+the chat: there the agent links the page (``SourcesMiddleware`` also turns any
+marker left in a ``write_file`` / ``edit_file`` into a link).
 """
 from __future__ import annotations
 
@@ -23,7 +25,11 @@ Search results come with ids like `[src:3fa2c1]`. When a sentence states \
 something you took from a result, end it with that marker, before the full \
 stop; several sources are `[src:3fa2c1,9b02e4]`. Cite only ids you were given, \
 and only for what that source says. Keep the markers when you hand a result \
-back to another agent. Don't add a list of sources at the end: the chat builds it."""
+back to another agent. Don't add a list of sources at the end: the chat builds it.
+
+Inside a file you write, link the page instead \
+(`[imf.org](https://www.imf.org/...)`). Your chat reply keeps the markers, even \
+when it repeats what a file says."""
 
 
 def citations_prompt(context: PromptContext) -> str:

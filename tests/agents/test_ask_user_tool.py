@@ -141,25 +141,6 @@ def test_a_skip_tells_the_model_to_carry_on_with_assumptions(ask_user):
     assert _tool_result("ask-2") == ask_user.SKIPPED_REPLY
 
 
-def test_a_sub_agent_is_refused_instead_of_pausing_the_run(ask_user):
-    # The general-purpose sub-agent inherits the parent's tools, ask_user among them.
-    agent = _agent(
-        ask_user,
-        [
-            _call("task-1", "task", {"subagent_type": "general-purpose", "description": "look into it"}),
-            _call("ask-sub", "ask_user", {"questions": QUESTIONS[:1]}),
-            AIMessage(content="sub done"),
-            AIMessage(content="final"),
-        ],
-    )
-    config = {"configurable": {"thread_id": "ask-sub"}}
-    state = _run(agent, {"messages": [{"role": "user", "content": "go"}]}, config)
-
-    assert state.interrupts == ()
-    assert _tool_result("ask-sub") == ask_user.SUBAGENT_REFUSAL
-    assert state.values["messages"][-1].content == "final"
-
-
 # ---------------------------------------------------------------------------
 # The pieces
 # ---------------------------------------------------------------------------
@@ -185,34 +166,17 @@ def test_the_result_joins_choices_and_free_text(ask_user):
     ]
 
 
-@pytest.mark.parametrize(
-    "namespace, nested",
-    [
-        ("tools:7f1c", False),  # a main-agent tool runs one `tools:` task deep
-        ("tools:7f1c|tools:a90e", True),  # a sub-agent's, inside the `task` tool
-        ("tools:7f1c|tools:a90e|tools:0b2d", True),  # a nested sub-agent's
-        ("", False),
-    ],
-)
-def test_a_sub_agent_is_recognised_from_the_checkpoint_namespace(ask_user, namespace, nested):
-    assert ask_user.in_subagent({"configurable": {"checkpoint_ns": namespace}}) is nested
-    assert ask_user.in_subagent({"metadata": {"langgraph_checkpoint_ns": namespace}}) is nested
+@pytest.mark.parametrize("namespace", ["tools:7f1c", "tools:7f1c|tools:a90e", ""])
+def test_the_checkpoint_namespace_does_not_decide_it(ask_user, namespace):
+    # Every sub-agent is a background task (plan 41), marked by its run
+    # context (test_async_subagents_glue), never by a nested namespace.
+    assert ask_user.in_subagent({"configurable": {"checkpoint_ns": namespace}}) is False
+    assert ask_user.in_subagent({"metadata": {"langgraph_checkpoint_ns": namespace}}) is False
 
 
 def test_without_a_namespace_the_call_is_the_main_agents(ask_user):
     assert ask_user.in_subagent(None) is False
     assert ask_user.in_subagent({}) is False
-
-
-def test_the_tool_refuses_when_invoked_inside_a_sub_agent(ask_user):
-    tool = ask_user.build_ask_user_tool()
-    result = asyncio.run(
-        tool.ainvoke(
-            {"questions": QUESTIONS[:1]},
-            config={"configurable": {"checkpoint_ns": "tools:a|tools:b"}},
-        )
-    )
-    assert result == ask_user.SUBAGENT_REFUSAL
 
 
 @pytest.mark.parametrize(

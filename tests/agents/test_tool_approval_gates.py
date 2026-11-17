@@ -83,7 +83,7 @@ def test_a_builtin_gates_under_its_own_name(resolve):
 
 
 def test_both_kinds_resolve_together(resolve):
-    assert resolve({"arxiv/search_papers": True, "task": True}) == {"search_papers": True, "task": True}
+    assert resolve({"arxiv/search_papers": True, "start_async_task": True}) == {"search_papers": True, "start_async_task": True}
 
 
 def test_a_key_matching_nothing_gates_nothing(resolve):

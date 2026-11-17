@@ -33,21 +33,19 @@ def _run(*chunks) -> list[dict]:
     return events
 
 
-def _msg(message, ns=()):
-    return (ns, "messages", (message, {}))
+def _msg(message):
+    return ((), "messages", (message, {}))
 
 
-def _upd(node, message, ns=()):
-    return (ns, "updates", {node: {"messages": [message]}})
+def _upd(node, message):
+    return ((), "updates", {node: {"messages": [message]}})
 
 
 def _flat(events):
-    """(actor, event), sub-agent envelopes unwrapped."""
+    """(actor, event): every event is the run's own agent's — a sub-agent is a
+    background task streaming on its own thread, never nested in this stream."""
     for event in events:
-        if event["type"] == "CUSTOM" and event["name"] == "SUBAGENT_EVENT":
-            yield event["value"]["task_id"], event["value"]["event"]
-        else:
-            yield None, event
+        yield None, event
 
 
 def _types(events, actor=None):
@@ -118,28 +116,6 @@ def test_thinking_spans_thoughts_and_tools_and_ends_before_the_reply():
     assert types.index("THINKING_END") < types.index("TEXT_MESSAGE_START")
 
 
-def test_a_sub_agent_has_its_own_well_ordered_message():
-    ns = ("tools:node-a",)
-    events = _run(
-        _upd("model", AIMessage(content="", id="m1", tool_calls=[
-            {"id": "call-a", "name": "task", "args": {"subagent_type": "research", "description": "Find it"}}])),
-        ((), "tasks", {"id": "node-a", "name": "tools", "input": [
-            {"id": "call-a", "name": "task", "args": {"description": "Find it"}}]}),
-        _msg(AIMessageChunk(content="Sub says hi", id="s1"), ns),
-        _upd("model", AIMessage(content="Sub says hi", id="s1"), ns),
-        _upd("tools", ToolMessage(content="Sub says hi", tool_call_id="call-a", name="task")),
-        _msg(AIMessageChunk(content="Final.", id="m2")),
-        _upd("model", AIMessage(content="Final.", id="m2")),
-    )
-    _assert_well_ordered(events)
-    assert _types(events, "call-a") == [
-        "BEFORE_AGENT_EVENT", "TEXT_MESSAGE_START", "TEXT_MESSAGE_CHUNK", "TEXT_MESSAGE_END",
-    ]
-    assert _types(events) == [
-        "TASK_SUBAGENT", "SUBAGENT_COMPLETED", "TEXT_MESSAGE_START", "TEXT_MESSAGE_CHUNK", "TEXT_MESSAGE_END",
-    ]
-
-
 # --- plan and compaction -------------------------------------------------------
 
 def test_the_plan_is_sent_once_per_change():
@@ -190,24 +166,18 @@ def test_a_tool_card_ends_with_its_usage_and_a_malformed_stamp_is_dropped():
     assert usage == {**stamp, "tool_call_id": "a"}
 
 
-def test_artifacts_and_charts_are_the_orchestrators_cards_only():
+def test_artifacts_and_charts_are_cards_not_tool_calls():
     chart = {"type": "bar", "title": "Sales", "x_key": "m", "series": [{"key": "v", "label": "Value"}],
              "data": [{"m": "Jan", "v": 3}]}
-    ns = ("tools:node-a",)
     events = _run(
         _upd("model", AIMessage(content="", id="m1", tool_calls=[
             {"id": "pa", "name": "present_artifact", "args": {"path": "/out/report.md", "title": "Report"}},
             {"id": "ch", "name": "render_chart", "args": chart},
-            {"id": "bad", "name": "render_chart", "args": {"title": ""}},
-            {"id": "call-a", "name": "task", "args": {"subagent_type": "r", "description": "d"}}])),
-        _upd("model", AIMessage(content="", id="s1", tool_calls=[
-            {"id": "pa2", "name": "present_artifact", "args": {"path": "/a.csv", "title": "A"}},
-            {"id": "ch2", "name": "render_chart", "args": chart}]), ns),
+            {"id": "bad", "name": "render_chart", "args": {"title": ""}}])),
         _upd("tools", ToolMessage(content="ok", tool_call_id="pa", name="present_artifact")),
         _upd("tools", ToolMessage(content="ok", tool_call_id="ch", name="render_chart")),
     )
-    assert _types(events) == ["PRESENT_ARTIFACT", "RENDER_CHART", "TASK_SUBAGENT"]
-    assert _types(events, "call-a") == []  # a sub-agent's file or chart is scratch
+    assert _types(events) == ["PRESENT_ARTIFACT", "RENDER_CHART"]
     artifact = next(e["value"] for e in events if e.get("name") == "PRESENT_ARTIFACT")
     assert artifact["filename"] == "report.md" and artifact["mime"] == "text/markdown"
 

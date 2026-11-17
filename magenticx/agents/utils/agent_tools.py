@@ -23,7 +23,7 @@ from typing import Dict, List, Optional, Set
 
 from core.settings import settings
 from harness.models import default_effort, supported_efforts
-from harness.tools.builtins import BUILTIN_TOOLS, replaced_by_delegation_mode, resolve_availability
+from harness.tools.builtins import BUILTIN_TOOLS, resolve_availability
 from harness.tools.registry import NATIVE_TOOLS, native_hitl_defaults
 from schema import AgentModelResponse, AgentToolRow
 from utils.agents import resolve_agent_definition
@@ -69,19 +69,15 @@ def baseline_gates(definition) -> Set[str]:
 
 def _builtin_rows(gates: Set[str], *, use_memory: bool, search_past_convs: bool) -> List[AgentToolRow]:
     """Prebuilt rows, in roster order. Descriptions for native tools come from
-    the registry, which owns them. The delegation mode this deployment does not
-    run (``task`` once sub-agents are async) is left out, not shown greyed."""
+    the registry, which owns them."""
     rows: List[AgentToolRow] = []
     for tool in BUILTIN_TOOLS:
-        if replaced_by_delegation_mode(tool, async_subagents=settings.async_tasks.enabled):
-            continue
         available, reason = resolve_availability(
             tool,
             use_memory=use_memory,
             search_past_convs=search_past_convs,
             has_conversation=True,
             sandbox_enabled=settings.filesystem.sandbox_execution_active,
-            async_subagents=settings.async_tasks.enabled,
         )
         native = NATIVE_TOOLS.get(tool.name)
         rows.append(

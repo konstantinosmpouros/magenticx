@@ -23,9 +23,11 @@ from core.database import (
 )
 from schema import (
     CommandInvocation,
+    ConversationSource,
     TaskNoticeOut,
     ConversationShareListItem,
     MessageIn,
+    keep_valid_sources,
 )
 from core.settings import settings
 from utils.account_status import open_deletion_exists_for
@@ -84,6 +86,18 @@ async def attach_cited_sources(snapshot: dict, user_id: str, conversation_id: st
         return
     sources = await fetch_conversation_sources(user_id, conversation_id)
     snapshot["sources"] = [source.model_dump() for source in sources if source.id in cited]
+
+
+def snapshot_sources(share: ConversationShareTable) -> list[ConversationSource]:
+    """The citation sources a share snapshot froze (plan 42), revalidated.
+
+    What a conversation continued from the link gets, so its copied answers'
+    markers resolve there too. The snapshot was built from validated sources,
+    but the import trusts nothing it carries: each is validated again and a
+    bad one dropped on its own; at most 500.
+    """
+    snapshot = share.snapshot_json if isinstance(share.snapshot_json, dict) else {}
+    return keep_valid_sources(snapshot.get("sources"))
 
 
 def parse_snapshot_datetime(value: str | None) -> datetime | None:

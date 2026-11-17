@@ -11,11 +11,11 @@ Pinned:
   result — an error converted by ``ToolErrorMiddleware`` counts as an error,
   a ``Command`` result is stamped with no output, and ``GraphBubbleUp`` passes
   through untouched;
-* the normalizer emits ``TOOL_USAGE`` right after the call's result (wrapped in
-  ``SUBAGENT_EVENT`` for a sub-agent), and never for a tool it hides;
+* the normalizer emits ``TOOL_USAGE`` right after the call's result, and never
+  for a tool it hides;
 * a LangGraph agent reports its tool calls as ``TOOL_USAGE`` through its run
   callback;
-* every deep agent and sub-agent gets ``ToolMetricsMiddleware`` exactly once,
+* every deep agent and task node gets ``ToolMetricsMiddleware`` exactly once,
   directly outside ``ToolErrorMiddleware``, and every deep-agent run carries
   the first-token callback.
 """
@@ -44,6 +44,8 @@ from harness.abstractions.langgraph_agent import LangGraphAgent
 from harness.agui.emitter import AGUIEmitter, encode
 from harness.agui.normalizer import AGUIStreamNormalizer
 from harness.agui.usage_callback import UsageMetricsCallback
+from harness.async_tasks.specs import TaskNode
+from harness.async_tasks.token import InheritedContext
 from harness.middlewares import (
     FirstTokenCallback,
     RetryOnRateLimitMiddleware,
@@ -362,18 +364,6 @@ def test_no_tool_usage_without_a_stamp():
     assert "TOOL_USAGE" not in _names(_frames(normalizer.handle_chunk(bare)))
 
 
-def test_a_sub_agents_tool_usage_is_wrapped_like_its_other_events():
-    normalizer = AGUIStreamNormalizer(thread_id=f"tm-{uuid4()}")
-    namespace = ("tools:sub-1",)
-    normalizer.handle_chunk((namespace, "updates", _tool_call_turn("c3", "search")))
-    frames = _frames(normalizer.handle_chunk((namespace, "updates", _tool_result("c3", "search"))))
-
-    assert {f["name"] for f in frames} == {"SUBAGENT_EVENT"}
-    inner = [f["value"]["event"] for f in frames]
-    [usage] = [e for e in inner if e.get("name") == "TOOL_USAGE"]
-    assert usage["value"]["tool_call_id"] == "c3" and frames[0]["value"]["task_id"] == "sub-1"
-
-
 def test_an_agent_run_end_to_end_reports_ok_and_failed_tools():
     @tool
     def lookup(query: str) -> str:
@@ -464,11 +454,17 @@ class _BareDeepAgent(DeepAgent):
         return None
 
 
-def test_build_deep_agent_guarantees_it_on_the_agent_and_every_sub_agent(monkeypatch):
+@pytest.mark.parametrize("path", [(), ("general-purpose",), ("researcher",), ("writer",)])
+def test_build_deep_agent_guarantees_it_on_the_agent_and_every_task_node(monkeypatch, path):
     captured: dict[str, Any] = {}
     monkeypatch.setattr(deep_agent_module, "create_deep_agent", lambda **kwargs: captured.update(kwargs))
     agent = _BareDeepAgent()
     monkeypatch.setattr(agent, "_build_composite_backend", lambda: None)
+    if path:
+        agent.async_task_node = TaskNode(
+            task_id="t1", depth=1, path=path, user_id="u1", conversation_id="c1", root_run_id="r1",
+            branch_thread_id="b1", agent_slug=agent.name, definition_version="v1", inherited=InheritedContext(),
+        )
 
     agent.build_deep_agent(
         model="openai:gpt-5",
@@ -476,22 +472,12 @@ def test_build_deep_agent_guarantees_it_on_the_agent_and_every_sub_agent(monkeyp
         interrupt_on={},
         subagents=[
             {"name": "researcher", "description": "d", "system_prompt": "p"},
+            # A spec that brings its own is not given a second one.
             {"name": "writer", "description": "d", "system_prompt": "p", "middleware": [ToolMetricsMiddleware()]},
-            {"name": "compiled", "description": "d", "runnable": object()},
         ],
     )
 
-    def count(stack):
-        return sum(isinstance(m, ToolMetricsMiddleware) for m in stack)
-
-    assert count(captured["middleware"]) == 1
-    # deepagents' general-purpose sub-agent is declared by the build, first,
-    # so it carries the guarantee too.
-    general, researcher, writer, compiled = captured["subagents"]
-    assert general["name"] == "general-purpose"
-    assert count(general["middleware"]) == 1
-    assert count(researcher["middleware"]) == 1 and count(writer["middleware"]) == 1
-    assert "middleware" not in compiled
+    assert sum(isinstance(m, ToolMetricsMiddleware) for m in captured["middleware"]) == 1
 
 
 def test_a_deep_agent_run_carries_the_first_token_callback():

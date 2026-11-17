@@ -433,13 +433,13 @@ def register_subagents(self):
     ]
 ```
 
-Sub-agent delegation emits `TASK_SUBAGENT` and `SUBAGENT_EVENT` AG-UI events automatically via the normalizer — no manual event emission is needed.
+Every sub-agent runs as a **background task** (plan 41, [async-subagents](../flows/async-subagents.md)): the agent gets `start_async_task` and the other async task tools over its sub-agents (plus deepagents' general-purpose one), the launch emits `TASK_LAUNCHED`, and the task's own events reach the UI through its drill-down — no manual event emission is needed. A sub-agent must be a spec dict: a pre-compiled (`runnable`) sub-agent fails the build, since a task run rebuilds its node from the tree.
 
 **What `tools` means.** Passing `tools=` gives the sub-agent exactly that list; **leaving the key out** makes it inherit the parent's full tool list (minus `ask_user` — see below). `tools=[]` therefore means *no* tools beyond the built-in file and planning tools, not "the parent's". A **declarative** agent (`agent.yaml`) spells it the friendly way round: an empty `subagents[].tools` means *inherit*, a non-empty list is a restriction that must be a subset of the agent's own `tools:`, and each entry may set its own `model:` — see [tool-harness § Sub-agent tools](tool-harness.md#sub-agent-tools). The builder (Settings → Agents → Team) exposes both: a model picker defaulting to **Inherit**, and a tool picker offering only the agent's own tools.
 
 ##### Nested sub-agents (a sub-agent with sub-agents of its own)
 
-A sub-agent may delegate in turn: give its spec a `subagents` list and it gets its own `task` tool, exactly as the main agent has. In code, use the helper (the `subagents` key is ours — `build_deep_agent` turns it into a `SubAgentMiddleware` for that sub-agent; deepagents never sees it):
+A sub-agent may delegate in turn: give its spec a `subagents` list and its task run gets its own async task tools over them, exactly as the main agent has. In code, use the helper (the `subagents` key is ours — the task runner resolves a node by its path in this tree; deepagents never sees it):
 
 ```python
 from harness.abstractions.subagent_tree import subagent
@@ -454,7 +454,7 @@ def register_subagents(self):
     ]
 ```
 
-In `agent.yaml` the same tree is a nested `subagents:` list under a sub-agent (see `tests/agents/fixtures/agents/nested-research-demo/agent.yaml`):
+In `agent.yaml` the same tree is a nested `subagents:` list under a sub-agent:
 
 ```yaml
 subagents:
@@ -474,17 +474,18 @@ subagents:
 | At most `MAX_SUBAGENT_DEPTH` = **3** levels below the main agent (`harness/abstractions/agent_spec.py`) | every level is a model-call chain of its own: depth multiplies cost and latency, and a deeper tree is hard to follow in the chat |
 | Sibling names unique | the model picks a sub-agent by name |
 | No name repeated below itself (`researcher > checker > researcher`); no spec nested inside itself | reads as a loop to the model and to a person |
+| Every node a spec dict — never a compiled `runnable` (code agents) | a task run rebuilds its node from its path in the tree |
 | A sub-agent's `tools` only narrow the tools of the agent **above it** (empty = inherit what that agent may use) | delegating must not reach a tool the delegating agent was never given |
 | `model` defaults to `model.subagents[name]`, then the main model (YAML); to the agent above it (code) | — |
 
-**What every level gets** (`DeepAgent._prepare_subagents` / `_nested_subagent`). deepagents builds the main agent's own sub-agents (depth 1) with its base stack; below that `SubAgentMiddleware` runs a spec as given, so our build adds, at depth ≥ 2, the same stack in the same order — `TodoListMiddleware`, `FilesystemMiddleware` with the workspace's `workspace_write_deny` (+ slash-command) rules, deepagents' summarization, `PatchToolCallsMiddleware`, the spec's own middleware, its own `SubAgentMiddleware` if it has sub-agents, prompt caching. At **every** depth (and on deepagents' general-purpose sub-agent, which the build now declares itself):
+**What every level gets** (`DeepAgent._build_task_node`, the build of a background task's node). Each node is built as a deep agent of its own — `TodoListMiddleware`, `FilesystemMiddleware` with the workspace's `workspace_write_deny` (+ slash-command) rules, our summarizer, the spec's own middleware, and its own `AsyncTaskMiddleware` if it has sub-agents. At **every** depth (the general-purpose sub-agent included):
 
-- the platform middleware — `ToolErrorMiddleware`, `ToolMetricsMiddleware`, `RetryOnRateLimitMiddleware`, `UsageMetricsMiddleware` (`_ensure_platform_middleware`); the first-token callback rides the run config;
-- the run's approval gates: `interrupt_on` re-resolved through `resolve_interrupt_on` for that sub-agent's tools (builtin defaults → the agent's `hitl`/`hitl_gates` → a code spec's own `interrupt_on` → the user's choices → locked gates last), so a spec can add a gate but never clear `execute`; the builtin `task` gate means each nested delegation pauses for approval too unless the agent clears it;
-- **never `ask_user`**: inheriting tool lists drop it and explicit ones are filtered (the tool still refuses a sub-agent's call by namespace);
-- a sub-agent that has sub-agents gets deepagents' `task` guidance from its `SubAgentMiddleware` plus `DELEGATING_SUBAGENT_PROMPT` (`harness/prompt_engineering/prompts/capabilities_prompt.py`): wait for every result, fold them into its single reply, pass on file paths.
+- the platform middleware — `ToolErrorMiddleware`, `ToolMetricsMiddleware`, `RetryOnRateLimitMiddleware`, `UsageMetricsMiddleware` (`_ensure_platform_middleware`), plus the run's sources and effort (`_run_middleware`); the first-token callback rides the run config;
+- the run's approval gates: `interrupt_on` re-resolved through `resolve_interrupt_on` for that node's tools (builtin defaults → the agent's `hitl`/`hitl_gates` → a code spec's own `interrupt_on` → the user's choices → locked gates last), so a spec can add a gate but never clear `execute`; the builtin `start_async_task` gate means each nested delegation pauses for approval too unless the agent clears it;
+- **never `ask_user`**: inheriting tool lists drop it and explicit ones are filtered (the tool also refuses a task run's call, by the `async_task_id` context marker);
+- a node that has sub-agents gets deepagents' async-task guidance from its `AsyncTaskMiddleware` plus `DELEGATING_SUBAGENT_PROMPT` (`harness/prompt_engineering/prompts/capabilities_prompt.py`): start tasks, do not poll, fold the results into its single reply, pass on file paths.
 
-**Streaming.** A deep agent streams `["messages", "updates", "tasks"]`. The `tasks` stream carries each tool-node task's id — the `tools:<id>` segment of the sub-agent's namespace — with the `task` call it runs, so `AGUIStreamNormalizer._handle_tasks_payload` binds every sub-agent to its call exactly (parallel siblings, any depth, a `/resume` stream that never saw the call) and emits its `BEFORE_AGENT_EVENT` (with the task description) the moment it starts. Nested `TASK_SUBAGENT` / `SUBAGENT_COMPLETED` arrive inside the delegating sub-agent's `SUBAGENT_EVENT` envelope; the bridge books nested usage under the nested type; the UI draws the tree (inline cards nest children inside the parent's card, the sub-agents panel and the agent map show the same tree, and a sub-agent's transcript has a "Delegated to …" row where it delegated).
+**Streaming.** A deep agent streams `["messages", "updates"]`; nothing runs nested in its graph. Each task streams its own run into `task:{id}:events`, the bridge mirrors the tree, and the UI draws it (inline cards nest children inside the parent's card, the sub-agents panel and the agent map show the same tree) — see [async-subagents](../flows/async-subagents.md).
 
 #### 6. Use persistent directories
 
@@ -536,7 +537,8 @@ Deep agents automatically exclude the following tool names from MCP attachment �
 ```python
 RESERVED_DEEPAGENT_TOOL_NAMES = {
     "write_todos", "ls", "read_file", "write_file",
-    "edit_file", "glob", "grep", "execute", "task"
+    "edit_file", "glob", "grep", "execute",
+    "start_async_task", "check_async_task", "update_async_task", "cancel_async_task", "list_async_tasks",
 }
 ```
 

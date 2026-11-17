@@ -2,9 +2,11 @@
 
 A deep agent declares its sub-agents as ``deepagents.SubAgent`` dicts. One of
 those dicts may carry a ``subagents`` list of further specs — the same shape,
-any depth up to :data:`MAX_SUBAGENT_DEPTH` — and ``DeepAgent.build_deep_agent``
-turns each such list into a ``task`` tool for that sub-agent (see
-``DeepAgent._prepare_subagents``). The key is ours: deepagents never sees it.
+any depth up to :data:`MAX_SUBAGENT_DEPTH`. Every node runs as a background
+task (plan 41): ``DeepAgent.build_deep_agent`` gives each level the async task
+tools over the level below it, and the task runner rebuilds a node from its
+path in this tree (``harness.async_tasks.specs``). The key is ours: deepagents
+never sees it.
 
 A YAML agent declares the same tree in ``agent.yaml`` and gets it validated by
 :class:`~harness.abstractions.agent_spec.AgentSpec`. A code agent has no schema,
@@ -73,17 +75,23 @@ def validate_subagent_tree(specs: Sequence[Any], *, max_depth: int = MAX_SUBAGEN
 
     The rules of ``AgentSpec`` for code-defined specs: at most ``max_depth``
     levels below the main agent, unique sibling names, no name repeated below
-    itself, and no spec object nested inside itself. A compiled sub-agent
-    (``runnable``) is opaque and cannot carry ``subagents``.
+    itself, and no spec object nested inside itself. Every node must be a spec
+    dict: a task run rebuilds its node from a path in this tree, so a compiled
+    sub-agent (``runnable``), an opaque in-memory graph, cannot be one.
     """
     def check(level: Sequence[Any], above: tuple[str, ...], seen: frozenset[int]) -> None:
         depth = len(above) + 1
         names: list[str] = []
         for spec in level:
             if not isinstance(spec, Mapping):
-                continue
+                where = f"under {above[-1]!r}" if above else "of the agent"
+                raise ValueError(f"A sub-agent {where} is not a spec dict; sub-agents run as background tasks.")
             name = str(spec.get("name") or "")
             path = " > ".join((*above, name))
+            if "runnable" in spec:
+                raise ValueError(
+                    f"Compiled sub-agent {path!r} cannot run as a background task; declare it as a spec."
+                )
             if id(spec) in seen:
                 raise ValueError(f"Sub-agent {path!r} contains itself; sub-agents cannot loop.")
             if depth > max_depth:
@@ -96,10 +104,7 @@ def validate_subagent_tree(specs: Sequence[Any], *, max_depth: int = MAX_SUBAGEN
                 where = f"under {above[-1]!r}" if above else "of the agent"
                 raise ValueError(f"Sub-agents {where} share a name: {name}.")
             names.append(name)
-            children = spec.get(SUBAGENTS_KEY) or []
-            if children and "runnable" in spec:
-                raise ValueError(f"Compiled sub-agent {path!r} cannot declare sub-agents.")
-            check(children, (*above, name), seen | {id(spec)})
+            check(spec.get(SUBAGENTS_KEY) or [], (*above, name), seen | {id(spec)})
 
     check(list(specs or []), (), frozenset())
 

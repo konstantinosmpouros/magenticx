@@ -1,21 +1,19 @@
 """LangGraph stream chunks -> AG-UI events.
 
-A deep agent streams ``["messages", "updates", "tasks"]`` with ``subgraphs=True``:
+A deep agent streams ``["messages", "updates"]``:
 
 * ``messages`` - token chunks: the reply text and the reasoning summary.
 * ``updates``  - settled node outputs: tool calls and results, the plan,
-  interrupts, token usage, sub-agent start markers.
-* ``tasks``    - which `task` call each sub-agent namespace runs (no events of
-  its own beyond the sub-agent's start marker).
+  interrupts, token usage, pulled task notifications.
 
-A sub-agent's events are wrapped in a ``SUBAGENT_EVENT`` envelope keyed by the
-`task` call that started it, so the UI folds them into that sub-agent's card.
+Nothing runs nested in the graph: every sub-agent is a background task (plan
+41) streaming on its own thread through a normalizer of its own, so one
+normalizer always speaks for one actor — the run's own agent.
 """
 
 import json
 import mimetypes
 import re
-import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -32,12 +30,10 @@ from harness.tools.charts import normalize_chart_payload
 
 logger = get_logger(__name__)
 
-_MODES = {"messages", "updates", "tasks"}
+_MODES = {"messages", "updates"}
 
-TASK_TOOL_NAME = "task"
 START_ASYNC_TASK_TOOL_NAME = "start_async_task"
 UPDATE_ASYNC_TASK_TOOL_NAME = "update_async_task"
-_SUBAGENT_START_NODE = "PatchToolCallsMiddleware.before_agent"
 
 # ``Launched async subagent. task_id: <id>`` (deepagents 0.7.34); an update to
 # a waiting task ends its sentence right after the id.
@@ -63,16 +59,13 @@ class _RunMemory:
     Single worker, same lifecycle as the checkpointer cache.
     """
 
-    bindings: dict[tuple, str] = field(default_factory=dict)  # sub-agent namespace -> `task` call id
-    started_at: dict[str, int] = field(default_factory=dict)  # `task` call id -> epoch ms
-    completed: set[str] = field(default_factory=set)  # SUBAGENT_COMPLETED sent (a resume replays results)
-    launched: set[str] = field(default_factory=set)  # TASK_LAUNCHED sent (same reason)
+    launched: set[str] = field(default_factory=set)  # TASK_LAUNCHED sent (a resume replays results)
 
 
 _RUNS: dict[str, _RunMemory] = {}
 
 
-def release_namespace_bindings(thread_id: str) -> None:
+def release_run_memory(thread_id: str) -> None:
     """Forget a finished (or fresh) run."""
     _RUNS.pop(thread_id, None)
 
@@ -176,26 +169,9 @@ def _messages_of(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
-def _namespace_id(namespace: tuple | None) -> str | None:
-    """``("tools:abc", ...)`` -> ``"abc"``: the id LangGraph gave a sub-agent's first segment."""
-    for part in namespace or ():
-        if isinstance(part, str) and part:
-            return part.partition(":")[2] or part
-    return None
-
-
-def _namespace_path(namespace: tuple | None) -> list[str] | None:
-    path = [str(part) for part in namespace or () if str(part)]
-    return path or None
-
-
-def _now_ms() -> int:
-    return int(time.time() * 1000)
-
-
 @dataclass
 class _Reply:
-    """One actor's reply text in the current model call."""
+    """The reply text of the current model call."""
 
     started: bool = False  # TEXT_MESSAGE_START sent
     streamed: bool = False  # chunks came over "messages": the final message must not repeat them
@@ -203,19 +179,17 @@ class _Reply:
 
 @dataclass
 class _Call:
-    """A tool call with where it came from."""
+    """A tool call with the metadata of the update it came in."""
 
     id: str
     name: str
     args: dict[str, Any] | None
-    namespace: tuple | None
-    label: str | None
     meta: dict[str, Any]
 
 
 @dataclass
 class _Thought:
-    """One actor's reasoning-summary part, held until it is complete."""
+    """The current reasoning-summary part, held until it is complete."""
 
     part: str | None = None
     text: str = ""
@@ -230,10 +204,9 @@ class AGUIStreamNormalizer:
 
     ====================  ===================================================
     ``write_todos``       PLAN_SNAPSHOT (deduplicated)
-    ``present_artifact``  PRESENT_ARTIFACT card (orchestrator only)
-    ``render_chart``      RENDER_CHART inline chart (orchestrator only)
+    ``present_artifact``  PRESENT_ARTIFACT card
+    ``render_chart``      RENDER_CHART inline chart
     ``ask_user``          nothing: its interrupt is the HITL event
-    ``task``              TASK_SUBAGENT, then SUBAGENT_COMPLETED on its result
     ``start_async_task``  TASK_LAUNCHED on its result (a failed launch: an
     ``update_async_task`` errored tool card)
     ====================  ===================================================
@@ -247,8 +220,8 @@ class AGUIStreamNormalizer:
         self.thread_id = thread_id  # the run id: every AG-UI message_id
         self._run = _RUNS.setdefault(thread_id, _RunMemory()) if thread_id else _RunMemory()
 
-        self._replies: dict[str | None, _Reply] = {}  # per actor label (None: orchestrator)
-        self._thoughts: dict[tuple, _Thought] = {}  # per raw namespace (() : orchestrator)
+        self._reply = _Reply()  # the current model call's reply text
+        self._thought = _Thought()  # the current model call's reasoning
         self._last_plan: str | None = None
 
         # Tool calls.
@@ -257,20 +230,12 @@ class AGUIStreamNormalizer:
         self._finished_tools: set[str] = set()
         self._silent_tools: set[str] = set()  # their ToolMessage is never a tool card
 
-        # Sub-agents (`task`).
-        self._announced_tasks: set[str] = set()  # TASK_SUBAGENT sent
-        self._pending_tasks: dict[str, tuple | None] = {}  # unbound `task` call -> caller namespace (None: orchestrator)
-        self._task_namespaces: dict[tuple, str] = {}  # from the "tasks" stream: exact namespace -> call
-        self._known_tasks: set[str] = set()  # `task` calls seen on the "tasks" stream
-        self._started_namespaces: set[tuple] = set()  # BEFORE_AGENT sent
-
         # Tools with an event of their own instead of a tool card.
         self._special_tools = {
             "write_todos": self._plan_call,
             "present_artifact": self._present_artifact_call,
             "ask_user": self._ask_user_call,
             "render_chart": self._render_chart_call,
-            TASK_TOOL_NAME: self._task_call,
             START_ASYNC_TASK_TOOL_NAME: self._async_task_call,
             UPDATE_ASYNC_TASK_TOOL_NAME: self._async_task_call,
         }
@@ -287,29 +252,26 @@ class AGUIStreamNormalizer:
     # ------------------------------------------------------------------ API
     def handle_chunk(self, chunk: Any) -> list[bytes]:
         """One raw stream chunk -> 0..N AG-UI SSE frames."""
-        namespace, mode, payload, metadata = self._unwrap(chunk)
-        if mode == "tasks":
-            events = self._on_tasks(payload, namespace)
-        elif mode == "messages":
-            events = self._wrap(self._on_message(payload, metadata, namespace), namespace)
+        mode, payload, metadata = self._unwrap(chunk)
+        if mode == "messages":
+            events = self._on_message(payload, metadata)
         elif mode == "updates":
-            events = self._wrap(self._on_updates(payload, metadata, namespace), namespace)
+            events = self._on_updates(payload, metadata)
         else:
             events = []
         return [encode(event) for event in events]
 
     def seed_pending_tasks(self, messages: Any) -> None:
-        """Before a /resume stream: re-learn the calls still awaiting a result.
+        """Before a /resume stream: re-learn the task calls still awaiting a result.
 
-        The calls were announced on the previous stream, so a sub-agent started
-        by an approved `task` would find nothing to bind to, and a background
-        task's launch would lose what it asked for.
+        A gated ``start_async_task`` / ``update_async_task`` was announced on the
+        previous stream, so without this its launch would lose what it asked for
+        once the approval lets it run.
         """
         answered = {
             str(msg.tool_call_id) for msg in _messages_of(messages)
             if message_kind(msg) == "tool" and getattr(msg, "tool_call_id", None)
         }
-        bound = set(self._run.bindings.values())
         for msg in _messages_of(messages):
             if message_kind(msg) != "ai":
                 continue
@@ -321,96 +283,53 @@ class AGUIStreamNormalizer:
                 if name in (START_ASYNC_TASK_TOOL_NAME, UPDATE_ASYNC_TASK_TOOL_NAME):
                     self._async_calls.setdefault(call_id, self._async_call(name, args))
                     self._silent_tools.add(call_id)
-                elif name == TASK_TOOL_NAME:
-                    self._announced_tasks.add(call_id)
-                    self._silent_tools.add(call_id)
-                    if call_id not in bound:
-                        self._pending_tasks.setdefault(call_id, None)
 
     # ------------------------------------------------------------- envelope
     @staticmethod
-    def _unwrap(chunk: Any) -> tuple[tuple | None, str | None, Any, dict[str, Any] | None]:
-        """``(namespace?, mode, payload[, metadata])``; a "messages" payload is ``(msg, metadata)``."""
+    def _unwrap(chunk: Any) -> tuple[str | None, Any, dict[str, Any] | None]:
+        """``(mode, payload, metadata)``; a "messages" payload is ``(msg, metadata)``."""
         if isinstance(chunk, dict):
-            return None, "updates", chunk, None
+            return "updates", chunk, None
         if not isinstance(chunk, (tuple, list)):
-            return None, None, chunk, None
+            return None, chunk, None
         for idx, item in enumerate(chunk):
             if isinstance(item, str) and item in _MODES:
-                before = chunk[idx - 1] if idx else None
-                namespace = tuple(before) if isinstance(before, (tuple, list)) and before else None
                 payload = chunk[idx + 1] if idx + 1 < len(chunk) else chunk
                 after = chunk[idx + 2] if idx + 2 < len(chunk) else None
                 metadata = after if isinstance(after, dict) else None
                 if item == "messages" and isinstance(payload, tuple) and len(payload) == 2 and metadata is None:
                     payload, meta = payload
                     metadata = meta if isinstance(meta, dict) else None
-                return namespace, item, payload, metadata
-        return None, None, chunk, None
-
-    # ----------------------------------------------------------- tasks mode
-    def _on_tasks(self, payload: Any, namespace: tuple | None) -> list[Event]:
-        """A ``tools`` node task starting a `task` call: bind its sub-agent's namespace.
-
-        The sub-agent streams under ``namespace + ("tools:<node task id>",)``, so
-        this is the one exact link from a call to its sub-agent, at any depth.
-        Its BEFORE_AGENT marker (with the task it was given) goes out now.
-        """
-        if not isinstance(payload, dict) or payload.get("name") != "tools" or "input" not in payload:
-            return []
-        node_task_id = payload.get("id")
-        if not node_task_id:
-            return []
-        out: list[Event] = []
-        inputs = payload["input"] if isinstance(payload["input"], list) else [payload["input"]]
-        for item in inputs:
-            wrapped = item.get("tool_call") if isinstance(item, dict) else getattr(item, "tool_call", None)
-            call = wrapped if isinstance(wrapped, dict) else item
-            if not isinstance(call, dict) or call.get("name") != TASK_TOOL_NAME or not call.get("id"):
-                continue
-            child = (*(namespace or ()), f"tools:{node_task_id}")
-            self._task_namespaces[child] = str(call["id"])
-            self._known_tasks.add(str(call["id"]))
-            bound = self._bind(child)
-            if bound is None or child in self._started_namespaces:
-                continue
-            self._started_namespaces.add(child)
-            args = call.get("args") if isinstance(call.get("args"), dict) else {}
-            marker = self.emitter.before_agent_event(
-                message=str(args.get("description") or ""), metadata={"namespace": bound}, namespace=bound,
-            )
-            out.extend(self._wrap([marker], child))
-        return out
+                return item, payload, metadata
+        return None, chunk, None
 
     # -------------------------------------------------------- messages mode
-    def _on_message(self, msg: Any, metadata: dict[str, Any] | None, namespace: tuple | None) -> list[Event]:
+    def _on_message(self, msg: Any, metadata: dict[str, Any] | None) -> list[Event]:
         """A token chunk: reasoning (held per part) and reply text; or a tool result."""
         if isinstance(metadata, dict) and metadata.get("lc_source") == "summarization":
             # A compaction's internal summary call: never the reply.
-            return self._on_summary_call(msg, namespace)
+            return self._on_summary_call(msg)
         out: list[Event] = []
-        label = self._label(namespace)
         kind = message_kind(msg)
         if kind == "tool":
-            self._on_tool_result(out, msg, label)
+            self._on_tool_result(out, msg)
         elif kind == "ai":
             for part_key, text in reasoning_parts(msg):
-                self._buffer_thought(out, namespace, label, part_key, text)
+                self._buffer_thought(out, part_key, text)
             delta = message_text(msg)
             if delta:
-                self._flush_thought(out, namespace, label)  # the reply starts: the reasoning is complete
-                reply = self._open_reply(out, namespace, label)
-                self._add(out, self.emitter.response_chunk(message_id=self.thread_id, delta=delta, namespace=label))
-                reply.streamed = True
+                self._flush_thought(out)  # the reply starts: the reasoning is complete
+                self._open_reply(out)
+                self._add(out, self.emitter.response_chunk(message_id=self.thread_id, delta=delta))
+                self._reply.streamed = True
         return out
 
     # --------------------------------------------------------- updates mode
-    def _on_updates(self, payload: Any, metadata: dict[str, Any] | None, namespace: tuple | None) -> list[Event]:
+    def _on_updates(self, payload: Any, metadata: dict[str, Any] | None) -> list[Event]:
         out: list[Event] = []
         if not isinstance(payload, dict):
             return out
-        label = self._label(namespace)
-        meta = {**(metadata or {}), "namespace": label}
+        meta = dict(metadata or {})
 
         if "__interrupt__" in payload:  # the interrupt alone
             raw = payload["__interrupt__"]
@@ -418,43 +337,25 @@ class AGUIStreamNormalizer:
             value = None if interrupt is None else {
                 "id": getattr(interrupt, "id", None), "value": getattr(interrupt, "value", interrupt),
             }
-            self._add(out, self.emitter.hitl_interrupt(
-                thread_id=self.thread_id, interrupt=value, metadata=meta, namespace=label,
-            ))
+            self._add(out, self.emitter.hitl_interrupt(thread_id=self.thread_id, interrupt=value, metadata=meta))
             return out
 
         for node, update in payload.items():
-            if node == _SUBAGENT_START_NODE:
-                self._on_subagent_start(out, namespace, meta)
-                continue
             if not isinstance(update, dict):
                 continue
             if isinstance(update.get("todos"), list):
-                self._plan(out, update["todos"], meta, label)
+                self._plan(out, update["todos"], meta)
             for msg in _messages_of(update.get("messages")):
                 kind = message_kind(msg)
                 if kind == "tool":
-                    self._on_tool_result(out, msg, label)
+                    self._on_tool_result(out, msg)
                 elif kind == "ai":
-                    self._on_model_reply(out, msg, node, namespace, label, meta)
+                    self._on_model_reply(out, msg, node, meta)
                 else:
-                    self._on_task_notification(out, msg, node, update, label)
+                    self._on_task_notification(out, msg, node, update)
         return out
 
-    def _on_subagent_start(self, out: list[Event], namespace: tuple | None, meta: dict[str, Any]) -> None:
-        """deepagents' start marker of a sub-agent (null body): bind it to the next pending `task`."""
-        if namespace is None or namespace in self._started_namespaces:
-            return  # orchestrator, or announced from the "tasks" stream
-        bound = self._bind(namespace)
-        if bound is not None:
-            self._started_namespaces.add(namespace)
-            self._add(out, self.emitter.before_agent_event(
-                message="", metadata={**meta, "namespace": bound}, namespace=bound,
-            ))
-
-    def _on_model_reply(
-        self, out: list[Event], msg: Any, node: Any, namespace: tuple | None, label: str | None, meta: dict[str, Any],
-    ) -> None:
+    def _on_model_reply(self, out: list[Event], msg: Any, node: Any, meta: dict[str, Any]) -> None:
         """A settled model call: reasoning, then text, usage and tool calls.
 
         A middleware node (``Name.hook``) re-emits a message the model node
@@ -463,97 +364,85 @@ class AGUIStreamNormalizer:
         """
         reemitted = isinstance(node, str) and "." in node
         if not reemitted:
-            self._settle_thoughts(out, msg, namespace, label)
+            self._settle_thoughts(out, msg)
             text = message_text(msg)
             if text:
-                reply = self._open_reply(out, namespace, label)
-                if not reply.streamed:  # updates-only stream: the text comes from here
-                    self._add(out, self.emitter.response_content(
-                        message_id=self.thread_id, delta=text, namespace=label,
-                    ))
-                self._add(out, self.emitter.response_end(message_id=self.thread_id, namespace=label))
-            self._replies.pop(label, None)  # the model call is over: its text message too
-            self._usage(out, msg, namespace, label)
+                self._open_reply(out)
+                if not self._reply.streamed:  # updates-only stream: the text comes from here
+                    self._add(out, self.emitter.response_content(message_id=self.thread_id, delta=text))
+                self._add(out, self.emitter.response_end(message_id=self.thread_id))
+            self._reply = _Reply()  # the model call is over: its text message too
+            self._usage(out, msg)
         for tc in tool_calls(msg):
-            self._on_tool_call(out, tc, namespace, label, meta)
+            self._on_tool_call(out, tc, meta)
 
     # ----------------------------------------------------------- reply text
-    def _open_reply(self, out: list[Event], namespace: tuple | None, label: str | None) -> _Reply:
+    def _open_reply(self, out: list[Event]) -> None:
         """TEXT_MESSAGE_START once per model call (ending the thinking before it)."""
-        reply = self._replies.setdefault(label, _Reply())
-        if not reply.started:
-            self._close_thinking(out, namespace, label)
-            self._add(out, self.emitter.response_start(message_id=self.thread_id, namespace=label))
-            reply.started = True
-        return reply
+        if not self._reply.started:
+            self._close_thinking(out)
+            self._add(out, self.emitter.response_start(message_id=self.thread_id))
+            self._reply.started = True
 
     # -------------------------------------------------------------- thoughts
-    def _thought(self, namespace: tuple | None) -> _Thought:
-        return self._thoughts.setdefault(tuple(namespace or ()), _Thought())
-
-    def _buffer_thought(self, out: list[Event], namespace: tuple | None, label: str | None, key: str, text: str) -> None:
+    def _buffer_thought(self, out: list[Event], key: str, text: str) -> None:
         """A streamed piece of a summary part; a new part sends the one before."""
-        thought = self._thought(namespace)
+        thought = self._thought
         if thought.part is not None and thought.part != key:
-            self._flush_thought(out, namespace, label)
+            self._flush_thought(out)
         thought.part, thought.streamed = key, True
         thought.text += text
 
-    def _flush_thought(self, out: list[Event], namespace: tuple | None, label: str | None) -> None:
+    def _flush_thought(self, out: list[Event]) -> None:
         """Send the part held so far as one thought (the UI shows each thought as a step)."""
-        thought = self._thought(namespace)
+        thought = self._thought
         text, thought.part, thought.text = thought.text.strip(), None, ""
         if text:
-            self._send_thought(out, namespace, label, text)
+            self._send_thought(out, text)
 
-    def _send_thought(self, out: list[Event], namespace: tuple | None, label: str | None, text: str) -> None:
+    def _send_thought(self, out: list[Event], text: str) -> None:
         """One thought: THINKING_START once per thinking phase, then the thought as a
         start/content/end text message (the UI shows each as a step)."""
-        thought = self._thought(namespace)
-        if not thought.open:
-            thought.open = True
-            self._add(out, self.emitter.thinking_start(namespace=label))
-        out.extend(self.emitter.thought(text, namespace=label))
+        if not self._thought.open:
+            self._thought.open = True
+            self._add(out, self.emitter.thinking_start())
+        out.extend(self.emitter.thought(text))
 
-    def _close_thinking(self, out: list[Event], namespace: tuple | None, label: str | None) -> None:
+    def _close_thinking(self, out: list[Event]) -> None:
         """The reply starts: the thinking phase before it ends."""
-        thought = self._thought(namespace)
-        if thought.open:
-            thought.open = False
-            self._add(out, self.emitter.thinking_end(namespace=label))
+        if self._thought.open:
+            self._thought.open = False
+            self._add(out, self.emitter.thinking_end())
 
-    def _settle_thoughts(self, out: list[Event], msg: Any, namespace: tuple | None, label: str | None) -> None:
+    def _settle_thoughts(self, out: list[Event], msg: Any) -> None:
         """The model call settled: the part still held, or (updates-only) every part of it."""
-        thought = self._thought(namespace)
-        if thought.streamed:
-            self._flush_thought(out, namespace, label)
+        if self._thought.streamed:
+            self._flush_thought(out)
         else:
             for _key, text in _merge_parts(reasoning_parts(msg)):
                 if text.strip():
-                    self._send_thought(out, namespace, label, text.strip())
-        thought.streamed = False
+                    self._send_thought(out, text.strip())
+        self._thought.streamed = False
 
     # ------------------------------------------------------------ tool calls
-    def _on_tool_call(
-        self, out: list[Event], tc: dict[str, Any], namespace: tuple | None, label: str | None, meta: dict[str, Any],
-    ) -> None:
+    def _on_tool_call(self, out: list[Event], tc: dict[str, Any], meta: dict[str, Any]) -> None:
         """A tool call: a tool card, or the special tool's own event (its result is then no card)."""
-        call = _Call(tc["id"], tc["name"], tc["args"] if isinstance(tc["args"], dict) else None, namespace, label, meta)
+        call = _Call(tc["id"], tc["name"], tc["args"] if isinstance(tc["args"], dict) else None, meta)
         special = self._special_tools.get(call.name)
         if special is not None:
             special(out, call)
             self._silent_tools.add(call.id)
         elif call.id not in self._started_tools:
-            self._tool_card_open(out, call.id, call.name, tc["args"], label)
+            self._tool_card_open(out, call.id, call.name, tc["args"])
             self._open_tools.add(call.id)
 
     def _plan_call(self, out: list[Event], call: _Call) -> None:
         if call.args is not None and isinstance(call.args.get("todos"), list):
-            self._plan(out, call.args["todos"], call.meta, call.label)
+            self._plan(out, call.args["todos"], call.meta)
 
     def _present_artifact_call(self, out: list[Event], call: _Call) -> None:
-        """A file handed to the user (orchestrator only: a sub-agent's file is scratch)."""
-        if call.namespace is not None or call.args is None:
+        """A finished file handed to the user."""
+        if call.args is None:
             return
         path, title = str(call.args.get("path", "")).strip(), str(call.args.get("title", "")).strip()
         if not (path and title):
@@ -562,42 +451,31 @@ class AGUIStreamNormalizer:
         self._add(out, self.emitter.present_artifact(
             artifact_id=call.id, path=path, filename=filename, title=title,
             summary=str(call.args.get("summary") or "").strip() or None,
-            mime=mimetypes.guess_type(filename)[0], namespace=call.label,
+            mime=mimetypes.guess_type(filename)[0],
         ))
 
     def _ask_user_call(self, out: list[Event], call: _Call) -> None:
         """Nothing: its interrupt (the questions) is the event, its result comes on /resume."""
 
     def _render_chart_call(self, out: list[Event], call: _Call) -> None:
-        """A chart the orchestrator drew (a sub-agent's chart is scratch), normalized
-        here (bounded, coerced, only the plotted fields): a renderable chart or nothing."""
-        if call.namespace is not None or call.args is None:
+        """A chart the agent drew, normalized here (bounded, coerced, only the
+        plotted fields): a renderable chart or nothing."""
+        if call.args is None:
             return
         payload = normalize_chart_payload(call.args)
         if payload is not None:
-            self._add(out, self.emitter.render_chart(chart_id=call.id, namespace=call.label, **payload))
-
-    def _task_call(self, out: list[Event], call: _Call) -> None:
-        """TASK_SUBAGENT, and the call waits for the sub-agent namespace it starts."""
-        if call.id in self._announced_tasks or call.args is None:
-            return
-        self._announced_tasks.add(call.id)
-        self._pending_tasks[call.id] = call.namespace or None
-        self._add(out, self.emitter.task_subagent(
-            task_id=call.id, subagent_type=str(call.args.get("subagent_type", "")),
-            description=str(call.args.get("description", "")), namespace=call.label,
-        ))
+            self._add(out, self.emitter.render_chart(chart_id=call.id, **payload))
 
     def _async_task_call(self, out: list[Event], call: _Call) -> None:
         """A background task start/update: its result becomes the event."""
         self._async_calls.setdefault(call.id, self._async_call(call.name, call.args or {}))
 
-    def _tool_card_open(self, out: list[Event], call_id: str, name: str, args: Any, label: str | None) -> None:
-        self._add(out, self.emitter.tool_call_start(tool_call_id=call_id, name=name, namespace=label))
-        self._add(out, self.emitter.tool_call_args(tool_call_id=call_id, name=name, args=args, namespace=label))
+    def _tool_card_open(self, out: list[Event], call_id: str, name: str, args: Any) -> None:
+        self._add(out, self.emitter.tool_call_start(tool_call_id=call_id, name=name))
+        self._add(out, self.emitter.tool_call_args(tool_call_id=call_id, name=name, args=args))
         self._started_tools.add(call_id)
 
-    def _tool_card_close(self, out: list[Event], call_id: str, msg: Any, label: str | None, *, error: bool) -> None:
+    def _tool_card_close(self, out: list[Event], call_id: str, msg: Any, *, error: bool) -> None:
         """The result and end of a tool card, then its TOOL_USAGE and SOURCES.
 
         A result that carries valid sources (plan 42) is not sent as text: the
@@ -605,20 +483,19 @@ class AGUIStreamNormalizer:
         model's reading, not the user's — never leave the agents service. A
         malformed stamp sends the result as before, so the card is never empty.
         """
-        sources = None if error else self._sources_event(msg, call_id, label)
+        sources = None if error else self._sources_event(msg, call_id)
         self._add(out, self.emitter.tool_call_result(
             tool_call_id=call_id, thread_id=self.thread_id,
-            output="" if sources is not None else getattr(msg, "content", ""),
-            namespace=label, error=error,
+            output="" if sources is not None else getattr(msg, "content", ""), error=error,
         ))
-        self._add(out, self.emitter.tool_call_end(tool_call_id=call_id, namespace=label))
-        self._tool_usage(out, msg, call_id, label)
+        self._add(out, self.emitter.tool_call_end(tool_call_id=call_id))
+        self._tool_usage(out, msg, call_id)
         if sources is not None:
             self._add(out, sources)
         self._open_tools.discard(call_id)
         self._finished_tools.add(call_id)
 
-    def _tool_usage(self, out: list[Event], msg: Any, call_id: str, label: str | None) -> None:
+    def _tool_usage(self, out: list[Event], msg: Any, call_id: str) -> None:
         """TOOL_USAGE from the stamp ``ToolMetricsMiddleware`` put on the result, when
         there is one. Telemetry never breaks the stream: a malformed stamp is logged and dropped."""
         stamp = (getattr(msg, "response_metadata", None) or {}).get(TOOL_METRICS_KEY)
@@ -628,12 +505,12 @@ class AGUIStreamNormalizer:
             self._add(out, self.emitter.tool_usage(
                 tool_call_id=call_id, tool_name=stamp.get("tool_name") or getattr(msg, "name", None) or "tool",
                 duration_ms=stamp.get("duration_ms"), status=stamp.get("status"),
-                output_chars=stamp.get("output_chars"), namespace=label,
+                output_chars=stamp.get("output_chars"),
             ))
         except ValidationError:
             logger.warning("tool_usage_skipped", "Malformed tool metrics on a tool result", tool_call_id=call_id)
 
-    def _sources_event(self, msg: Any, call_id: str, label: str | None) -> Event | None:
+    def _sources_event(self, msg: Any, call_id: str) -> Event | None:
         """The SOURCES event for the stamp ``SourcesMiddleware`` put on the result,
         or None. Citations never break the stream: a malformed stamp is logged
         (counts only, never a URL) and dropped."""
@@ -644,97 +521,24 @@ class AGUIStreamNormalizer:
             logger.warning("sources_event_skipped", "Malformed sources stamp on a tool result", tool_call_id=call_id)
             return None
         try:
-            return self.emitter.sources(tool_call_id=call_id, sources=stamp, namespace=label)
+            return self.emitter.sources(tool_call_id=call_id, sources=stamp)
         except ValidationError:
             logger.warning("sources_event_skipped", "Malformed sources stamp on a tool result",
                            tool_call_id=call_id, sources=len(stamp))
             return None
 
-    def _on_tool_result(self, out: list[Event], msg: Any, label: str | None) -> None:
+    def _on_tool_result(self, out: list[Event], msg: Any) -> None:
         call_id = getattr(msg, "tool_call_id", None)
         if not call_id:
             return
         error = getattr(msg, "status", None) == "error"
         name = getattr(msg, "name", None)
-        if self._is_task_result(call_id, name, label):
-            self._on_subagent_returned(out, str(call_id), error, label)
-        elif call_id in self._async_calls or name in (START_ASYNC_TASK_TOOL_NAME, UPDATE_ASYNC_TASK_TOOL_NAME):
-            self._on_async_task_result(out, msg, str(call_id), name, label)
+        if call_id in self._async_calls or name in (START_ASYNC_TASK_TOOL_NAME, UPDATE_ASYNC_TASK_TOOL_NAME):
+            self._on_async_task_result(out, msg, str(call_id), name)
         elif call_id in self._silent_tools:
             self._silent_tools.discard(call_id)
         elif call_id in self._open_tools and call_id not in self._finished_tools:
-            self._tool_card_close(out, call_id, msg, label, error=error)
-
-    # -------------------------------------------------------------- sub-agents
-    def _is_task_result(self, call_id: str, name: str | None, label: str | None) -> bool:
-        """By id when this stream or the "tasks" stream saw the call; by name for the
-        orchestrator's own `task` otherwise (a /resume normalizer never saw it)."""
-        if call_id in self._announced_tasks or call_id in self._known_tasks:
-            return True
-        return (
-            name == TASK_TOOL_NAME and label is None
-            and call_id not in self._silent_tools and call_id not in self._open_tools
-        )
-
-    def _on_subagent_returned(self, out: list[Event], call_id: str, error: bool, label: str | None) -> None:
-        """SUBAGENT_COMPLETED, once per run, with the sub-agent's namespace when bound."""
-        self._silent_tools.discard(call_id)
-        self._pending_tasks.pop(call_id, None)  # rejected: never binds
-        if call_id in self._run.completed:
-            return
-        self._run.completed.add(call_id)
-        bound = next((ns for ns, task in self._run.bindings.items() if task == call_id), None)
-        self._add(out, self.emitter.subagent_completed(
-            task_id=call_id, status="error" if error else "completed",
-            subagent_namespace=_namespace_path(bound), started_at=self._run.started_at.get(call_id),
-            ended_at=_now_ms(), namespace=label,
-        ))
-
-    def _bind(self, namespace: tuple | None) -> str | None:
-        """The `task` call a sub-agent namespace runs, bound once per run.
-
-        Exact from the "tasks" stream; otherwise the oldest unbound call made
-        one level above (a nested sub-agent never takes a sibling's call),
-        else the oldest unbound call. Only the "tasks" stream tells parallel
-        siblings apart.
-        """
-        if namespace is None:
-            return None
-        if namespace in self._run.bindings:
-            return self._run.bindings[namespace]
-        call_id = self._task_namespaces.get(namespace)
-        if call_id is None:
-            reserved = set(self._task_namespaces.values())
-            pending = [c for c in self._pending_tasks if c not in reserved]
-            caller = tuple(namespace[:-1]) or None
-            call_id = next((c for c in pending if self._pending_tasks[c] == caller), None) or next(iter(pending), None)
-            if call_id is None:
-                return None
-        self._run.bindings[namespace] = call_id
-        self._pending_tasks.pop(call_id, None)
-        self._run.started_at.setdefault(call_id, _now_ms())
-        return call_id
-
-    def _label(self, namespace: tuple | None) -> str | None:
-        """The actor an event belongs to: None (orchestrator), else its `task` call id
-        (or the namespace's own id when no call bound)."""
-        if namespace is None:
-            return None
-        return self._bind(namespace) or _namespace_id(namespace)
-
-    def _wrap(self, events: list[Event], namespace: tuple | None) -> list[Event]:
-        """A sub-agent's events, each inside a SUBAGENT_EVENT envelope keyed by its `task` call."""
-        task_id = self._run.bindings.get(namespace) if namespace else None
-        task_id = task_id or _namespace_id(namespace)
-        if task_id is None:
-            return events
-        path = _namespace_path(namespace)
-        return [
-            self.emitter.subagent_event(
-                task_id=task_id, subagent_namespace=path or [task_id], event=event, namespace=path[0] if path else None,
-            )
-            for event in events
-        ]
+            self._tool_card_close(out, call_id, msg, error=error)
 
     # --------------------------------------------------------- background tasks
     @staticmethod
@@ -747,7 +551,7 @@ class AGUIStreamNormalizer:
             "args": dict(args), "action": "start",
         }
 
-    def _on_async_task_result(self, out: list[Event], msg: Any, call_id: str, name: str | None, label: str | None) -> None:
+    def _on_async_task_result(self, out: list[Event], msg: Any, call_id: str, name: str | None) -> None:
         """TASK_LAUNCHED once per run; a launch without a task id is an errored tool card."""
         action = "update" if name == UPDATE_ASYNC_TASK_TOOL_NAME else "start"
         call = self._async_calls.pop(call_id, None)
@@ -761,15 +565,14 @@ class AGUIStreamNormalizer:
         match = None if error else _LAUNCHED_TASK_ID_RE.search(message_text(msg))
         if match:
             self._add(out, self.emitter.task_launched(
-                task_id=match.group(1), name=call["name"], description=call["description"],
-                action=action, namespace=label,
+                task_id=match.group(1), name=call["name"], description=call["description"], action=action,
             ))
             return
         tool = UPDATE_ASYNC_TASK_TOOL_NAME if action == "update" else START_ASYNC_TASK_TOOL_NAME
-        self._tool_card_open(out, call_id, tool, call["args"], label)
-        self._tool_card_close(out, call_id, msg, label, error=True)
+        self._tool_card_open(out, call_id, tool, call["args"])
+        self._tool_card_close(out, call_id, msg, error=True)
 
-    def _on_task_notification(self, out: list[Event], msg: Any, node: Any, update: Mapping[str, Any], label: str | None) -> None:
+    def _on_task_notification(self, out: list[Event], msg: Any, node: Any, update: Mapping[str, Any]) -> None:
         """TASK_SETTLED_INLINE for a settled task's outcome pulled into the run.
 
         ``before_agent`` also re-labels the run's own input (a superseded
@@ -796,23 +599,23 @@ class AGUIStreamNormalizer:
             return
         self._settled_inline.add((task_id, run_id, status))
         self._add(out, self.emitter.task_settled_inline(
-            task_id=task_id, name=str(event.get("agent_name") or ""), status=status, namespace=label,
+            task_id=task_id, name=str(event.get("agent_name") or ""), status=status,
         ))
 
     # ------------------------------------------------- plan, usage, compaction
-    def _plan(self, out: list[Event], todos: list[Any], meta: dict[str, Any], label: str | None) -> None:
+    def _plan(self, out: list[Event], todos: list[Any], meta: dict[str, Any]) -> None:
         fingerprint = json.dumps(todos, ensure_ascii=False, sort_keys=True)
         if fingerprint != self._last_plan:
             self._last_plan = fingerprint
-            self._add(out, self.emitter.plan_snapshot(todos, metadata=meta, namespace=label))
+            self._add(out, self.emitter.plan_snapshot(todos, metadata=meta))
 
-    def _usage(self, out: list[Event], msg: Any, namespace: tuple | None, label: str | None) -> None:
+    def _usage(self, out: list[Event], msg: Any) -> None:
         """TOKEN_USAGE per settled model call, with the metrics stamped on it; and a
         compaction's result, from the reply that followed it."""
         usage = getattr(msg, "usage_metadata", None)
         response_metadata = getattr(msg, "response_metadata", None) or {}
         compaction = response_metadata.get(COMPACTION_KEY)
-        if isinstance(compaction, dict) and namespace is None:
+        if isinstance(compaction, dict):
             self._add(out, self._compaction_done(compaction, usage, response_metadata))
         if not (isinstance(usage, dict) and usage):
             return
@@ -821,13 +624,12 @@ class AGUIStreamNormalizer:
         metrics = response_metadata.get(USAGE_METRICS_KEY)
         self._add(out, self.emitter.token_usage(
             usage, message_id=getattr(msg, "id", None), metrics=metrics if isinstance(metrics, dict) else None,
-            namespace=label,
         ))
 
-    def _on_summary_call(self, msg: Any, namespace: tuple | None) -> list[Event]:
-        """A compaction's summary call: that it started (orchestrator only) and its cost (once)."""
+    def _on_summary_call(self, msg: Any) -> list[Event]:
+        """A compaction's summary call: that it started and its cost (once)."""
         out: list[Event] = []
-        if namespace is None and not self._compaction_open:
+        if not self._compaction_open:
             self._compaction_open = True
             self._compactions += 1
             self._add(out, self.emitter.context_compaction("started"))
@@ -836,9 +638,7 @@ class AGUIStreamNormalizer:
             call_id = getattr(msg, "id", None) or f"compaction-{self.thread_id}-{self._compactions}"
             if call_id not in self._compaction_usage_ids:
                 self._compaction_usage_ids.add(call_id)
-                self._add(out, self.emitter.token_usage(
-                    usage, message_id=call_id, purpose="compaction", namespace=self._label(namespace),
-                ))
+                self._add(out, self.emitter.token_usage(usage, message_id=call_id, purpose="compaction"))
         return out
 
     def _compaction_done(self, stamp: dict[str, Any], usage: Any, response_metadata: dict[str, Any]) -> Event:

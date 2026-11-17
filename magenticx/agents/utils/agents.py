@@ -18,7 +18,10 @@ must be called once the seed is in place to pick up the built-in YAML agents.
 It mutates ``AGENT_REGISTRY`` **in place** so modules that did
 ``from utils.agents import AGENT_REGISTRY`` observe the update.
 """
+import hashlib
 import inspect
+import json
+from collections import OrderedDict
 from pathlib import Path
 from collections.abc import AsyncIterator
 from typing import Any, Dict, Optional, Set
@@ -173,6 +176,16 @@ AGENT_REGISTRY: Dict[str, AgentDefinition] = _build_registry()
 # definition no longer has a file to stat.
 _USER_AGENT_CACHE: Dict[tuple[str, str], tuple[Any, AgentDefinition]] = {}
 
+# Trial drafts ("Try it", plan 40) recently run in this process, so a task tree
+# a trial started can be rebuilt (plan 41): a draft is in no store, and every
+# sub-agent is a background task the runner rebuilds from its definition.
+# Keyed by (owner, slug, content digest), oldest first, bounded; a trial resends
+# its draft on every turn, which keeps a draft in use at the newest end. Lost on
+# restart, as the task runs themselves are: a follow-up to a forgotten draft's
+# task fails closed (the runner finds no matching definition).
+_TRIAL_DRAFTS: "OrderedDict[tuple[str, str, str], AgentDefinition]" = OrderedDict()
+_TRIAL_DRAFTS_MAX = 64
+
 
 def _definition_store() -> AgentDefinitionStore:
     """The definition store on this service's ``agent_runtime`` pool.
@@ -260,8 +273,22 @@ def build_trial_definition(
     cache serves real runs, and a draft in it would be served to the next
     ordinary run of the same slug. The agent's ``/reference/`` mount serves these
     files from memory, never the saved agent's rows.
+
+    It is remembered in ``_TRIAL_DRAFTS`` instead, which only
+    :func:`definition_candidates` reads: the trial's background tasks are
+    rebuilt from it, pinned by fingerprint like any task tree.
     """
-    return _user_definition(spec, owner_user_id, dict(files), trial=True)
+    definition = _user_definition(spec, owner_user_id, dict(files), trial=True)
+    payload = json.dumps(
+        {"spec": spec.model_dump(mode="json"), "files": sorted(files.items())},
+        sort_keys=True, separators=(",", ":"), default=str,
+    )
+    key = (owner_user_id, spec.slug, hashlib.sha256(payload.encode("utf-8")).hexdigest())
+    _TRIAL_DRAFTS[key] = definition
+    _TRIAL_DRAFTS.move_to_end(key)
+    while len(_TRIAL_DRAFTS) > _TRIAL_DRAFTS_MAX:
+        _TRIAL_DRAFTS.popitem(last=False)
+    return definition
 
 
 def forget_user_agents(user_id: str) -> int:
@@ -270,11 +297,14 @@ def forget_user_agents(user_id: str) -> int:
     Account deletion (plan 32). Memory hygiene, not correctness: the loader
     reads the row before it consults this cache, so a purged agent is never
     served from it — but its parsed definition would otherwise sit here for the
-    life of the process.
+    life of the process. The user's remembered trial drafts go too (their
+    tasks are cancelled by the same purge).
     """
     keys = [key for key in _USER_AGENT_CACHE if key[0] == user_id]
     for key in keys:
         del _USER_AGENT_CACHE[key]
+    for draft in [key for key in _TRIAL_DRAFTS if key[0] == user_id]:
+        del _TRIAL_DRAFTS[draft]
     return len(keys)
 
 
@@ -305,18 +335,26 @@ async def definition_candidates(
 ) -> AsyncIterator[AgentDefinition]:
     """The definitions a pinned task tree may have been started on (plan 41).
 
-    The current definition first; then, for a user-authored agent, every kept
-    version, newest first — fetched only when the caller asks for the next
-    one, so the common case (the agent was not edited mid-task) costs one
-    lookup. The task runner builds each candidate and keeps the first whose
-    fingerprint is the task's pinned ``definition_version``; none matching
-    fails the run closed rather than running a different agent.
+    The current definition first; then, for a user-authored agent, the trial
+    drafts of it this process ran (newest first, in memory — a "Try it" run's
+    tasks are pinned to its draft), then every kept version, newest first —
+    fetched only when the caller asks for the next one, so the common case (the
+    agent was not edited mid-task) costs one lookup. The task runner builds
+    each candidate and keeps the first whose fingerprint is the task's pinned
+    ``definition_version``; none matching fails the run closed rather than
+    running a different agent.
     """
     current = await resolve_agent_definition(slug, owner_user_id)
     if current is not None:
         yield current
     if not owner_user_id:
         return
+    drafts = [
+        definition for (owner, draft_slug, _digest), definition in reversed(_TRIAL_DRAFTS.items())
+        if owner == owner_user_id and draft_slug == slug
+    ]
+    for draft in drafts:
+        yield draft
     store = _definition_store()
     for meta in await store.list_versions(owner_user_id, slug):
         version = await store.get_version(owner_user_id, slug, int(meta["version_no"]))

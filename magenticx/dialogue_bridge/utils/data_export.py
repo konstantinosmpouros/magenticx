@@ -14,6 +14,12 @@ disk — and the cost of an export does not grow with the size of the account.
 * **Custom agents and skills** live in the agents service; it streams its part
   as framed lines that are copied straight into the archive (workflow
   definitions too, under ``workflows/definitions/``, once it sends them).
+* **Citation sources** (plan 42) — the web pages a conversation's search tools
+  returned, which its answers cite as ``[src:ID]`` — live in the agents
+  service too, but per conversation; the bridge asks for them conversation by
+  conversation, like every other ``conversations/*.ndjson`` part, and writes
+  them as rows with their ``conversation_id``. Fail-open: an agents service
+  that cannot answer leaves them out, and the manifest says so.
 * **Workflow runs** (plan 38) are the user's own history — each run and every
   event the engine emitted for it — so they are exported, run by run.
 * **The archive** is built by :class:`utils.zip_stream.ZipStream`, which never
@@ -81,6 +87,8 @@ from core.logging import get_context, get_logger
 from core.security.internal_trust import internal_service_headers
 from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
+from schema import keep_valid_sources
+from utils.agents import build_conversation_sources_url
 from utils.zip_stream import ZipStream, check_archive_path, safe_file_name
 
 logger = get_logger(__name__)
@@ -611,6 +619,39 @@ async def _all_tool_usage(user_id: str) -> AsyncIterator[dict]:
             yield row
 
 
+async def _all_conversation_sources(em: _Emitter, user_id: str) -> AsyncIterator[dict]:
+    """Every conversation's citation sources (plan 42), one row per source.
+
+    Asked of the agents service per conversation (at most 500 each, newest
+    first), over one client for the whole part. Each source is validated again
+    (``http(s)`` only, capped) and a bad one dropped. **Fail-open**: the first
+    call that fails ends this part — the rows already written stay, the
+    manifest names the part as missing, and the export goes on — so an
+    agents service that is down costs one timeout, not one per conversation.
+    """
+    async with httpx.AsyncClient(
+        timeout=settings.http.agents_timeout, verify=get_httpx_verify(), cert=get_httpx_client_cert()
+    ) as client:
+        async for conversation_id in _conversation_ids(user_id):
+            try:
+                response = await client.get(
+                    build_conversation_sources_url(user_id, conversation_id),
+                    headers=internal_service_headers(get_context().get("request_id")),
+                )
+                response.raise_for_status()
+                body = response.json()
+                items = body.get("sources") if isinstance(body, dict) else None
+                if not isinstance(items, list):
+                    raise ValueError("unexpected citation-sources payload")
+            except (httpx.HTTPError, ValueError) as exc:
+                em.missing.append("citation sources (the agents service was unavailable)")
+                logger.warning("export_sources_part_missing", "Exported without some citation sources",
+                               user_id=user_id, error_type=type(exc).__name__)
+                return
+            for source in keep_valid_sources(items):
+                yield {"conversation_id": conversation_id, **source.model_dump()}
+
+
 def _workflow_schedule_rows(user_id: str) -> AsyncIterator[dict]:
     base = select(*_WORKFLOW_SCHEDULES).where(WorkflowScheduleTable.user_id == user_id)
     return _pages(_by_id(base, WorkflowScheduleTable.workflow_id), lambda r: (r["workflow_id"],))
@@ -675,6 +716,7 @@ moment it was created. All times are UTC.
 | `conversations/message_usage.ndjson` | Where each answer's tokens went: the main agent and each sub-agent, by model |
 | `conversations/tasks.ndjson` | Background sub-agent tasks your conversations ran: what each was asked, how it ended and what it spent |
 | `conversations/tool_usage.ndjson` | How often each answer's tools ran, failed and took, by agent and tool (never their input or output) |
+| `conversations/sources.ndjson` | The web pages your agents' searches found, which answers cite as `[src:ID]`: one per line, with its `conversation_id` |
 | `conversations/attachments.ndjson` | One attachment per line; `archive_path` is where its file is in this archive (empty in a text-only export) |
 | `conversations/reports.ndjson` | Conversations you reported |
 | `conversations/shares.ndjson` | Conversations you shared (the links themselves are not included) |
@@ -855,6 +897,7 @@ async def stream_export(user_id: str, *, include_attachments: bool, claim: Expor
             _ndjson(zs, em, "conversations/message_usage.ndjson", _all_message_usage(user_id)),
             _ndjson(zs, em, "conversations/tool_usage.ndjson", _all_tool_usage(user_id)),
             _ndjson(zs, em, "conversations/tasks.ndjson", _all_conversation_tasks(user_id)),
+            _ndjson(zs, em, "conversations/sources.ndjson", _all_conversation_sources(em, user_id)),
             _ndjson(zs, em, "conversations/attachments.ndjson", _all_attachments(user_id, include_attachments)),
             _ndjson(zs, em, "conversations/reports.ndjson",
                     _pages(_by_id(select(*_REPORTS).where(ConversationReportTable.user_id == user_id),

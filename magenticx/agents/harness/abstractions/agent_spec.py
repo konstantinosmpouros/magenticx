@@ -95,9 +95,9 @@ class SubAgentSpec(BaseModel):
     run; a non-empty list restricts the sub-agent to exactly those, and must be
     a subset of what the agent above it may use (``AgentSpec`` enforces it).
 
-    ``subagents`` are its own sub-agents, which it delegates to with ``task``
-    exactly as the main agent does — at most :data:`MAX_SUBAGENT_DEPTH` levels
-    below the main agent in all.
+    ``subagents`` are its own sub-agents, which it starts as background tasks
+    exactly as the main agent does (``start_async_task``) — at most
+    :data:`MAX_SUBAGENT_DEPTH` levels below the main agent in all.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -169,13 +169,10 @@ class AgentSpec(BaseModel):
     def _rename_deprecated_gate_keys(cls, hitl: dict[str, bool]) -> dict[str, bool]:
         """Read ``hitl.task`` as ``hitl.start_async_task`` (plan 41 §4).
 
-        Stored definitions written before async sub-agents still say ``task``;
-        the alias is accepted for one release and normalised on load, so
+        Stored definitions written before async sub-agents may still say
+        ``task`` (the blocking tool, since removed); it is normalised on load, so
         everything downstream (validation, the run, a re-save) sees only the
-        new key. A definition stating both keeps the new key's value. The run
-        still gates the blocking ``task`` tool while async sub-agents are off:
-        the approval merge treats the two names as one gate
-        (``harness.tools.gates.with_gate_aliases``).
+        new key. A definition stating both keeps the new key's value.
         """
         out = {key: value for key, value in hitl.items() if key not in DEPRECATED_GATE_KEYS}
         for old, new in DEPRECATED_GATE_KEYS.items():

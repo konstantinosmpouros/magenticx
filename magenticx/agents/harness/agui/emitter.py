@@ -3,8 +3,7 @@
 Every method returns one event (``dict``; ``thought`` returns its three);
 :func:`encode` turns one into its SSE frame, and :func:`send` writes events to a
 LangGraph stream writer (:func:`is_agui_events` recognises events a node wrote
-there unencoded). Events stay dicts until the edge, so the normalizer
-can wrap a sub-agent's events without decoding them again.
+there unencoded). Events stay dicts until the edge.
 """
 
 import json
@@ -35,7 +34,6 @@ from ag_ui.core import (
 from pydantic import BaseModel
 
 from harness.agui.events import (
-    BEFORE_AGENT_EVENT_TYPE,
     CHECKPOINT_COMMITTED_EVENT_TYPE,
     CONTEXT_COMPACTION_EVENT_TYPE,
     HITL_INTERRUPT_EVENT_TYPE,
@@ -43,14 +41,10 @@ from harness.agui.events import (
     PRESENT_ARTIFACT_EVENT_TYPE,
     RENDER_CHART_EVENT_TYPE,
     SOURCES_EVENT_TYPE,
-    SUBAGENT_COMPLETED_EVENT_TYPE,
-    SUBAGENT_EVENT_TYPE,
     TASK_LAUNCHED_EVENT_TYPE,
     TASK_SETTLED_INLINE_EVENT_TYPE,
-    TASK_SUBAGENT_EVENT_TYPE,
     TOKEN_USAGE_EVENT_TYPE,
     TOOL_USAGE_EVENT_TYPE,
-    BeforeAgentEvent,
     CheckpointCommittedEvent,
     ContextCompactionEvent,
     HITLInterruptEvent,
@@ -59,11 +53,8 @@ from harness.agui.events import (
     PresentArtifactEvent,
     RenderChartEvent,
     SourcesEvent,
-    SubAgentCompletedEvent,
-    SubAgentEvent,
     TaskLaunchedEvent,
     TaskSettledInlineEvent,
-    TaskSubAgentEvent,
     TokenUsageEvent,
     ToolUsageEvent,
 )
@@ -213,29 +204,10 @@ class AGUIEmitter:
                       namespace: str | None = None) -> Event:
         return self.custom(PLAN_SNAPSHOT_EVENT_TYPE, PlanSnapshot(items=list(items), updated_at=_now_ms(), metadata=metadata), namespace)
 
-    def task_subagent(self, *, task_id: str, subagent_type: str, description: str, namespace: str | None = None) -> Event:
-        payload = TaskSubAgentEvent(task_id=task_id, subagent_type=subagent_type, description=description)
-        return self.custom(TASK_SUBAGENT_EVENT_TYPE, payload, namespace)
-
     def hitl_interrupt(self, thread_id: str, interrupt: Any, metadata: dict[str, Any] | None = None,
                        namespace: str | None = None) -> Event:
         payload = HITLInterruptEvent(thread_id=thread_id, interrupt=interrupt, metadata=metadata or {})
         return self.custom(HITL_INTERRUPT_EVENT_TYPE, payload, namespace)
-
-    def subagent_event(self, *, task_id: str, subagent_namespace: Sequence[str], event: Event,
-                       namespace: str | None = None) -> Event:
-        """A sub-agent's event inside its `task` envelope."""
-        payload = SubAgentEvent(task_id=task_id, namespace=list(subagent_namespace), event=event)
-        return self.custom(SUBAGENT_EVENT_TYPE, payload, namespace)
-
-    def subagent_completed(self, *, task_id: str, status: str = "completed", subagent_namespace: Sequence[str] | None = None,
-                           started_at: int | None = None, ended_at: int | None = None, namespace: str | None = None) -> Event:
-        """A delegated sub-agent returned: its card shows done/failed mid-run."""
-        payload = SubAgentCompletedEvent(
-            task_id=task_id, status="error" if status == "error" else "completed",
-            namespace=list(subagent_namespace) if subagent_namespace else None, started_at=started_at, ended_at=ended_at,
-        )
-        return self.custom(SUBAGENT_COMPLETED_EVENT_TYPE, payload, namespace)
 
     def task_launched(self, *, task_id: str, name: str, description: str, action: str = "start",
                       namespace: str | None = None) -> Event:
@@ -247,9 +219,6 @@ class AGUIEmitter:
     def task_settled_inline(self, *, task_id: str, name: str, status: str, namespace: str | None = None) -> Event:
         """A task's result was pulled into this busy run."""
         return self.custom(TASK_SETTLED_INLINE_EVENT_TYPE, TaskSettledInlineEvent(task_id=task_id, name=name, status=status), namespace)
-
-    def before_agent_event(self, *, message: str, metadata: dict[str, Any] | None = None, namespace: str | None = None) -> Event:
-        return self.custom(BEFORE_AGENT_EVENT_TYPE, BeforeAgentEvent(message=message, metadata=metadata or {}), namespace)
 
     def token_usage(self, usage_metadata: dict[str, Any], *, message_id: str | None = None, metrics: dict[str, Any] | None = None,
                     purpose: str | None = None, namespace: str | None = None) -> Event:

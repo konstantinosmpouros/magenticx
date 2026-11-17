@@ -9,9 +9,8 @@ def test_event_type_constants(agents_service):
     ev = agents_service.agui_events
     assert ev.HITL_INTERRUPT_EVENT_TYPE == "HITL_INTERRUPT"
     assert ev.PLAN_SNAPSHOT_EVENT_TYPE == "PLAN_SNAPSHOT"
-    assert ev.TASK_SUBAGENT_EVENT_TYPE == "TASK_SUBAGENT"
-    assert ev.SUBAGENT_EVENT_TYPE == "SUBAGENT_EVENT"
-    assert ev.BEFORE_AGENT_EVENT_TYPE == "BEFORE_AGENT_EVENT"
+    assert ev.TASK_LAUNCHED_EVENT_TYPE == "TASK_LAUNCHED"
+    assert ev.TASK_SETTLED_INLINE_EVENT_TYPE == "TASK_SETTLED_INLINE"
 
 
 # ----------------------------------------------------------------------
@@ -137,84 +136,3 @@ def test_plan_snapshot_requires_items(agents_service):
     with pytest.raises(ValidationError):
         ev.PlanSnapshot()
 
-
-# ----------------------------------------------------------------------
-# TaskSubAgentEvent
-# ----------------------------------------------------------------------
-def test_task_subagent_event_full(agents_service):
-    ev = agents_service.agui_events
-    model = ev.TaskSubAgentEvent(
-        task_id="task-1",
-        subagent_type="researcher",
-        description="dig into the docs",
-    )
-    assert model.model_dump() == {
-        "task_id": "task-1",
-        "subagent_type": "researcher",
-        "description": "dig into the docs",
-    }
-
-
-@pytest.mark.parametrize("missing", ["task_id", "subagent_type", "description"])
-def test_task_subagent_event_required_fields(agents_service, missing):
-    ev = agents_service.agui_events
-    kwargs = {"task_id": "t", "subagent_type": "s", "description": "d"}
-    kwargs.pop(missing)
-    with pytest.raises(ValidationError):
-        ev.TaskSubAgentEvent(**kwargs)
-
-
-# ----------------------------------------------------------------------
-# SubAgentEvent
-# ----------------------------------------------------------------------
-def test_subagent_event_full(agents_service):
-    ev = agents_service.agui_events
-    model = ev.SubAgentEvent(
-        task_id="task-9",
-        namespace=["root", "child"],
-        event={"type": "TEXT_MESSAGE_CHUNK", "delta": "hi"},
-    )
-    assert model.model_dump() == {
-        "task_id": "task-9",
-        "namespace": ["root", "child"],
-        "event": {"type": "TEXT_MESSAGE_CHUNK", "delta": "hi"},
-    }
-
-
-@pytest.mark.parametrize("missing", ["task_id", "namespace", "event"])
-def test_subagent_event_required_fields(agents_service, missing):
-    ev = agents_service.agui_events
-    kwargs = {"task_id": "t", "namespace": ["a"], "event": {"k": "v"}}
-    kwargs.pop(missing)
-    with pytest.raises(ValidationError):
-        ev.SubAgentEvent(**kwargs)
-
-
-def test_subagent_event_namespace_must_be_list(agents_service):
-    ev = agents_service.agui_events
-    with pytest.raises(ValidationError):
-        ev.SubAgentEvent(task_id="t", namespace="not-a-list-but-required-list", event={})
-
-
-# ----------------------------------------------------------------------
-# BeforeAgentEvent
-# ----------------------------------------------------------------------
-def test_before_agent_event_full(agents_service):
-    ev = agents_service.agui_events
-    model = ev.BeforeAgentEvent(message="delegated work", metadata={"caller": "x"})
-    assert model.model_dump() == {
-        "message": "delegated work",
-        "metadata": {"caller": "x"},
-    }
-
-
-def test_before_agent_event_metadata_defaults_none(agents_service):
-    ev = agents_service.agui_events
-    model = ev.BeforeAgentEvent(message="m")
-    assert model.model_dump() == {"message": "m", "metadata": None}
-
-
-def test_before_agent_event_requires_message(agents_service):
-    ev = agents_service.agui_events
-    with pytest.raises(ValidationError):
-        ev.BeforeAgentEvent(metadata={})

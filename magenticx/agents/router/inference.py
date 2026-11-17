@@ -312,10 +312,9 @@ async def resume_agent(agent_slug: str, req: AgentResumeRequest):
             },
         )
 
-    # The resume stream runs through a fresh normalizer: re-teach it the `task`
-    # calls still awaiting their result, so a sub-agent spawned once its gated
-    # `task` is approved keeps that call's id (one card in the UI) and its
-    # result raises SUBAGENT_COMPLETED.
+    # The resume stream runs through a fresh normalizer: re-teach it the task
+    # calls still awaiting their result, so a background task started once its
+    # gated `start_async_task` is approved is announced with what it was asked.
     normalizer = getattr(agent, "agui_normalizer", None)
     values = getattr(snapshot, "values", None)
     if normalizer is not None and isinstance(values, dict):

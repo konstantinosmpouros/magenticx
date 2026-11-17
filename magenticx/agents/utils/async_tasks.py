@@ -33,7 +33,6 @@ from harness.async_tasks.runner import (
     TaskRefused,
     TaskRunner,
     get_task_runner,
-    optional_task_runner,
     result_messages,
     task_out_from_row,
 )
@@ -281,13 +280,8 @@ async def tasks_list(user_id: str, conversation_id: str, limit: int) -> list[Tas
 
 
 async def tasks_unnotified(limit: int, user_id: str | None, conversation_id: str | None) -> list[OutboxItem]:
-    """Settled depth-1 tasks the orchestrator has not been told about (startup reconcile).
-
-    Empty while async sub-agents are off, so the bridge's reconcile loop is a no-op.
-    """
-    runner = optional_task_runner()
-    if runner is None:
-        return []
+    """Settled depth-1 tasks the orchestrator has not been told about (startup reconcile)."""
+    runner = get_task_runner()
     rows = await runner.store.unnotified(
         max(1, min(limit, MAX_UNNOTIFIED)), user_id=user_id, conversation_id=conversation_id
     )
@@ -320,13 +314,8 @@ async def tasks_resume(task_id: str, body: TaskResumeIn) -> TaskOut:
 
 
 async def tasks_cancel_scope(body: TaskCancelScopeIn) -> TaskCancelScopeOut:
-    """Every task of a conversation, a root run, or (neither given) the whole account.
-
-    With async sub-agents off no task can be running, so there is nothing to stop.
-    """
-    runner = optional_task_runner()
-    if runner is None:
-        return TaskCancelScopeOut(cancelled=0)
+    """Every task of a conversation, a root run, or (neither given) the whole account."""
+    runner = get_task_runner()
     roots: Sequence[str] = await runner.store.scope_task_ids(
         body.user_id, conversation_id=body.conversation_id, root_run_id=body.root_run_id
     )

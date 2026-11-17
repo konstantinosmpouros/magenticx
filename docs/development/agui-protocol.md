@@ -102,18 +102,15 @@ All custom events share a wrapper shape:
 | `name` | Payload type | Purpose |
 | --- | --- | --- |
 | `PLAN_SNAPSHOT` | `PlanSnapshot` | Current state of the agent's task list |
-| `TASK_SUBAGENT` | `TaskSubAgentEvent` | Orchestrator delegated a task to a sub-agent |
-| `SUBAGENT_EVENT` | `SubAgentEvent` | An AG-UI event emitted by a sub-agent, wrapped with task context |
-| `SUBAGENT_COMPLETED` | `SubAgentCompletedEvent` | A delegated sub-agent returned: `{task_id, status: "completed"\|"error", namespace?, started_at?, ended_at?}`. Emitted once per `task` call when its ToolMessage arrives (the result text is never forwarded); `task_id` is the `task` tool-call id, `namespace` the sub-agent's bound LangGraph namespace path when known, timestamps epoch ms. A fresh `/resume` normalizer recognises the result by tool name, and `/resume` seeds the still-unanswered `task` calls from the paused checkpoint (`seed_pending_tasks`) so a sub-agent spawned after its gated `task` is approved binds to that call id. The UI folds it into the sub-agent card's status (resolving the call id or the namespace) |
-| `BEFORE_AGENT_EVENT` | `BeforeAgentEvent` | Pre-execution message injected by `PatchToolCallsMiddleware` into a sub-agent |
-| `TOKEN_USAGE` | `TokenUsageEvent` | Per-AI-message token usage, one per settled `AIMessage`; namespace-attributed for sub-agents. Input/output/total plus `input_token_details` (cached) and `output_token_details` (reasoning); and, from `UsageMetricsMiddleware`, `model`, `latency_ms`, `context_window`, `context_tokens`, `context_percent`, `compaction_percent`, `finish_reason` (why the provider ended the call, whichever API shape reported it), `truncated` (`true` when `finish_reason` is `length` / `max_tokens` / `max_output_tokens` — the call hit its output-token ceiling; also logged as `model_call_truncated`) and `ttft_ms` (ms from the call's start to its first streamed text or tool-call chunk, seen by `FirstTokenCallback`; absent when the call did not stream). The middleware stamps them on `AIMessage.response_metadata["mx_usage_metrics"]` — deep agents do not stream the custom channel — and the normalizer folds them into this event. The UI keeps the main agent's latest context on `RunTimeline.context` (the composer gauge). `purpose: "compaction"` marks the summary call of an automatic compaction (plan 34): the bridge books it under its own `compaction` usage scope, never as the context reading. **LangGraph agents** emit it too: `UsageMetricsCallback` (on the run config) times each chat-model call their chains make and the stream loop drains one `TOKEN_USAGE` per call (`message_id` `lg-<run id>`, `model` + `latency_ms` + `finish_reason`/`truncated`, `ttft_ms` only for a call the node streamed, no context fields — a pipeline has no single window) |
-| `TOOL_USAGE` | `ToolUsageEvent` | One settled tool call's metrics (plan 41): `{tool_call_id, tool_name, duration_ms, status: "ok"\|"error", output_chars}` — never its arguments or output. **Deep agents:** `ToolMetricsMiddleware` (directly outside `ToolErrorMiddleware`, so a tool that raised is counted as `status: "error"`) stamps `ToolMessage.response_metadata["mx_tool_metrics"]`, and the normalizer emits `TOOL_USAGE` right after the call's `TOOL_CALL_RESULT` → `TOOL_CALL_END`; a sub-agent's is wrapped in `SUBAGENT_EVENT` like its other events. A `Command` result reports `output_chars: 0`. Not emitted for the tools the normalizer hides (`write_todos`, `task`, `present_artifact`, `render_chart`, `ask_user` — their result is consumed silently). **LangGraph agents:** `UsageMetricsCallback.on_tool_start/end/error` times the tools their chains call and the stream loop drains them (`drain_tools()`, `tool_call_id` `lg-<run id>`; a `GraphBubbleUp` is a pause, not an error, and is not reported). The bridge dedupes by `tool_call_id` and books `tool_usage` (see [usage-analytics](../flows/usage-analytics.md)); the UI timeline ignores it. |
-| `SOURCES` | `SourcesEvent` | The citable pages one tool call returned (plan 42): `{tool_call_id, sources: [{id, url, title, snippet, tool}]}` (1–50 sources). `SourcesMiddleware` (directly outside `ToolErrorMiddleware`, inside `ToolMetricsMiddleware`) runs the tool, reads its result through the extractor registry (`harness/sources/extractors.py`), rewrites the `ToolMessage` so the model sees `[src:ID]` beside each page, and stamps `response_metadata["mx_sources"]`; the normalizer emits `SOURCES` right after the call's `TOOL_CALL_RESULT` → `TOOL_CALL_END` → `TOOL_USAGE`, in the same namespace (a sub-agent's is wrapped in `SUBAGENT_EVENT`). Every source is re-validated by `harness.sources.Source` (`url` http(s) only ≤ 2048, no credentials; `title`/`snippet` ≤ 300, control and bidi characters stripped; `tool` ≤ 100; `id` `^[0-9a-f]{6,8}$`); a malformed stamp is logged (counts only) and dropped. Not emitted for a tool without an extractor (any MCP tool is read generically), an error result, or a hidden tool. When it is emitted, that call's `TOOL_CALL_RESULT` carries an empty `content`: the UI shows the call's pages as source cards (`SourceCards.tsx`, attached to the tool step by `tool_call_id`) and the page contents never reach the browser. The id is the first 6 hex of `sha256(normalised URL)` (8 when 6 clash inside one result); the UI resolves an inline `[src:ID]` / `[src:ID,ID]` marker only against ids it has seen — this event, or the conversation's stored sources (agents `GET /users/{uid}/conversations/{cid}/sources`, plan 42 §3.7). |
+| `TASK_SUBAGENT` / `SUBAGENT_EVENT` / `SUBAGENT_COMPLETED` / `BEFORE_AGENT_EVENT` | — | **Legacy, no longer emitted.** The blocking `task` tool's events: a delegation, a sub-agent's event wrapped in its `task` envelope, the sub-agent's return, and its start marker. The agents service stopped producing them at plan 41's cut-over (every sub-agent is a background task, see `TASK_LAUNCHED`); answers recorded before still carry them in `raw_events`, which the bridge stores and the UI folds as it always did (Phase 6, Phase 8) |
+| `TOKEN_USAGE` | `TokenUsageEvent` | Per-AI-message token usage, one per settled `AIMessage` (a background task's in its own event stream). Input/output/total plus `input_token_details` (cached) and `output_token_details` (reasoning); and, from `UsageMetricsMiddleware`, `model`, `latency_ms`, `context_window`, `context_tokens`, `context_percent`, `compaction_percent`, `finish_reason` (why the provider ended the call, whichever API shape reported it), `truncated` (`true` when `finish_reason` is `length` / `max_tokens` / `max_output_tokens` — the call hit its output-token ceiling; also logged as `model_call_truncated`) and `ttft_ms` (ms from the call's start to its first streamed text or tool-call chunk, seen by `FirstTokenCallback`; absent when the call did not stream). The middleware stamps them on `AIMessage.response_metadata["mx_usage_metrics"]` — deep agents do not stream the custom channel — and the normalizer folds them into this event. The UI keeps the main agent's latest context on `RunTimeline.context` (the composer gauge). `purpose: "compaction"` marks the summary call of an automatic compaction (plan 34): the bridge books it under its own `compaction` usage scope, never as the context reading. **LangGraph agents** emit it too: `UsageMetricsCallback` (on the run config) times each chat-model call their chains make and the stream loop drains one `TOKEN_USAGE` per call (`message_id` `lg-<run id>`, `model` + `latency_ms` + `finish_reason`/`truncated`, `ttft_ms` only for a call the node streamed, no context fields — a pipeline has no single window) |
+| `TOOL_USAGE` | `ToolUsageEvent` | One settled tool call's metrics (plan 41): `{tool_call_id, tool_name, duration_ms, status: "ok"\|"error", output_chars}` — never its arguments or output. **Deep agents:** `ToolMetricsMiddleware` (directly outside `ToolErrorMiddleware`, so a tool that raised is counted as `status: "error"`) stamps `ToolMessage.response_metadata["mx_tool_metrics"]`, and the normalizer emits `TOOL_USAGE` right after the call's `TOOL_CALL_RESULT` → `TOOL_CALL_END`; a background task's lands in its own event stream like its other events. A `Command` result reports `output_chars: 0`. Not emitted for the tools the normalizer hides (`write_todos`, `start_async_task` / `update_async_task` unless the launch failed, `present_artifact`, `render_chart`, `ask_user` — their result is consumed silently). **LangGraph agents:** `UsageMetricsCallback.on_tool_start/end/error` times the tools their chains call and the stream loop drains them (`drain_tools()`, `tool_call_id` `lg-<run id>`; a `GraphBubbleUp` is a pause, not an error, and is not reported). The bridge dedupes by `tool_call_id` and books `tool_usage` (see [usage-analytics](../flows/usage-analytics.md)); the UI timeline ignores it. |
+| `SOURCES` | `SourcesEvent` | The citable pages one tool call returned (plan 42): `{tool_call_id, sources: [{id, url, title, snippet, tool}]}` (1–50 sources). `SourcesMiddleware` (directly outside `ToolErrorMiddleware`, inside `ToolMetricsMiddleware`) runs the tool, reads its result through the extractor registry (`harness/sources/extractors.py`), rewrites the `ToolMessage` so the model sees `[src:ID]` beside each page, and stamps `response_metadata["mx_sources"]`; the normalizer emits `SOURCES` right after the call's `TOOL_CALL_RESULT` → `TOOL_CALL_END` → `TOOL_USAGE`, in the same stream (a background task's lands in its own event stream). Every source is re-validated by `harness.sources.Source` (`url` http(s) only ≤ 2048, no credentials; `title`/`snippet` ≤ 300, control and bidi characters stripped; `tool` ≤ 100; `id` `^[0-9a-f]{6,8}$`); a malformed stamp is logged (counts only) and dropped. Not emitted for a tool without an extractor (any MCP tool is read generically), an error result, or a hidden tool. When it is emitted, that call's `TOOL_CALL_RESULT` carries an empty `content`: the UI shows the call's pages as source cards (`SourceCards.tsx`, attached to the tool step by `tool_call_id`) and the page contents never reach the browser. The id is the first 6 hex of `sha256(normalised URL)` (8 when 6 clash inside one result); the UI resolves an inline `[src:ID]` / `[src:ID,ID]` marker only against ids it has seen — this event, or the conversation's stored sources (agents `GET /users/{uid}/conversations/{cid}/sources`, plan 42 §3.7). |
 | `HITL_INTERRUPT` | `HITLInterruptEvent` | Graph paused — waiting for human input: an approval gate, or an `ask_user` question panel (`interrupt.value.type == "ask_user"`, see below) |
 | `CHECKPOINT_COMMITTED` | `{thread_id, checkpoint_id}` | Terminal event emitted by the agent once its durable LangGraph checkpoint is written. The bridge captures it in `apply_event` and `_finish_run` persists `checkpoint_id` on the AI message, so the branch's next turn can resume/fork from the right head. Carries the branch-scoped checkpoint `thread_id`, not the run id. |
-| `PRESENT_ARTIFACT` | `PresentArtifactEvent` | A deep-agent deliverable explicitly designated via the `present_artifact` tool. Synthesized by the normalizer when it detects the tool call **by name for the top-level orchestrator only** (a sub-agent's call is dropped), carrying `{artifact_id, path, filename, title, summary, mime, status}` display metadata (no bytes). The bridge captures it in `apply_event` into `runtime.presented_artifacts`, and `_finish_run` reads the files back from the agents service and persists them as `attachments(origin='generated')` on the AI message. Lands in `raw_events` so the artifact card survives reconnection. |
-| `CONTEXT_COMPACTION` | `ContextCompactionEvent` | The main agent compacted its context mid-answer (plan 34). `{phase: "started", trigger: "auto"}` with the summary call's first tokens (orchestrator only); `{phase: "done", tokens_after, freed, tokens_before, window, summarized_messages, kept_messages}` with the reply of the model call it ran in front of — `tokens_after` is that reply's provider-reported prompt, `freed` the summarizer's estimate (stamped by `ConfigurableSummarizationMiddleware` on `response_metadata["mx_compaction"]`), `tokens_before` their sum. Emitted before that reply's `TOKEN_USAGE`. Lands in `raw_events`; the UI's timeline folds it into a `compaction` block drawn as a divider. A manual compaction never streams — see [context-compaction](../flows/context-compaction.md). |
-| `RENDER_CHART` | `RenderChartEvent` | A chart the agent drew via the `render_chart` tool. Synthesized by the normalizer on the same terms as `PRESENT_ARTIFACT` (**top-level orchestrator only**), carrying `{chart_id, type, title, subtitle, x_key, series, data, stacked, horizontal, show_values}` where `type` is one of `bar`, `line`, `area`, `pie`, `radar`, `radial`, `scatter`, `composed`. `x_key` names a category label for every type except `scatter`, which reads it as a number; on a `composed` chart each series additionally carries its own `type` and `axis`. Modifiers arrive already reconciled against the chart type, so an inapplicable flag is false. Unlike an artifact the event **is** the chart — there are no bytes behind it, so the bridge needs no capture step and passes it straight through. The payload is normalized agents-side before emission (bounded to 6 series / 200 rows, numbers coerced, rows projected to `x_key` + series keys) so nothing else a model put in a row reaches the wire. Lands in `raw_events`, so the UI's timeline reducer rebuilds the chart block at its log position on reload and reconnection. Colors are absent by design — the UI assigns them from the viewer's theme. |
+| `PRESENT_ARTIFACT` | `PresentArtifactEvent` | A deep-agent deliverable explicitly designated via the `present_artifact` tool. Synthesized by the normalizer when it detects the tool call **by name**, carrying `{artifact_id, path, filename, title, summary, mime, status}` display metadata (no bytes). The bridge captures it in `apply_event` into `runtime.presented_artifacts`, and `_finish_run` reads the files back from the agents service and persists them as `attachments(origin='generated')` on the AI message. Only a chat run's own stream is captured: a background task's call lands in its task's event stream and is never an attachment, so the orchestrator presents a task's files itself (the capabilities prompt says so). Lands in `raw_events` so the artifact card survives reconnection. |
+| `CONTEXT_COMPACTION` | `ContextCompactionEvent` | The main agent compacted its context mid-answer (plan 34). `{phase: "started", trigger: "auto"}` with the summary call's first tokens; `{phase: "done", tokens_after, freed, tokens_before, window, summarized_messages, kept_messages}` with the reply of the model call it ran in front of — `tokens_after` is that reply's provider-reported prompt, `freed` the summarizer's estimate (stamped by `ConfigurableSummarizationMiddleware` on `response_metadata["mx_compaction"]`), `tokens_before` their sum. Emitted before that reply's `TOKEN_USAGE`. Lands in `raw_events`; the UI's timeline folds it into a `compaction` block drawn as a divider. A manual compaction never streams — see [context-compaction](../flows/context-compaction.md). |
+| `RENDER_CHART` | `RenderChartEvent` | A chart the agent drew via the `render_chart` tool. Synthesized by the normalizer on the same terms as `PRESENT_ARTIFACT`, carrying `{chart_id, type, title, subtitle, x_key, series, data, stacked, horizontal, show_values}` where `type` is one of `bar`, `line`, `area`, `pie`, `radar`, `radial`, `scatter`, `composed`. `x_key` names a category label for every type except `scatter`, which reads it as a number; on a `composed` chart each series additionally carries its own `type` and `axis`. Modifiers arrive already reconciled against the chart type, so an inapplicable flag is false. Unlike an artifact the event **is** the chart — there are no bytes behind it, so the bridge needs no capture step and passes it straight through. The payload is normalized agents-side before emission (bounded to 6 series / 200 rows, numbers coerced, rows projected to `x_key` + series keys) so nothing else a model put in a row reaches the wire. Lands in `raw_events`, so the UI's timeline reducer rebuilds the chart block at its log position on reload and reconnection. Colors are absent by design — the UI assigns them from the viewer's theme. |
 | `BRIDGE_HITL_RESOLVED` | `{interrupt_id, decision, reason, decisions, answers?}` | **Bridge-synthesized** (never emitted by the agents service): appended to the event log when `/resume` is accepted, so resolution state survives reloads. The client reducer flips the matching approval's status on it. `answers` (the resume's `value.answers`) is present when an `ask_user` panel was answered, so the answered panel survives a reload. |
 | `workflow.run` | `{workflowId, versionNo, resumed}` | **Workflow runs only**, right after `RUN_STARTED` of every leg: which workflow and pinned version is running, and whether this leg is a resume |
 | `workflow.node_input` | `{config, iteration}` | **Workflow runs only**, after a node's `STEP_STARTED`: its config with templates resolved (`null` when resolving failed) and the execution count |
@@ -139,34 +136,9 @@ All custom events share a wrapper shape:
 
 `status` is a three-value enum: `"pending"`, `"in_progress"`, `"completed"`.
 
-#### `TaskSubAgentEvent`
+#### Legacy: `TaskSubAgentEvent`, `SubAgentEvent`
 
-```json
-{
-  "task_id": "tc_abc123",
-  "subagent_type": "ResearchAgent",
-  "description": "Find all recent papers on transformer attention"
-}
-```
-
-Emitted once when the orchestrator calls the `task` tool. `task_id` is the LangGraph tool call ID and is the correlation key for all subsequent `SUBAGENT_EVENT` frames from that sub-agent.
-
-#### `SubAgentEvent`
-
-```json
-{
-  "task_id": "tc_abc123",
-  "namespace": ["ResearchAgent:tc_abc123"],
-  "event": {
-    "type": "TEXT_MESSAGE_CHUNK",
-    "message_id": "...",
-    "delta": "I found three relevant papers...",
-    "timestamp": 1234567890000
-  }
-}
-```
-
-Every standard AG-UI event emitted by a sub-agent is re-emitted wrapped in this envelope, so the client can route sub-agent output to the correct task card without knowing the LangGraph namespace structure.
+The blocking `task` path's payloads — `{task_id, subagent_type, description}` for a delegation, and `{task_id, namespace, event}` wrapping each event a sub-agent emitted — are no longer produced (plan 41's cut-over); the models were removed from `harness/agui/events.py`. Their shape is kept here because stored `raw_events` of older answers still carry them and the UI still folds them.
 
 #### `TokenUsageEvent`
 
@@ -186,9 +158,9 @@ Every standard AG-UI event emitted by a sub-agent is re-emitted wrapped in this 
 }
 ```
 
-Emitted once per **settled** `AIMessage` (read from `updates`-mode `usage_metadata` in `_usage()`), for the main agent and each sub-agent — sub-agent usage is namespace-wrapped in a `SUBAGENT_EVENT`. The bridge sums input/output across the whole run (all model calls + sub-agents + resume legs), deduping by `message_id`, and persists the totals on `messages.input_tokens` / `messages.output_tokens`, and derives per call the cost, `truncated_calls` and the speed figures (`ttft_ms`, `gen_ms = latency_ms − ttft_ms`, `gen_output_tokens`) — see [usage-analytics](../flows/usage-analytics.md). The reply's usage card and the Usage tab render them.
+Emitted once per **settled** `AIMessage` (read from `updates`-mode `usage_metadata` in `_usage()`), for the run's agent — a background task's arrive in its own event stream and are booked when the task settles ([async-subagents](../flows/async-subagents.md)). The bridge sums input/output across the whole run (all model calls + resume legs), deduping by `message_id`, and persists the totals on `messages.input_tokens` / `messages.output_tokens`, and derives per call the cost, `truncated_calls` and the speed figures (`ttft_ms`, `gen_ms = latency_ms − ttft_ms`, `gen_output_tokens`) — see [usage-analytics](../flows/usage-analytics.md). The reply's usage card and the Usage tab render them.
 
-`ttft_ms` and `latency_ms` share one start: `UsageMetricsMiddleware` opens a `first_token_scope()` (a mutable record in a `ContextVar`) around `handler(request)`, and `FirstTokenCallback` — added to the deep agent's run config by `DeepAgent._stream_config()`, which LangChain carries into every sub-agent — stamps that record on the first chunk with text or a tool-call fragment. Under `RetryOnRateLimitMiddleware` (outermost), both time only the attempt that answered, never a 429 wait.
+`ttft_ms` and `latency_ms` share one start: `UsageMetricsMiddleware` opens a `first_token_scope()` (a mutable record in a `ContextVar`) around `handler(request)`, and `FirstTokenCallback` — added to the deep agent's run config by `DeepAgent._stream_config()` — stamps that record on the first chunk with text or a tool-call fragment. Under `RetryOnRateLimitMiddleware` (outermost), both time only the attempt that answered, never a 429 wait.
 
 #### `ToolUsageEvent`
 
@@ -210,7 +182,7 @@ One per settled tool call; `tool_name` is capped at 200 characters. A malformed 
 {
   "thread_id": "checkpoint-thread-uuid (branch-scoped LangGraph thread)",
   "interrupt": { "id": "<langgraph-interrupt-id>", "value": { "action_requests": [...], "review_configs": [...] } },
-  "metadata": { "namespace": "researcher" }
+  "metadata": {}
 }
 ```
 
@@ -241,7 +213,7 @@ frame: bytes = encode(event)                          # b'data: {...}\n\n'
 send(writer, emitter.thought("**Plan**\n\nLook it up."))  # a LangGraph node: one SSE frame per event
 ```
 
-**`event()`** — every method goes through it: it stamps `timestamp` (epoch ms) when the `ag_ui` model has none, dumps the model as the wire dict (camelCase, nulls dropped) and adds the top-level `namespace` (the actor: `None` for the orchestrator, else its `task` call id). `custom(name, value)` does the same for a `CUSTOM` event, dumping a Pydantic value model first.
+**`event()`** — every method goes through it: it stamps `timestamp` (epoch ms) when the `ag_ui` model has none, dumps the model as the wire dict (camelCase, nulls dropped) and adds the top-level `namespace` (`None` for every event a deep agent's normalizer emits; before plan 41's cut-over it named a blocking `task` call's sub-agent, so stored answers of that time still carry it). `custom(name, value)` does the same for a `CUSTOM` event, dumping a Pydantic value model first.
 
 **`encode(event) -> bytes`** — the SSE frame (`data: {json}\n\n`, non-ASCII kept). `AGUIStreamNormalizer.handle_chunk` encodes its events once, so `BaseAgent.astream` still yields bytes; every other caller encodes at its own edge (`utils/checkpointer.py`, `LangGraphAgent._pending_frames`, the workflow runner).
 
@@ -280,14 +252,13 @@ The bridge does **not** coalesce workflow events: each is stored as-is in `workf
 
 ## Phase 3 — AGUIStreamNormalizer
 
-The normalizer bridges the gap between LangGraph's raw stream format and the AG-UI event contract. A deep agent streams `["messages", "updates", "tasks"]` with `subgraphs=True`; a LangGraph agent with `stream_mode=["messages", "updates"]` goes through it too. Each chunk becomes 0..N event dicts, wrapped in a sub-agent envelope when a sub-agent produced it, then encoded once by `handle_chunk`.
+The normalizer bridges the gap between LangGraph's raw stream format and the AG-UI event contract. A deep agent streams `["messages", "updates"]` without subgraphs: every sub-agent is a background task on its own thread with a normalizer of its own, so one normalizer always speaks for one actor; a LangGraph agent with `stream_mode=["messages", "updates"]` goes through it too. Each chunk becomes 0..N event dicts, encoded once by `handle_chunk`.
 
 ### Envelope Unwrapping
 
-Every LangGraph chunk is a sequence. `_unwrap()` scans for the first element matching a mode string (`"messages"`, `"updates"` or `"tasks"`), then extracts:
+Every LangGraph chunk is a sequence. `_unwrap()` scans for the first element matching a mode string (`"messages"` or `"updates"`), then extracts:
 
-- **`namespace`** — the tuple immediately before the mode string (identifies which subgraph produced the chunk; `None` for the orchestrator)
-- **`mode`** — `"messages"`, `"updates"` or `"tasks"`
+- **`mode`** — `"messages"` or `"updates"`
 - **`payload`** — the element immediately after mode
 - **`metadata`** — optional dict after payload
 
@@ -297,7 +268,7 @@ A `"messages"` payload is a `(msg, meta)` pair; the meta dict is taken from it. 
 
 Used for streaming token-by-token output. The payload is a single message object.
 
-**Summarization suppression.** deepagents/langchain compresses history via an internal LLM call. LangGraph streams that call's tokens on the `messages` channel (it carries no `nostream` tag), stamped `metadata.lc_source == "summarization"` on both the streamed chunks and the final aggregated message. That output is internal context bookkeeping — a `SESSION INTENT / SUMMARY / ARTIFACTS / NEXT STEPS` block — never the assistant's reply, so `_on_message` hands any chunk carrying that marker to `_on_summary_call`, which drops its text. What it keeps (plan 34): a `CONTEXT_COMPACTION {phase: started}` on the orchestrator's first such chunk, and one `TOKEN_USAGE {purpose: compaction}` per summary call (the chunks and the aggregated message share an id), so the compaction is visible and its cost booked. The guard runs **before** sub-agent wrapping, so it covers the orchestrator and sub-agents alike.
+**Summarization suppression.** deepagents/langchain compresses history via an internal LLM call. LangGraph streams that call's tokens on the `messages` channel (it carries no `nostream` tag), stamped `metadata.lc_source == "summarization"` on both the streamed chunks and the final aggregated message. That output is internal context bookkeeping — a `SESSION INTENT / SUMMARY / ARTIFACTS / NEXT STEPS` block — never the assistant's reply, so `_on_message` hands any chunk carrying that marker to `_on_summary_call`, which drops its text. What it keeps (plan 34): a `CONTEXT_COMPACTION {phase: started}` on the first such chunk, and one `TOKEN_USAGE {purpose: compaction}` per summary call (the chunks and the aggregated message share an id), so the compaction is visible and its cost booked.
 
 ```mermaid
 flowchart TD
@@ -318,7 +289,7 @@ flowchart TD
 
 **Reasoning summaries.** OpenAI never returns a reasoning model's reasoning (through the Responses API it is an encrypted item, sent back unread next turn), only — when asked — its own summary of it, in parts (`**Title**
 
-body`). Deep agents ask for it on every reasoning model in the tree (`harness/models/reasoning_summary.py`: `reasoning={"summary": REASONING_SUMMARY}` through deepagents' `ProviderProfile`; which models reason: their `reasoning` in `ALLOWED_AGENT_MODELS`, else langchain-openai's table). The normalizer turns each part into **one** `THINKING_TEXT_MESSAGE_CONTENT` (`reasoning_parts()`): a streamed piece is held per actor until its part is complete — the next part, the first text delta, or the model call's final message in `updates` sends it — because the bridge never coalesces thoughts, so a thought per token would render as a thought per token. The final message then sends nothing again (`streamed` flag); on an updates-only stream it sends every part, before the message's text and tool calls. The UI needs nothing new: a thought is a markdown step in the same CoT as the tool calls, in order, and inside a sub-agent's card for a sub-agent's reasoning. Encrypted reasoning alone yields nothing.
+body`). Deep agents ask for it on every reasoning model in the tree (`harness/models/reasoning_summary.py`: `reasoning={"summary": REASONING_SUMMARY}` through deepagents' `ProviderProfile`; which models reason: their `reasoning` in `ALLOWED_AGENT_MODELS`, else langchain-openai's table). The normalizer turns each part into **one** `THINKING_TEXT_MESSAGE_CONTENT` (`reasoning_parts()`): a streamed piece is held until its part is complete — the next part, the first text delta, or the model call's final message in `updates` sends it — because the bridge never coalesces thoughts, so a thought per token would render as a thought per token. The final message then sends nothing again (`streamed` flag); on an updates-only stream it sends every part, before the message's text and tool calls. The UI needs nothing new: a thought is a markdown step in the same CoT as the tool calls, in order (a background task's, in its drill-down). Encrypted reasoning alone yields nothing.
 
 **Every provider.** `message_text()` and `reasoning_parts()` read a message through LangChain's standard `content_blocks` (translated per `response_metadata["model_provider"]`, which every integration sets), falling back to the raw content list when a translator raises. Reply text is only `text` blocks — never reasoning or tool input; a bare string in a content list, as Gemini sends, is text. Reasoning is OpenAI summary parts, Anthropic and Bedrock thinking, Gemini thoughts and LangChain v1 `reasoning` blocks, plus `additional_kwargs["reasoning_content"]` (DeepSeek, xAI, Groq, Ollama), which the OpenAI translator skips. Tool calls come from `msg.tool_calls`, which every integration fills (`tool_calls()`).
 
@@ -333,31 +304,28 @@ flowchart TD
     A["updates chunk"] --> B{__interrupt__ key?}
     B -->|Yes| C["emit HITL_INTERRUPT<br/>return immediately"]
     B -->|No| D["walk node updates"]
-    D --> E{PatchToolCallsMiddleware<br/>.before_agent node?}
-    E -->|Yes| F["extract delegated_message<br/>emit BEFORE_AGENT_EVENT"]
     D --> G{"todos" key in update?}
     G -->|Yes| H["fingerprint check<br/>if changed → emit PLAN_SNAPSHOT"]
     D --> I["process messages list"]
     I --> J["ToolMessage → _on_tool_result()"]
     I --> K["AIMessage → check tool_calls"]
     K --> L["write_todos → PLAN_SNAPSHOT + ignore"]
-    K --> M["task → TASK_SUBAGENT + ignore"]
     K --> M2["start_async_task → remember args + ignore<br/>(its result → TASK_LAUNCHED)"]
     I --> M3["task notification (HumanMessage / dict)<br/>→ TASK_SETTLED_INLINE"]
     K --> N["other → TOOL_CALL_START + TOOL_CALL_ARGS"]
     I --> O["AIMessage (model node) → its thoughts, then its text:<br/>TEXT_MESSAGE_CONTENT unless streamed,<br/>TEXT_MESSAGE_END, TOKEN_USAGE"]
 ```
 
-**One text message per model call.** The model call's settled message in `updates` ends its text message: `TEXT_MESSAGE_CONTENT` with the whole text only when no chunk streamed over `messages` (an updates-only stream), then `TEXT_MESSAGE_END`, and the actor's reply state is dropped — the next model call opens its own `TEXT_MESSAGE_START`. A middleware node (`Name.hook`, e.g. `HumanInTheLoopMiddleware.after_model` on a resume) re-emits a message the model node already sent: only its tool calls can be new, so its text, thoughts and usage are skipped.
+**One text message per model call.** The model call's settled message in `updates` ends its text message: `TEXT_MESSAGE_CONTENT` with the whole text only when no chunk streamed over `messages` (an updates-only stream), then `TEXT_MESSAGE_END`, and the reply state is dropped — the next model call opens its own `TEXT_MESSAGE_START`. A middleware node (`Name.hook`, e.g. `HumanInTheLoopMiddleware.after_model` on a resume) re-emits a message the model node already sent: only its tool calls can be new, so its text, thoughts and usage are skipped.
 
-### Per-Actor Stream State
+### Stream State
 
-| State | Keyed by | Holds |
-| --- | --- | --- |
-| `_replies` (`_Reply`) | actor label (`None` = orchestrator) | `started` (`TEXT_MESSAGE_START` sent for this model call), `streamed` (chunks came over `messages`) |
-| `_thoughts` (`_Thought`) | raw namespace (`()` = orchestrator) | the summary part held (`part`, `text`), `streamed` (this model call's parts came over `messages`), `open` (`THINKING_START` sent, `THINKING_END` not yet) |
+| State | Holds |
+| --- | --- |
+| `_reply` (`_Reply`) | `started` (`TEXT_MESSAGE_START` sent for this model call), `streamed` (chunks came over `messages`) |
+| `_thought` (`_Thought`) | the summary part held (`part`, `text`), `streamed` (this model call's parts came over `messages`), `open` (`THINKING_START` sent, `THINKING_END` not yet) |
 
-`THINKING_START` goes out before an actor's first thought since its last reply; the phase spans every thought and tool call until the next reply, whose `TEXT_MESSAGE_START` is preceded by `THINKING_END`. A phase no reply follows (a HITL pause, a run that ends on tool calls) is left open — the UI closes it with the run.
+`THINKING_START` goes out before the first thought since the last reply; the phase spans every thought and tool call until the next reply, whose `TEXT_MESSAGE_START` is preceded by `THINKING_END`. A phase no reply follows (a HITL pause, a run that ends on tool calls) is left open — the UI closes it with the run.
 
 ### Tool Call Correlation
 
@@ -370,21 +338,20 @@ Tool calls span two modes: `args` arrive in the `updates` chunk (from the `AIMes
 | `_finished_tools` | `TOOL_CALL_RESULT` + `TOOL_CALL_END` emitted (dedup guard) |
 | `_silent_tools` | A special tool (Phase 4): its result message is expected but discarded |
 
-`_on_tool_result()` routes a `ToolMessage`: a `task` result → `SUBAGENT_COMPLETED`; a background-task start/update → `TASK_LAUNCHED`; a silent call is consumed with no events — including no `TOOL_USAGE`; an open card closes with `TOOL_CALL_RESULT` → `TOOL_CALL_END` → `TOOL_USAGE` → `SOURCES` (`TOOL_USAGE` only when the message carries an `mx_tool_metrics` stamp, `SOURCES` only with an `mx_sources` stamp; a malformed stamp is logged and dropped, `_tool_usage()` / `_sources_event()`).
+`_on_tool_result()` routes a `ToolMessage`: a background-task start/update → `TASK_LAUNCHED`; a silent call is consumed with no events — including no `TOOL_USAGE`; an open card closes with `TOOL_CALL_RESULT` → `TOOL_CALL_END` → `TOOL_USAGE` → `SOURCES` (`TOOL_USAGE` only when the message carries an `mx_tool_metrics` stamp, `SOURCES` only with an `mx_sources` stamp; a malformed stamp is logged and dropped, `_tool_usage()` / `_sources_event()`).
 
 ---
 
 ## Phase 4 — Special Tool Handling
 
-These tool names break the standard start/args/result/end lifecycle. Each has a handler in the normalizer's `_special_tools` table, called with the call (`_Call`: id, name, args, namespace, label, metadata); the call's id then goes into `_silent_tools`, so its result is never a tool card.
+These tool names break the standard start/args/result/end lifecycle. Each has a handler in the normalizer's `_special_tools` table, called with the call (`_Call`: id, name, args, metadata); the call's id then goes into `_silent_tools`, so its result is never a tool card.
 
 | Tool | Event | Handler |
 | --- | --- | --- |
 | `write_todos` | `PLAN_SNAPSHOT` (deduplicated) | `_plan_call` |
-| `present_artifact` | `PRESENT_ARTIFACT` (orchestrator only) | `_present_artifact_call` |
-| `render_chart` | `RENDER_CHART` (orchestrator only, payload normalized by `normalize_chart_payload`) | `_render_chart_call` |
+| `present_artifact` | `PRESENT_ARTIFACT` | `_present_artifact_call` |
+| `render_chart` | `RENDER_CHART` (payload normalized by `normalize_chart_payload`) | `_render_chart_call` |
 | `ask_user` | nothing: its interrupt is the event | `_ask_user_call` |
-| `task` | `TASK_SUBAGENT`, then `SUBAGENT_COMPLETED` on its result | `_task_call` |
 | `start_async_task` / `update_async_task` | `TASK_LAUNCHED` on its result | `_async_task_call` |
 
 ### `write_todos` — Plan Snapshot
@@ -392,12 +359,6 @@ These tool names break the standard start/args/result/end lifecycle. Each has a 
 The `write_todos` tool is called by the agent's internal planning system to update its task list. Its `ToolMessage` result has no meaning to the client; only the `PlanSnapshot` matters.
 
 `_plan()` fingerprints the todos (a stable `json.dumps` with `sort_keys=True`) and emits `PLAN_SNAPSHOT` only when the fingerprint changed (LangGraph replays the same AIMessage). The `"todos"` key inside a node update goes through the same `_plan()`, so only one `PLAN_SNAPSHOT` is emitted however often LangGraph replays the state.
-
-### `task` — Sub-Agent Delegation
-
-The `task` tool is how an orchestrator agent delegates work to a sub-agent. There is no meaningful result to return — the sub-agent's output arrives as namespaced chunks.
-
-When `name == "task"` and the call has not been announced (`_announced_tasks`, dedup across replays), `TASK_SUBAGENT {task_id, subagent_type, description}` is emitted and the call waits in `_pending_tasks[tool_call_id]` (the value is the caller's namespace, `None` for the orchestrator) for the sub-agent namespace it starts (see Phase 5).
 
 ### `start_async_task` — Background Task (plan 41)
 
@@ -407,7 +368,7 @@ When `name == "task"` and the call has not been announced (`_announced_tasks`, d
 2. On its ToolMessage (from `messages` or `updates`, recognised by call id or by tool name): `TASK_LAUNCHED {task_id, name, description}`, once per call id for the whole run.
 3. A failed launch (error status, or no task id in the text) emits the full tool lifecycle instead — start, args, result with `error: true`, end — so the failure is visible.
 
-`check_async_task`, `update_async_task`, `cancel_async_task` and `list_async_tasks` keep the ordinary tool lifecycle. The blocking `task` path above is unchanged until cut-over.
+`check_async_task`, `cancel_async_task` and `list_async_tasks` keep the ordinary tool lifecycle; `update_async_task` reaching a task is a `TASK_LAUNCHED` with `action: "update"`. A `/resume` stream learns a gated start's or update's arguments from the paused checkpoint (`seed_pending_tasks`), and the run memory (`_RUNS`, one `_RunMemory` per `run_id`, released by `release_run_memory` when a run ends not paused) keeps a replayed result from being announced twice. There is no `task` tool any more: a call to it — only possible in a run paused before plan 41's cut-over — is answered by LangGraph with an error result and shown as an ordinary errored tool call.
 
 ### `__interrupt__` — HITL
 
@@ -417,33 +378,9 @@ The interrupt value is normalized to `{"id": ..., "value": ...}` if the raw valu
 
 ---
 
-## Phase 5 — Sub-Agent Namespace Wrapping
+## Phase 5 — No Nested Streams (retired)
 
-LangGraph assigns a freshly-generated `namespace` tuple (e.g. `("tools:<uuid>",)`) to each subgraph invocation. **That uuid is not derivable from the `task` tool_call_id** — deepagents (0.6.10) runs the sub-agent via `subagent.ainvoke(state, {"configurable": {"ls_agent_type": "subagent"}})`, with no `checkpoint_ns` seeded from the call id — so there is no hard id link in the wire data. The normalizer must still map each opaque namespace to the `task_id` declared by its `TASK_SUBAGENT` event so the client can route sub-agent output to the right task card.
-
-```mermaid
-flowchart TD
-    A["sub-agent chunk arrives<br/>(non-None namespace tuple)"] --> B["_label(namespace)"]
-    B --> C{Already in<br/>_run.bindings?}
-    C -->|Yes| D["Return its task_id"]
-    C -->|No| E["_bind(namespace)"]
-    E --> T{"the tasks stream named<br/>its call?"}
-    T -->|Yes| H
-    T -->|No| F{Any unbound<br/>_pending_tasks?}
-    F -->|No| G["Fall back to the<br/>namespace's own id<br/>(_namespace_id)"]
-    F -->|Yes| H["Bind namespace → that call, else the OLDEST<br/>unbound call made one level above"]
-    H --> I["Record in _run.bindings + _run.started_at<br/>(the run's _RunMemory)<br/>Remove from _pending_tasks"]
-    D & I & G --> K["_wrap()"]
-    K --> L["each event dict → SubAgentEvent envelope<br/>stamped with the bound task_id"]
-```
-
-**Order-based binding.** Because the namespace uuid carries no link to the task call, binding is by **order**: the first time a sub-agent namespace is seen, it is bound to the *oldest still-unbound* `task` tool_call_id in `_pending_tasks` (insertion-ordered = task-call order) — exact instead when the `tasks` stream named the call a `tools` node task runs (`_on_tasks`). The bind is anchored by the `PatchToolCallsMiddleware.before_agent` marker, which 0.6.10 emits **stamped with the sub-agent's namespace** the moment the gated `task` is approved (its body is empty, so there is nothing to content-match — the namespace + arrival order is the signal). `_label()` also binds lazily on the first metadata-bearing chunk if the marker was missed. `task` is HITL-gated, so sub-agents start sequentially and FIFO is exact; two parallel sub-agents of the *same* type are the residual ambiguity (each still binds to a distinct task — no drop or collision).
-
-**Binding persists across HITL resume (`_RUNS`).** A fresh `AGUIStreamNormalizer` is built per request, so without persistence a `/resume` leg would start with no bindings. That is fatal when a **sub-agent's own tool** is gated: on resume the orchestrator does not re-emit the `task` call (the sub-agent is mid-flight), so `_pending_tasks` is empty and the sub-agent's continuation would fall back to the raw namespace id — orphaning it into a new task card. The module-level `_RUNS` store holds one `_RunMemory` per run (keyed by `run_id`, the per-run assistant-message id passed as `context.run_id` — **not** the branch-scoped checkpoint `thread_id`): the namespace → `task` call bindings, each sub-agent's start time, and the `task` / background-task calls whose `SUBAGENT_COMPLETED` / `TASK_LAUNCHED` already went out (a resume replays a tools step's saved writes). A new normalizer for the run shares it, so the mapping survives the paused→resume boundary. It is dropped by `release_namespace_bindings(run_id)` when a run ends not-paused (via `release_checkpoint_unless_paused`); the durable Postgres checkpoint is left untouched. The client mirrors this with a stable-namespace route (see Phase 8).
-
-If no task is pending and the namespace is unbound, `_namespace_id()` falls back to a deterministic id derived from the tuple — the first part after a `:` separator, or the first non-empty element.
-
-`_wrap()` wraps each event dict of that chunk in a `SubAgentEvent` envelope (stamped with the bound `task_id`) via `emitter.subagent_event()` — the events are still dicts, so nothing is decoded.
+Until plan 41's cut-over a deep agent streamed with `subgraphs=True`, its blocking `task` sub-agents ran inside its graph, and the normalizer bound each sub-agent's LangGraph namespace to its `task` call and wrapped its events in `SUBAGENT_EVENT`. All of that is gone: every sub-agent is a background task running on its own thread, whose events reach the UI through the task drill-down ([async-subagents](../flows/async-subagents.md)). Answers recorded before the cut-over keep their wrapped events in `raw_events`; the bridge (Phase 6) and the UI (Phase 8) still read them.
 
 ---
 
@@ -455,7 +392,7 @@ The dialogue bridge parses frames via `_parse_sse_bytes()` and feeds each event 
 
 **Log coalescing** (`_append_raw` / `_coalesce_key`): consecutive `TEXT_MESSAGE_CHUNK`/`TEXT_MESSAGE_CONTENT` (same `messageId` + namespace) and `TOOL_CALL_ARGS` (same `toolCallId`) merge into one stored event with a concatenated `delta`, keeping the `seq` of the last merged wire event and gaining `timestampEnd`. `SUBAGENT_EVENT` envelopes merge one level down when they share a `task_id` with mergeable inner deltas. `THINKING_TEXT_MESSAGE_CONTENT` is **never coalesced** — each thinking event is one discrete thought step, and merging would make the hydrated view flatter than the live one. `TOOL_CALL_RESULT` content is truncated at `settings.inference.tool_result_max_chars` with a `"truncated": true` flag — except for image results, which the agents service has already bounded (see **Image results** below). Note this runs *before* the event is published, so it caps the live stream as well as what is stored.
 
-Alongside the log, `apply_event()` maintains a few flat aggregates used for previews / search / voice / export and the pause decision — never for the timeline. Plan and sub-agent state are **not** aggregated: they are reconstructed by the UI from the `PLAN_SNAPSHOT` / `TASK_SUBAGENT` / `SUBAGENT_EVENT` entries in `raw_events`, so the bridge keeps no `self.plan`/`self.subagents` and no `messages.plan`/`messages.subagents` columns.
+Alongside the log, `apply_event()` maintains a few flat aggregates used for previews / search / voice / export and the pause decision — never for the timeline. Plan and sub-agent state are **not** aggregated: they are reconstructed by the UI from the `PLAN_SNAPSHOT` entries (and, in answers recorded before plan 41's cut-over, the `TASK_SUBAGENT` / `SUBAGENT_EVENT` entries) in `raw_events`, so the bridge keeps no `self.plan`/`self.subagents` and no `messages.plan`/`messages.subagents` columns.
 
 ```mermaid
 flowchart TD
@@ -475,7 +412,7 @@ flowchart TD
     B & C --> Z["_append_raw(event)<br/>(coalesced log append)"]
 ```
 
-**Usage accumulation** (plan 33 / 41): `TOKEN_USAGE` and `TOOL_USAGE` are folded once each — by `message_id` and `tool_call_id` — into run totals and `(scope, agent, model)` / `(scope, agent, tool)` groups; a call first seen bare and then wrapped in `SUBAGENT_EVENT` moves to its sub-agent (`_book_once`). `_finish_run` books them (see [usage-analytics](../flows/usage-analytics.md)).
+**Usage accumulation** (plan 33 / 41): `TOKEN_USAGE` and `TOOL_USAGE` are folded once each — by `message_id` and `tool_call_id` — into run totals and `(scope, agent, model)` / `(scope, agent, tool)` groups; a call first seen bare and then wrapped in `SUBAGENT_EVENT` (a legacy, pre-cut-over stream) moves to its sub-agent (`_book_once`); a background task's spend is booked when the task settles ([async-subagents](../flows/async-subagents.md)). `_finish_run` books them (see [usage-analytics](../flows/usage-analytics.md)).
 
 **First token** is measured by the bridge itself, not reported by the agents: `first_token_ms` is the time from the runtime's creation (the run task's start, monotonic clock) to the first non-empty top-level text delta — a sub-agent's text arrives wrapped and never counts. It is settled once; a `HITL_INTERRUPT` registered before any text settles it as `None` (the wait was the human's).
 
@@ -528,7 +465,7 @@ Sharp edges:
 
 ## Phase 6.5 — HITL Resume Round-Trip
 
-When LangGraph emits `__interrupt__`, the agents-service normalizer translates it into an AG-UI `HITL_INTERRUPT` event (`metadata.namespace` carries the namespace path so the bridge / UI know which subagent paused). The graph state is auto-saved by the LangGraph checkpointer keyed by `thread_id`. The upstream `/stream` HTTP body ends naturally after the interrupt — no error frame.
+When LangGraph emits `__interrupt__`, the agents-service normalizer translates it into an AG-UI `HITL_INTERRUPT` event. An approval inside a background task pauses that task (`waiting`), not the chat run ([async-subagents](../flows/async-subagents.md)). The graph state is auto-saved by the LangGraph checkpointer keyed by `thread_id`. The upstream `/stream` HTTP body ends naturally after the interrupt — no error frame.
 
 ```mermaid
 sequenceDiagram
@@ -581,7 +518,7 @@ sequenceDiagram
 | `approve` | `{"type": "approve"}` | Tool executes. `reason`/`value` are dropped — `ApproveDecision` has no `message` slot. |
 | `reject` | `{"type": "reject", "message": req.reason or "User rejected this action."}` | Tool does **not** execute; a `ToolMessage` with `content=<message>` is appended in its place and the agent loop continues, so the agent can react to the rejection. `message` is mandatory — the default text prevents a `KeyError` when the user rejects without typing a reason. |
 
-The checkpoint itself is now durable and shared: every `/stream` and `/resume` request compiles against one process-wide `AsyncPostgresSaver` over the `agent_runtime` database, so resume reads the paused state with `aget_state` (no per-thread cache to rehydrate). The sub-agent namespace→task binding store (`_RUNS`, Phase 5) is the remaining **in-process** state: it is keyed by `run_id` (the per-run assistant-message id, **not** the branch-scoped checkpoint `thread_id`), rehydrated on each resume leg so a sub-agent's post-approval output keeps its original task card, and dropped by `release_namespace_bindings(run_id)` when the run ends not-paused (via `release_checkpoint_unless_paused`, which no longer touches the durable checkpoint).
+The checkpoint itself is now durable and shared: every `/stream` and `/resume` request compiles against one process-wide `AsyncPostgresSaver` over the `agent_runtime` database, so resume reads the paused state with `aget_state` (no per-thread cache to rehydrate). The normalizer's run memory (`_RUNS`, Phase 4) is the remaining **in-process** state: it is keyed by `run_id` (the per-run assistant-message id, **not** the branch-scoped checkpoint `thread_id`), shared by each resume leg so a replayed background-task launch is announced once, and dropped by `release_run_memory(run_id)` when the run ends not-paused (via `release_checkpoint_unless_paused`, which no longer touches the durable checkpoint).
 
 ---
 
@@ -679,7 +616,7 @@ Sub-agent rendering folds entirely from the `TASK_SUBAGENT` / `SUBAGENT_EVENT` e
 
 ## Phase 9 — Async Sub-Agent Tasks on the Client (plan 41)
 
-Under plan 41 every sub-agent is a background **task** that outlives the run that started it. A run's own stream only says that it launched one (`TASK_LAUNCHED`) or that a result was pulled into it (`TASK_SETTLED_INLINE`); everything live about a task arrives on two conversation-scoped channels and is folded into a **conversation-level task tree**, never into a run's timeline. The shapes are fixed in [plan 41 §14](../../plans/41-async-subagents.md).
+Under plan 41 every sub-agent is a background **task** that outlives the run that started it. A run's own stream only says that it launched one (`TASK_LAUNCHED`) or that a result was pulled into it (`TASK_SETTLED_INLINE`); everything live about a task arrives on two conversation-scoped channels and is folded into a **conversation-level task tree**, never into a run's timeline. The shapes are fixed in [plan 41 §14](../../plans/done/41-async-subagents.md).
 
 ```mermaid
 flowchart LR
@@ -712,7 +649,7 @@ Frames sent while the socket was down are not replayed, so every (re)connect re-
 
 **The task socket** (`connectTaskSocket`, subscribe `{"type":"subscribe","since":<last stream id>|null}`) behaves like the run socket: `snapshot` (optionally carrying `task` and the coalesced `events` so far) re-folds the node, `{"type":"event","seq","event"}` folds one AG-UI event with the **same reducer as a top-level run** (a task's stream is exactly what the normalizer emits for one; its own children appear as `task_ref` blocks), `terminal` closes the node's timeline. The UI opens one for the task in the drill-down and for every task in `waiting` (its approval card needs the interrupt from its events).
 
-**What the timeline no longer does.** `finalizeTimeline` ends only the blocking `task` sub-agent blocks of the run (until the phase-6 cut-over); it never touches `task_ref` blocks or a sub-agent block flagged `asyncTask` (the adapter's cards). `subagentRunStatus` returns an `asyncTask` card's own status, so a task still running after its run ended is never shown as cancelled.
+**What the timeline no longer does.** `finalizeTimeline` ends only the blocking `task` sub-agent blocks of the run (which only answers recorded before plan 41's cut-over contain); it never touches `task_ref` blocks or a sub-agent block flagged `asyncTask` (the adapter's cards). `subagentRunStatus` returns an `asyncTask` card's own status, so a task still running after its run ended is never shown as cancelled.
 
 **Rendering.** A `task_ref` block renders the task's live card (status badge for `pending`/`running`/`waiting_children`/`waiting`/`success`/`error`/`cancelled`, plus a client-only `stopping`; elapsed time, model, usage) with its subtree nested inside; a card opens `TaskSidePanel` (in `RunSidePanels.tsx`) on that task at any depth; every active node — and the panel header — has Stop (`POST /v1/tasks/{user}/{task}/cancel`). The tree stays on the AI message whose id is the tasks' `spawned_by_message_id`. A message with `kind == "task_notification"` (a wake-up's input row) renders as a conversation marker from `task_notice` — the headline "Researcher finished · 2m 14s" (opens the task) above a wavy rule labelled "✓ Finished" / "Failed" / "Stopped", the same shape as the compaction marker (`TaskMarker` in `ConversationMarkers.tsx`, which holds every conversation marker; a `task_settled` block draws the same marker) — never as a user bubble; `transformMessage` whitelists `kind` and `task_notice`. A waiting task's approval is a `HitlInterruptCard` in its drill-down, resumed through `POST /v1/tasks/{user}/{task}/resume` with the run-resume body; a line above the composer points to it.
 
@@ -732,11 +669,10 @@ Frames sent while the socket was down are not replayed, so every (re)connect re-
 
 - **`TOOL_CALL_ARGS` serializes args as a JSON string, not an object.** The `delta` field in `ToolCallArgsEvent` is `json.dumps({"name": name, "args": args or {}})`. Clients must JSON-parse the `delta` field to access the arguments dict.
 
-- **Sub-agent namespace binding is order-based, and persists across resume.** Without the `tasks` stream, binding maps a namespace to the oldest unbound `task` tool_call_id made one level above (`_bind`), since the LangGraph namespace uuid carries no link to the call id; with it (deep agents stream `tasks`), the `tools` node task names its call exactly. FIFO is exact while `task` is HITL-gated (sequential starts); two concurrent sub-agents of the *same* type are the residual ambiguity (each still binds to a distinct task — never dropped or collided). The binding is persisted per `run_id` in the run's `_RunMemory` in `_RUNS` (the per-run assistant-message id, not the branch-scoped checkpoint `thread_id`) and shared by every `/resume` leg's normalizer, which is what keeps a sub-agent whose **own tool** was HITL-gated from orphaning its post-approval continuation into a new task card. Only if no task is pending and the namespace is genuinely unknown does it fall back to a generated `task_id` (`_namespace_id`) that matches no `TASK_SUBAGENT` — the orphan case.
+- **The run memory is per run, not per thread.** `_RUNS` holds one `_RunMemory` per `run_id` (the per-run assistant-message id, not the branch-scoped checkpoint `thread_id`), shared by every `/resume` leg's normalizer, so a background-task launch replayed on a resume is announced once.
 
 - **HITL pre-empts everything.** When `__interrupt__` appears in an updates payload, all other node updates in that dict are skipped. If a graph node emits both a tool call and an interrupt in the same update (unusual but possible), the tool call start/args events are not emitted. The agent graph still has the tool call recorded in its checkpoint; it will re-emit when the human resumes.
 
-- **The `BEFORE_AGENT_EVENT` marker anchors namespace binding, not display.** In 0.6.10 the `PatchToolCallsMiddleware.before_agent` node update arrives stamped with the sub-agent's namespace but with an **empty body** — so the normalizer uses its namespace + arrival order (not its content) to trigger the bind, and emits a `BEFORE_AGENT_EVENT` with an empty `message`. It rides `raw_events` like any other event; the current UI does not render it.
 
 - **`RUN_ERROR` bypasses the normalizer.** When `agent.astream()` raises an unhandled exception, `BaseAgent._encode_run_error()` directly encodes a `RUN_ERROR` SSE frame without going through the normalizer. The bridge forwards it to the client, which marks the run as failed and displays an error state.
 
@@ -760,7 +696,7 @@ Frames sent while the socket was down are not replayed, so every (re)connect re-
 | `TOOL_USAGE` synthesis | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py), [usage_callback.py](../../magenticx/agents/harness/agui/usage_callback.py) | `_tool_card_close()` → `_tool_usage()` after `TOOL_CALL_END`; LangGraph: `UsageMetricsCallback.drain_tools()` |
 | `SOURCES` synthesis | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py), [middlewares/sources.py](../../magenticx/agents/harness/middlewares/sources.py) | `_tool_card_close()` → `_sources_event()` after `TOOL_USAGE`, from the `mx_sources` stamp |
 | Usage / first-token accumulation (bridge) | [magenticx/dialogue_bridge/utils/inference_runs.py](../../magenticx/dialogue_bridge/utils/inference_runs.py) | `_accumulate_usage()`, `_accumulate_tool_usage()`, `_call_metrics()`, `_note_first_text()`, `register_interrupt()` |
-| `present_artifact` / `render_chart` detection (orchestrator-only) | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_special_tools` → `_present_artifact_call()` / `_render_chart_call()`, gated on `call.namespace is None` |
+| `present_artifact` / `render_chart` detection | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_special_tools` → `_present_artifact_call()` / `_render_chart_call()` |
 | `present_artifact` tool | [magenticx/agents/harness/tools/present_artifact/tool.py](../../magenticx/agents/harness/tools/present_artifact/tool.py) | `build_present_artifact_tool()` — validates the output/ path, returns a confirmation (never emits) |
 | Presented-file read-back | [magenticx/agents/router/conversation_files.py](../../magenticx/agents/router/conversation_files.py) | `GET /users/{uid}/conversations/{cid}/files` → `utils.conversation_files.read_output_files()` (output/ only, size-capped) |
 | `PRESENT_ARTIFACT` capture + persist (bridge) | [magenticx/dialogue_bridge/utils/inference_runs.py](../../magenticx/dialogue_bridge/utils/inference_runs.py) | `InferenceRunRuntime.presented_artifacts`, `_capture_generated_artifacts()` called from `_finish_run()` |
@@ -777,8 +713,7 @@ Frames sent while the socket was down are not replayed, so every (re)connect re-
 | Updates mode handling | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_on_updates()`, `_on_model_reply()`, `_on_tool_call()`, `_on_tool_result()` |
 | Tool call correlation sets | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_open_tools`, `_started_tools`, `_finished_tools`, `_silent_tools` |
 | Plan snapshot deduplication | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_plan()`, `_last_plan` |
-| Sub-agent namespace binding | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_on_tasks()`, `_bind()`, `_label()`, `_namespace_id()` |
-| Namespace binding persistence across resume | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_RUNS` / `_RunMemory` (keyed by `run_id`), `release_namespace_bindings()` (cleared via `utils/checkpointer.py` `release_checkpoint_unless_paused()`) |
+| Run memory across resume | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_RUNS` / `_RunMemory` (keyed by `run_id`), `seed_pending_tasks()`, `release_run_memory()` (cleared via `utils/checkpointer.py` `release_checkpoint_unless_paused()`) |
 | Durable checkpointer accessor | [magenticx/agents/harness/checkpointer/store.py](../../magenticx/agents/harness/checkpointer/store.py) | `get_checkpointer()` — single process-wide `AsyncPostgresSaver` resume reads via `aget_state` |
 | `CHECKPOINT_COMMITTED` capture (bridge) | [magenticx/dialogue_bridge/utils/inference_runs.py](../../magenticx/dialogue_bridge/utils/inference_runs.py) | `InferenceRunRuntime.apply_event()`, `_finish_run()` persisting `checkpoint_id` |
 | Sub-agent event wrapping | [magenticx/agents/harness/agui/normalizer.py](../../magenticx/agents/harness/agui/normalizer.py) | `_wrap()` |

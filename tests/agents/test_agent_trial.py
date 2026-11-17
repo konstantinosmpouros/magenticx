@@ -225,6 +225,54 @@ async def test_a_trials_reference_reads_the_drafts_files_not_the_saved_ones(agen
     assert saved.reference_namespace == (USER, SLUG)
 
 
+# ---------------------------------------------------------------------------
+# A trial's background tasks (plan 41)
+# ---------------------------------------------------------------------------
+def _trial_agent(agents_service, prompt="You are the draft."):
+    utils = agents_service.agents_utils
+    files = [agents_service.schemas.AgentFile(**f) for f in _files(prompt)]
+    spec = importlib.import_module("harness.abstractions.agent_spec").AgentSpec.model_validate(_spec())
+    texts = agents_service.user_agents.definition_texts(files)
+    return utils.build_trial_definition(USER, spec, texts).build(config=_context())
+
+
+async def _candidates(utils, owner):
+    return [d.build(config=_context()) async for d in utils.definition_candidates(SLUG, owner)]
+
+
+async def test_a_trials_tasks_rebuild_from_its_remembered_draft(agents_service, trial, monkeypatch):
+    # A task run rebuilds its node from the definition its tree is pinned to;
+    # a draft is in no store, so the service remembers the drafts it ran.
+    utils = agents_service.agents_utils
+    monkeypatch.setattr(utils, "_TRIAL_DRAFTS", type(utils._TRIAL_DRAFTS)())
+    await _save_agent(trial.store)
+    root = _trial_agent(agents_service)
+    pinned = root.definition_fingerprint()
+
+    candidates = await _candidates(utils, USER)
+    matching = [agent for agent in candidates if agent.definition_fingerprint() == pinned]
+    assert matching and matching[0].reference_files is not None  # the draft, not the saved agent
+    assert candidates[0].definition_fingerprint() != pinned  # the saved definition comes first
+
+    # Never another user's, and gone with the account.
+    assert all(a.definition_fingerprint() != pinned for a in await _candidates(utils, "user-2"))
+    utils.forget_user_agents(USER)
+    assert all(a.definition_fingerprint() != pinned for a in await _candidates(utils, USER))
+
+
+async def test_the_remembered_drafts_are_bounded_oldest_first(agents_service, trial, monkeypatch):
+    utils = agents_service.agents_utils
+    monkeypatch.setattr(utils, "_TRIAL_DRAFTS", type(utils._TRIAL_DRAFTS)())
+    monkeypatch.setattr(utils, "_TRIAL_DRAFTS_MAX", 2)
+    first, second, third = (_trial_agent(agents_service, f"Draft {n}.") for n in (1, 2, 3))
+    # Rerunning a draft keeps it at the newest end.
+    _trial_agent(agents_service, "Draft 2.")
+
+    remembered = {agent.definition_fingerprint() for agent in await _candidates(utils, USER)}
+    assert first.definition_fingerprint() not in remembered
+    assert {second.definition_fingerprint(), third.definition_fingerprint()} <= remembered
+
+
 def test_the_draft_reference_store_lists_and_refuses_writes(agents_service):
     store_module = agents_service.definition_store
     base = importlib.import_module("langgraph.store.base")

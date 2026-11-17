@@ -388,7 +388,7 @@ Every chat turn — both user and AI — is a row in this table. The `parent_mes
 | `checkpoint_id` | `String` | Yes | `NULL` | The durable checkpoint head this run committed, captured from the terminal `CHECKPOINT_COMMITTED` AG-UI event. Used by edit/retry to fork from the right point. AI-run messages only; `NULL` otherwise. Migration `0007`. |
 | `is_error` | `Boolean` | No | `false` | `true` when the inference run that produced this message failed |
 | `error_message` | `Text` | Yes | `NULL` | Error detail when `is_error=true` |
-| `raw_events` | `JSON` | Yes | `NULL` | The **full per-run AG-UI event log** (every event, seq-stamped, with consecutive text/tool-args deltas coalesced and oversized `TOOL_CALL_RESULT` content truncated + flagged). The UI replays this into the rendered run timeline — including the agent plan (from `PLAN_SNAPSHOT` events) and sub-agent activity (from `SUBAGENT_EVENT`), which are no longer persisted as their own columns. Rows persisted before the timeline rebuild contain only `CUSTOM` events — the UI's legacy fold covers them. |
+| `raw_events` | `JSON` | Yes | `NULL` | The **full per-run AG-UI event log** (every event, seq-stamped, with consecutive text/tool-args deltas coalesced and oversized `TOOL_CALL_RESULT` content truncated + flagged). The UI replays this into the rendered run timeline — including the agent plan (from `PLAN_SNAPSHOT` events) and the background tasks the run started (`TASK_LAUNCHED`; a task's own events live on its `conversation_tasks` row) — and, in answers recorded before plan 41's cut-over, blocking sub-agent activity (from `SUBAGENT_EVENT`) — none of which is persisted as its own column. Rows persisted before the timeline rebuild contain only `CUSTOM` events — the UI's legacy fold covers them. |
 | `streaming_status` | `String` | Yes | `NULL` | INDEXED (partial, `IS NOT NULL`) — `"queued"`, `"running"`, `"cancelling"`, `"completed"`, `"cancelled"`, `"failed"`. `NULL` on user messages and on AI messages that were not produced by a detached run. |
 | `streaming_message_path` | `JSON` | Yes | `NULL` | Ordered list of message IDs representing the branch path the agent saw as history when the run was started |
 | `streaming_started_at` | `DateTime` | Yes | `NULL` | Run creation timestamp; sorts the run list endpoint |
@@ -718,7 +718,7 @@ One semantic embedding per message (**pgvector**), powering "most relevant conve
 
 ### `message_usage`
 
-Where one answer's tokens went: one row per (answer, scope, agent, model) — the main agent and each sub-agent it delegated to, by model. Written once by `_finish_run` from the run accumulator's groups (a sub-agent is named by its `TASK_SUBAGENT` type); never updated. Migration `0033`. See [usage-analytics](../flows/usage-analytics.md).
+Where one answer's tokens went: one row per (answer, scope, agent, model) — the main agent and each sub-agent it delegated to, by model. Written once by `_finish_run` from the run accumulator's groups (a pre-cut-over blocking sub-agent is named by its `TASK_SUBAGENT` type); never updated. A background task's spend is booked on the same answer when the task settles (scope `subagent`, `agent_name` its tree path; see [async-subagents](../flows/async-subagents.md)). Migration `0033`. See [usage-analytics](../flows/usage-analytics.md).
 
 | Column | Type | Null | Default | Notes |
 | --- | --- | --- | --- | --- |
@@ -1185,7 +1185,7 @@ Workflow definitions (plan 38), created by `WorkflowStore.setup()` (`harness/wor
 
 ### `async_tasks` / `async_task_runs`
 
-Background sub-agent tasks (plan 41), created by `AsyncTaskStore.setup()` (`harness/async_tasks/store.py`) — on every boot, whether `ASYNC_SUBAGENTS_ENABLED` is on or not, because conversation delete and account purge reap them. One row per node of a sub-agent tree; `task_id` is also its LangGraph checkpoint thread. See [async-subagents](../flows/async-subagents.md).
+Background sub-agent tasks (plan 41), created by `AsyncTaskStore.setup()` (`harness/async_tasks/store.py`) on every boot. Every sub-agent runs as one of these tasks; conversation delete and account purge reap them. One row per node of a sub-agent tree; `task_id` is also its LangGraph checkpoint thread. See [async-subagents](../flows/async-subagents.md).
 
 | Table | Key | Columns |
 | --- | --- | --- |

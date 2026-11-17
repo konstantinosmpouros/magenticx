@@ -419,6 +419,32 @@ async def copy_conversation_sources(user_id: str, source_id: str, target_id: str
                        conversation_id=target_id, error_type=type(exc).__name__)
 
 
+async def insert_conversation_sources(user_id: str, conversation_id: str, sources: list[ConversationSource]) -> None:
+    """Give a conversation continued from a share link the snapshot's sources (plan 42).
+
+    Its copied answers cite the sharer's sources, which the share snapshot
+    froze; stored under the new conversation, those markers resolve there too.
+    Best-effort like a fork's copy: without them the continued conversation's
+    old citations just don't render. Logs carry counts and error types only.
+    """
+    if not sources:
+        return
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.http.agents_timeout, verify=get_httpx_verify(), cert=get_httpx_client_cert()
+        ) as client:
+            resp = await client.post(
+                build_conversation_sources_url(user_id, conversation_id),
+                json={"sources": [source.model_dump() for source in sources]},
+                headers=internal_service_headers(get_context().get("request_id")),
+            )
+            resp.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("conversation_sources_insert_failed",
+                       "Could not give a continued conversation its share's citation sources",
+                       conversation_id=conversation_id, sources=len(sources), error_type=type(exc).__name__)
+
+
 async def fetch_conversation_sources(user_id: str, conversation_id: str) -> list[ConversationSource]:
     """The conversation's citation sources (plan 42), validated, newest first.
 

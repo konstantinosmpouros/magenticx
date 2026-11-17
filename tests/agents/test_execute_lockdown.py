@@ -22,7 +22,6 @@ import pytest
 import yaml
 from deepagents.backends.protocol import SandboxBackendProtocol
 from deepagents.middleware.filesystem import supports_execution
-from deepagents.middleware.subagents import SubAgentMiddleware
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -517,25 +516,33 @@ def test_a_try_it_trial_gates_execute_at_every_depth(agents_service, monkeypatch
     files = {f.path: f.content for f in _definition_files()}
     definition = agents_service.agents_utils.build_trial_definition("user-1", spec, files)
 
-    captured: dict = {}
-    monkeypatch.setattr(deep_agent, "create_deep_agent", lambda **kw: captured.update(kw))
-    agent = definition.factory({
-        "context": {"user_id": "user-1", "conversation_id": "conv-1", "agent_owner_id": "user-1",
-                    "use_memory": False, "tool_config": {"approvals": {"execute": False}}},
-        "run_config": {"configurable": {"thread_id": "t-1"}},
-    })
-    agent.sub_agents = agent.register_subagents()
-    agent.skills_paths, agent.agent_md_paths = [], []
-    agent.build_deep_agent(model=TRIAL_MODEL, subagents=agent.sub_agents, interrupt_on=spec.hitl, middleware=[])
+    specs = importlib.import_module("harness.async_tasks.specs")
+    token = importlib.import_module("harness.async_tasks.token")
 
-    assert captured["interrupt_on"]["execute"] is True
-    top = {s["name"]: s for s in captured["subagents"]}
-    # Depth 1 inherits the main agent's resolved map inside deepagents (no key
-    # of its own); depth 2 is built here and resolves the gates itself.
-    assert "interrupt_on" not in top["researcher"] or top["researcher"]["interrupt_on"]["execute"] is True
-    [task] = [m for m in top["researcher"]["middleware"] if isinstance(m, SubAgentMiddleware)]
-    coder = {c["name"]: c for c in task._subagents}["coder"]
-    assert coder["interrupt_on"]["execute"] is True
+    def gates(path: tuple[str, ...]) -> dict:
+        """The approval gates the trial's main agent (``()``) or one task node gets."""
+        captured: dict = {}
+        monkeypatch.setattr(deep_agent, "create_deep_agent", lambda **kw: captured.update(kw))
+        agent = definition.factory({
+            "context": {"user_id": "user-1", "conversation_id": "conv-1", "agent_owner_id": "user-1",
+                        "use_memory": False, "tool_config": {"approvals": {"execute": False}}},
+            "run_config": {"configurable": {"thread_id": "t-1"}},
+        })
+        if path:
+            agent.async_task_node = specs.TaskNode(
+                task_id="task-1", depth=len(path), path=path, user_id="user-1", conversation_id="conv-1",
+                root_run_id="run-1", branch_thread_id="t-1", agent_slug="probe",
+                definition_version=agent.definition_fingerprint(),
+                inherited=token.InheritedContext(tool_config={"approvals": {"execute": False}}),
+            )
+        agent.sub_agents = agent.register_subagents()
+        agent.skills_paths, agent.agent_md_paths = [], []
+        agent.build_deep_agent(model=TRIAL_MODEL, subagents=agent.sub_agents, interrupt_on=spec.hitl, middleware=[])
+        return captured["interrupt_on"]
+
+    # Every level is a background task whose run resolves the gates itself.
+    for path in ((), ("researcher",), ("researcher", "coder")):
+        assert gates(path)["execute"] is True, path
 
 
 def test_the_builtin_catalog_lists_execute_only_when_enabled(agents_service):
@@ -561,10 +568,6 @@ async def test_the_builtin_tools_route_follows_the_deployment(client, internal_h
 # ---------------------------------------------------------------------------
 def _exec(call_id: str, command: str) -> dict:
     return {"id": call_id, "name": "execute", "args": {"command": command}}
-
-
-def _task(call_id: str, subagent: str) -> dict:
-    return {"id": call_id, "name": "task", "args": {"subagent_type": subagent, "description": "Do it."}}
 
 
 def _tool_name(tool) -> str | None:
@@ -613,8 +616,10 @@ def probe(agents_service, monkeypatch, memory_file_store):
     deep_agent = importlib.import_module("harness.abstractions.deep_agent")
     tree = importlib.import_module("harness.abstractions.subagent_tree")
     models = importlib.import_module("deepagents._models")
+    specs = importlib.import_module("harness.async_tasks.specs")
+    token = importlib.import_module("harness.async_tasks.token")
 
-    def _make(scripts: dict, *, nested: bool = False):
+    def _make(scripts: dict, *, nested: bool = False, node: tuple[str, ...] = ()):
         model = _Scripted(scripts=scripts)
         monkeypatch.setattr(models, "init_chat_model", lambda *a, **k: model)
 
@@ -660,6 +665,13 @@ def probe(agents_service, monkeypatch, memory_file_store):
             store=memory_file_store, run_id="run-1",
         )
         agent._conversation_files.inputs = FakeInputs()
+        if node:
+            # A background task's run: it builds this node of the tree itself.
+            agent.async_task_node = specs.TaskNode(
+                task_id="task-1", depth=len(node), path=node, user_id="user-1", conversation_id="conv-1",
+                root_run_id="run-1", branch_thread_id="probe-thread", agent_slug="sandbox-probe",
+                definition_version="v1", inherited=token.InheritedContext(tool_config={"approvals": {"execute": False}}),
+            )
         return agent, model
 
     return _make
@@ -754,16 +766,13 @@ async def test_execute_pauses_two_levels_down_although_the_spec_says_false(
     agents_service, probe, monkeypatch, skills_fs
 ):
     _enable(agents_service)
-    # Nested delegation here is the blocking `task` path (plan 41 keeps it
-    # behind ASYNC_SUBAGENTS_ENABLED=false).
-    agents_service.settings_module.settings.async_tasks.enabled = False
     runner = _Runner(_ok(stdout="nested ok\n"))
     _wire_runner(agents_service, monkeypatch, runner)
+    # The coder is a background task two levels down: its run builds its node
+    # of the tree, with the run's gates re-resolved and its spec's on top.
     agent, _model = probe({
-        "You are the probe main": [("", [_task("call-r", "researcher")]), ("Done.", [])],
-        "You are the probe researcher": [("", [_task("call-c", "coder")]), ("Researched.", [])],
         "You are the probe coder": [("", [_exec("call-x", "python -c 'print(1)'")]), ("Coded.", [])],
-    }, nested=True)
+    }, nested=True, node=("researcher", "coder"))
 
     def check(names):
         if "execute" in names:

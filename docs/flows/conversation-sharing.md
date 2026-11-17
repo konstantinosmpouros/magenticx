@@ -258,8 +258,11 @@ flowchart TD
     H --> I[create initial user reply message]
     I --> J[create AI placeholder (streaming_status='queued')]
     J --> K[commit atomically]
-    K --> L[return InferenceStartResponse]
+    K --> S[POST the snapshot's sources<br/>to the new conversation (best-effort)]
+    S --> L[return InferenceStartResponse]
 ```
+
+**Citations in the continued conversation (plan 42).** The copied answers' `[src:ID]` markers name the sharer's sources, and the new conversation — owned by the importer, under a new id — has none of its own. So after the commit (a start that failed leaves nothing behind) and before the run is launched, `start_inference_flow` gives it the sources the snapshot froze: `snapshot_sources(share)` revalidates `snapshot_json["sources"]` (`keep_valid_sources`, at most 500), and `utils.agents.insert_conversation_sources` posts them to the agents service's internal `POST /users/{importer}/conversations/{new id}/sources` (`{"sources": [...]}`; each a full `Source`, upserted; a source whose id is not its URL's hash is dropped). Best-effort like a fork's copy: the agents service down → `conversation_sources_insert_failed` is logged (counts and error type only) and the conversation still starts, its old citations just don't render. A snapshot without sources makes no call. Only the cited sources travel — the importer never gets the sharer's other sources.
 
 **What gets new UUIDs:** conversation, messages, attachments, blobs.
 

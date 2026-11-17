@@ -94,5 +94,4 @@ async def get_builtin_tools() -> List[BuiltinToolInfo]:
     builder, before the agent exists (the per-agent tool rows need a saved one)."""
     return [BuiltinToolInfo.model_validate(item) for item in builtin_tool_catalog(
         sandbox_enabled=settings.filesystem.sandbox_execution_active,
-        async_subagents=settings.async_tasks.enabled,
     )]

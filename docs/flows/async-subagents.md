@@ -138,7 +138,22 @@ A task not yet in the mirror (its `TASK_STARTED` not consumed yet) is authorised
 
 ## Agents half — the TaskRunner and `/ap`
 
-With `ASYNC_SUBAGENTS_ENABLED` on (the default in `core/settings.py`; no compose sets it, and `false` is only an emergency switch back to the blocking `task` until the cut-over removes it), `DeepAgent.build_deep_agent` gives the orchestrator `AsyncTaskMiddleware` — deepagents' `AsyncSubAgentMiddleware` with its five tools (`start_async_task`, `check_async_task`, `update_async_task`, `cancel_async_task`, `list_async_tasks`) — instead of the blocking `task`. Every top-level sub-agent, the general-purpose one included, is one `AsyncSubAgent` spec; deepagents' auto-added blocking general-purpose sub-agent is switched off through the model's harness profile. With the flag off, nothing changes. A trial's draft ("Try it") and a tree holding a pre-compiled (`runnable`) sub-agent keep the blocking path: a task run must be able to rebuild its node from a stored definition.
+Background tasks are the **only** way a sub-agent runs: the blocking `task` tool, its in-graph sub-agents and the `ASYNC_SUBAGENTS_ENABLED` switch were removed at the plan's cut-over. `DeepAgent.build_deep_agent` gives the orchestrator `AsyncTaskMiddleware` — deepagents' `AsyncSubAgentMiddleware` with its five tools (`start_async_task`, `check_async_task`, `update_async_task`, `cancel_async_task`, `list_async_tasks`). Every top-level sub-agent, the general-purpose one included, is one `AsyncSubAgent` spec; deepagents' auto-added blocking general-purpose sub-agent (and its `task` tool) is switched off through the model's harness profile, and `create_deep_agent` is never given a sub-agent of its own to build. A run with no user, conversation or branch thread to bind tasks to gets no task tools at all (logged `async_tasks_no_identity`; every chat, task and compaction run has them).
+
+| Tree rule (`validate_subagent_tree`, `AgentSpec`) | Why |
+| --- | --- |
+| Every node is a spec dict — a pre-compiled (`runnable`) sub-agent fails the build | A task run rebuilds its node from a path in the tree; an opaque in-memory graph cannot be rebuilt |
+| At most 3 levels, unique sibling names, no name repeated below itself, tools only narrow downwards | Unchanged from the definition rules (`MAX_SUBAGENT_DEPTH`) |
+
+**"Try it" trials** (plan 40) run an unsaved draft, which is in no store a task run could rebuild from. The agents service therefore **remembers the drafts it ran** (`utils.agents._TRIAL_DRAFTS`): `build_trial_definition` records each one, keyed by owner, slug and content digest, at most 64, oldest dropped first (a trial resends its draft on every turn, which keeps a draft in use at the newest end). `definition_candidates` yields them, for the owner only, after the current definition and before the kept versions, and the runner keeps the first whose fingerprint is the task's pinned `definition_version` — the same rule as for any tree. The memory is per process and lost on restart, as the task runs themselves are: a follow-up to a forgotten draft's task fails closed ("definition unavailable"), it never runs a different agent. Account deletion drops a user's remembered drafts (`forget_user_agents`).
+
+**Runs and conversations from before the cut-over.** No new event of the blocking path is produced: an orchestrator's stream is `["messages", "updates"]` without `subgraphs`, so nothing nested is streamed and no `TASK_SUBAGENT` / `SUBAGENT_EVENT` / `SUBAGENT_COMPLETED` / `BEFORE_AGENT_EVENT` is emitted. What older data needs:
+
+| Old data | What happens |
+| --- | --- |
+| A stored answer whose `raw_events` hold the blocking path's events | Replayed by the UI from `raw_events` as before; the agents service is not involved |
+| A run paused on an approval before the cut-over, whose pending call is the orchestrator's `task` (or a gate inside a `task` sub-agent) | Resumed on today's build, which has no `task` tool: LangGraph answers the call with an error tool result ("task is not a valid tool, try one of …"), the model reads it and can delegate again with `start_async_task`. The run never crashes and nothing of the old path is kept for it. In production every sub-agent has been async since 2026-11-07, so only an approval left waiting since then can meet this |
+| A stored definition whose `hitl` names `task` | Read as `start_async_task` (`AgentSpec`, `builtins.DEPRECATED_GATE_KEYS`); stored per-user preferences were migrated by the bridge (`0046_async_tasks`) |
 
 ```mermaid
 sequenceDiagram
@@ -181,10 +196,10 @@ sequenceDiagram
 **The runner** (`harness/async_tasks/runner.py`) runs one `asyncio` task per active run. A run:
 
 1. rebuilds the run context **from the task row** — `user_id`, `conversation_id`, `run_id` (the task run's id), `thread_id` = task id, `branch_thread_id` = the root's branch (the shared scratch store reads it), `async_task_id` (no `ask_user`; the tool is not even attached), and the inherited fields;
-2. builds the agent through the **same** `build_deep_agent` with `agent.async_task_node` set: the node is resolved down the tree exactly as a blocking sub-agent was (model and tools inherit from above, a spec can only narrow tools, never `ask_user`; gates are the run's re-resolved for its tools with the spec's on top), then built as a deep agent of its own — planning, our filesystem with the write-deny rules, our summarizer, the platform middleware, and, if it has children, its own `AsyncTaskMiddleware` whose `graph_id`s continue its path;
+2. builds the agent through the **same** `build_deep_agent` with `agent.async_task_node` set: the node is resolved down the tree (model and tools inherit from above, a spec can only narrow tools, never `ask_user`; gates are the run's re-resolved for its tools with the spec's on top), then built as a deep agent of its own — planning, our filesystem with the write-deny rules, our summarizer, the platform middleware, and, if it has children, its own `AsyncTaskMiddleware` whose `graph_id`s continue its path;
 3. opens its own MCP session, streams through the AG-UI normalizer into `task:{task_id}:events`, sums `TOKEN_USAGE` into the run's `usage`, and stores the final message (encrypted) as the task's result.
 
-**`agent_runtime` tables** (`harness/async_tasks/store.py`, DDL on boot like the other stores): `async_tasks` (identity, tree position, `definition_version`, `subagent_path`, encrypted `context` and `result`, `status`, `name`, `description`, `model`, `result_preview`, `error`, `cancel_reason`, `settled_at`, `parent_notified_at`) and `async_task_runs` (`kind` start / update / resume / wake, `multitask_strategy`, `status` pending / running / success / error / interrupted / timeout, `waiting`, `error`, `usage`). The tables exist with the flag off too: conversation delete and account purge reap them.
+**`agent_runtime` tables** (`harness/async_tasks/store.py`, DDL on boot like the other stores): `async_tasks` (identity, tree position, `definition_version`, `subagent_path`, encrypted `context` and `result`, `status`, `name`, `description`, `model`, `result_preview`, `error`, `cancel_reason`, `settled_at`, `parent_notified_at`) and `async_task_runs` (`kind` start / update / resume / wake, `multitask_strategy`, `status` pending / running / success / error / interrupted / timeout, `waiting`, `error`, `usage`). The runner starts with the service (`main.py` lifespan) and is the only one; before it is up, the task routes answer 503.
 
 | Cap (fails closed — the model reads a tool error) | Setting | Default |
 | --- | --- | --- |
@@ -230,11 +245,11 @@ flowchart TD
 | --- | --- |
 | `GET /tasks/{task_id}?user_id=` | `TaskOut` (404 if not that user's) |
 | `GET /tasks?user_id=&conversation_id=&limit=` | `[TaskOut]`, oldest first |
-| `GET /tasks/unnotified?limit=&user_id=&conversation_id=` | `[OutboxItem]` — `[]` while the flag is off |
+| `GET /tasks/unnotified?limit=&user_id=&conversation_id=` | `[OutboxItem]` |
 | `POST /tasks/{task_id}/notified` `{"user_id"}` | 204 |
 | `POST /tasks/{task_id}/cancel` `{"user_id", "reason": "user"}` | `TaskOut`; cascades to the subtree |
 | `POST /tasks/{task_id}/resume` `{"user_id", "decisions": {interrupt_id: item}}` | `TaskOut` |
-| `POST /tasks/cancel-scope` `{"user_id", "conversation_id"?, "root_run_id"?}` | `{"cancelled": n}` (0 while the flag is off) |
+| `POST /tasks/cancel-scope` `{"user_id", "conversation_id"?, "root_run_id"?}` | `{"cancelled": n}` |
 
 `TaskOut.usage` sums the task's runs: `input_tokens`, `output_tokens`, `cached_input_tokens`, `reasoning_tokens`, `calls`, `model_latency_ms`. `spawned_by_message_id` is the root run id.
 
@@ -253,7 +268,7 @@ flowchart TD
 - **Queue before wake.** At a run's end the queued user message goes first; the wake-up waits for the end of the run it started (whose middleware has normally already pulled the result, so the agents service no longer lists it as unnotified).
 - **A pulled result must be marked notified by the agents service.** The bridge never sees the pull; if a pulled task stayed unnotified, the run-end hook or the reconcile loop would wake the orchestrator for it a second time.
 - **One wake-up at a time per conversation.** A second settled task meets a busy conversation (409) and is pulled by the first wake-up run.
-- **"Try it" trials are never woken**; their next turn pulls the result. A conversation of an account awaiting deletion is not woken either.
+- **"Try it" trials are never woken**; their next turn pulls the result. Their tasks are rebuilt from the draft the agents service remembers (see "Agents half"). A conversation of an account awaiting deletion is not woken either.
 - **Raw events are captured at settle only.** A live node is read from Redis; if the bridge first sees a settle after the agents service's stream TTL (3600 s after settle) the mirror has no `raw_events`. A task settling more than once (re-opened) is captured again.
 - **Interactive comes from the root run's `scheduled_task_id`.** An outbox item with `interactive=false` whose root run carries no scheduled task is woken interactively and logged (`task_wake_interactive_unknown`).
 - **Usage is booked on the answer that launched the tree**, not on the wake-up answer, and adds no answer to `usage_answers`.
@@ -284,5 +299,7 @@ flowchart TD
 | Launch token, specs, in-process client (agents) | [magenticx/agents/harness/async_tasks/](../../magenticx/agents/harness/async_tasks/) | `token.py`, `specs.py` (`graph_id_for()`, `resolve_chain()`), `client.py` (`AsyncTaskMiddleware`) |
 | Notification shape (agents) | [magenticx/agents/harness/async_tasks/notification.py](../../magenticx/agents/harness/async_tasks/notification.py) | `build_notification()`, `normalize_payload_messages()` |
 | Task tables (agents) | [magenticx/agents/harness/async_tasks/store.py](../../magenticx/agents/harness/async_tasks/store.py) | `async_tasks`, `async_task_runs` |
-| Node build (agents) | [magenticx/agents/harness/abstractions/deep_agent.py](../../magenticx/agents/harness/abstractions/deep_agent.py) | `_uses_async_subagents()`, `_launch_token()`, `_build_task_node()`, `definition_fingerprint()` |
-| Settings (agents) | [magenticx/agents/core/settings.py](../../magenticx/agents/core/settings.py) | `AsyncTasksSettings` (`ASYNC_SUBAGENTS_ENABLED`, `ASYNC_TASKS_*`), `RedisSettings` |
+| Node build (agents) | [magenticx/agents/harness/abstractions/deep_agent.py](../../magenticx/agents/harness/abstractions/deep_agent.py) | `_has_task_identity()`, `_launch_token()`, `_build_task_node()`, `definition_fingerprint()` |
+| Tree rules (agents) | [magenticx/agents/harness/abstractions/subagent_tree.py](../../magenticx/agents/harness/abstractions/subagent_tree.py) | `validate_subagent_tree()` |
+| Definitions a task tree is pinned to (agents) | [magenticx/agents/utils/agents.py](../../magenticx/agents/utils/agents.py) | `definition_candidates()`, `build_trial_definition()`, `_TRIAL_DRAFTS` |
+| Settings (agents) | [magenticx/agents/core/settings.py](../../magenticx/agents/core/settings.py) | `AsyncTasksSettings` (`ASYNC_TASKS_*`), `RedisSettings` |

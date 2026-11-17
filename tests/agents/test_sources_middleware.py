@@ -187,27 +187,21 @@ def _build(deep, monkeypatch, tools: list[Any]) -> dict[str, Any]:
     agent = _agent(deep)
     agent.tools = list(tools)
     monkeypatch.setattr(agent, "_build_composite_backend", lambda: None)
-    monkeypatch.setattr(agent, "_uses_async_subagents", lambda subagents: False)
     monkeypatch.setattr(agent, "_builtin_tools", lambda: [])  # they need the databases
-    agent.build_deep_agent(
-        model="openai:gpt-5", middleware=[], interrupt_on={},
-        subagents=[{"name": "researcher", "description": "d", "system_prompt": "p"}],
-    )
+    agent.build_deep_agent(model="openai:gpt-5", middleware=[], interrupt_on={}, subagents=[])
     return captured
 
 
-def test_every_stack_gets_one_sources_middleware_bound_to_the_run(deep, mw, monkeypatch):
+def test_the_main_stack_gets_one_sources_middleware_bound_to_the_run(deep, mw, monkeypatch):
+    # Sub-agents are background tasks: each task node's stack comes from the same
+    # `_run_middleware` (test_the_run_middleware_is_idempotent_and_used_for_task_nodes).
     errors = importlib.import_module("harness.middlewares.tool_error")
     metrics = importlib.import_module("harness.middlewares.tool_metrics")
-    captured = _build(deep, monkeypatch, [_tavily_search])
-
-    stacks = [captured["middleware"], *(sub["middleware"] for sub in captured["subagents"])]
-    assert len(stacks) == 3  # main, general-purpose, researcher
-    for stack in stacks:
-        [index] = [i for i, m in enumerate(stack) if isinstance(m, mw.SourcesMiddleware)]
-        assert isinstance(stack[index + 1], errors.ToolErrorMiddleware)
-        assert isinstance(stack[index - 1], metrics.ToolMetricsMiddleware)
-        assert (stack[index].user_id, stack[index].conversation_id) == ("u1", "c1")
+    stack = _build(deep, monkeypatch, [_tavily_search])["middleware"]
+    [index] = [i for i, m in enumerate(stack) if isinstance(m, mw.SourcesMiddleware)]
+    assert isinstance(stack[index + 1], errors.ToolErrorMiddleware)
+    assert isinstance(stack[index - 1], metrics.ToolMetricsMiddleware)
+    assert (stack[index].user_id, stack[index].conversation_id) == ("u1", "c1")
 
 
 def test_the_run_middleware_is_idempotent_and_used_for_task_nodes(deep, mw):
@@ -313,14 +307,6 @@ def test_the_normalizer_emits_sources_after_the_result(mw, normalizer):
     [result] = [f for f in frames if f["type"] == "TOOL_CALL_RESULT"]
     assert result["content"] == "" and "[src:" not in json.dumps(result)
 
-
-def test_a_sub_agent_s_sources_are_wrapped_like_its_other_events(mw, normalizer):
-    namespace = ("tools:sub-1",)
-    normalizer.handle_chunk((namespace, "updates", _call("c2")))
-    frames = _frames(normalizer.handle_chunk((namespace, "updates", _stamped_result(mw, "c2"))))
-    assert {f["name"] for f in frames} == {"SUBAGENT_EVENT"}
-    [sources] = [f["value"]["event"] for f in frames if f["value"]["event"].get("name") == "SOURCES"]
-    assert sources["value"]["tool_call_id"] == "c2" and frames[0]["value"]["task_id"] == "sub-1"
 
 
 @pytest.mark.parametrize("stamp", [

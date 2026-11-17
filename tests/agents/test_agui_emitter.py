@@ -300,31 +300,6 @@ def test_plan_snapshot_with_writer(agents_service):
 
 
 # ----------------------------------------------------------------------
-# Task -> sub-agent (custom event)
-# ----------------------------------------------------------------------
-def test_task_subagent_returns_an_event(agents_service):
-    frame = _emitter(agents_service).task_subagent(
-        task_id="task-1", subagent_type="researcher", description="dig"
-    )
-    payload = _decode(frame)
-    assert payload["type"] == "CUSTOM"
-    assert payload["name"] == "TASK_SUBAGENT"
-    assert payload["value"] == {
-        "task_id": "task-1",
-        "subagent_type": "researcher",
-        "description": "dig",
-    }
-
-
-def test_task_subagent_with_writer(agents_service):
-    writer = _Writer()
-    assert _send(agents_service, writer, _emitter(agents_service).task_subagent(
-        task_id="t", subagent_type="s", description="d"
-    )) is None
-    assert _decode(writer.frames[0])["value"]["task_id"] == "t"
-
-
-# ----------------------------------------------------------------------
 # HITL interrupt (custom event)
 # ----------------------------------------------------------------------
 def test_hitl_interrupt_returns_an_event(agents_service):
@@ -356,65 +331,6 @@ def test_hitl_interrupt_with_writer(agents_service):
 
 
 # ----------------------------------------------------------------------
-# Sub-agent envelope (custom event)
-# ----------------------------------------------------------------------
-def test_subagent_event_returns_an_event(agents_service):
-    frame = _emitter(agents_service).subagent_event(
-        task_id="task-9",
-        subagent_namespace=["root", "child"],
-        event={"type": "TEXT_MESSAGE_CHUNK", "delta": "hi"},
-    )
-    payload = _decode(frame)
-    assert payload["type"] == "CUSTOM"
-    assert payload["name"] == "SUBAGENT_EVENT"
-    assert payload["value"]["task_id"] == "task-9"
-    assert payload["value"]["namespace"] == ["root", "child"]
-    assert payload["value"]["event"] == {"type": "TEXT_MESSAGE_CHUNK", "delta": "hi"}
-
-
-def test_subagent_event_coerces_namespace_sequence(agents_service):
-    frame = _emitter(agents_service).subagent_event(
-        task_id="t",
-        subagent_namespace=("a", "b"),
-        event={},
-    )
-    assert _decode(frame)["value"]["namespace"] == ["a", "b"]
-
-
-def test_subagent_event_with_writer(agents_service):
-    writer = _Writer()
-    assert _send(agents_service, writer, _emitter(agents_service).subagent_event(
-        task_id="t", subagent_namespace=["a"], event={}
-    )) is None
-    assert _decode(writer.frames[0])["name"] == "SUBAGENT_EVENT"
-
-
-# ----------------------------------------------------------------------
-# Before-agent (custom event)
-# ----------------------------------------------------------------------
-def test_before_agent_event_returns_an_event(agents_service):
-    frame = _emitter(agents_service).before_agent_event(
-        message="delegated work", metadata={"caller": "x"}
-    )
-    payload = _decode(frame)
-    assert payload["type"] == "CUSTOM"
-    assert payload["name"] == "BEFORE_AGENT_EVENT"
-    assert payload["value"]["message"] == "delegated work"
-    assert payload["value"]["metadata"] == {"caller": "x"}
-
-
-def test_before_agent_event_metadata_defaults_to_empty_dict(agents_service):
-    frame = _emitter(agents_service).before_agent_event(message="m")
-    assert _decode(frame)["value"]["metadata"] == {}
-
-
-def test_before_agent_event_with_writer(agents_service):
-    writer = _Writer()
-    assert _send(agents_service, writer, _emitter(agents_service).before_agent_event(message="m")) is None
-    assert _decode(writer.frames[0])["value"]["message"] == "m"
-
-
-# ----------------------------------------------------------------------
 # namespace and wire encoding
 # ----------------------------------------------------------------------
 def test_namespace_injected_into_payload(agents_service):
@@ -425,7 +341,7 @@ def test_namespace_injected_into_payload(agents_service):
 
 
 def test_namespace_injected_for_custom_event(agents_service):
-    frame = _emitter(agents_service).before_agent_event(message="m", namespace="ns-2")
+    frame = _emitter(agents_service).task_settled_inline(task_id="t", name="n", status="success", namespace="ns-2")
     payload = _decode(frame)
     assert payload["namespace"] == "ns-2"
 

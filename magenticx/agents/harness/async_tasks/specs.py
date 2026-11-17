@@ -32,14 +32,14 @@ from harness.async_tasks.token import LAUNCH_TOKEN_HEADER, InheritedContext
 logger = get_logger(__name__)
 
 #: deepagents' general-purpose sub-agent. Every agent has it at the top level,
-#: declared or not, exactly as with the blocking ``task`` tool.
+#: declared or not.
 GENERAL_PURPOSE_NAME: str = GENERAL_PURPOSE_SUBAGENT["name"]
 
 #: The path prefix the Agent Protocol router is mounted at.
 PROTOCOL_PREFIX = "/ap"
 
 # Model specs whose auto-added *blocking* general-purpose sub-agent has been
-# switched off in deepagents' harness profile (process-wide, flag on only).
+# switched off in deepagents' harness profile (process-wide).
 _gp_disabled: set[str] = set()
 
 
@@ -52,8 +52,8 @@ class TaskNode:
     """The node of the tree a task run builds, set on the agent by the runner.
 
     With it set, ``DeepAgent.build_deep_agent`` builds that sub-agent — its
-    model, tools, prompt and gates resolved down the tree exactly as the
-    blocking path resolves them — instead of the agent's main loop. The
+    model, tools, prompt and gates resolved down the tree — instead of the
+    agent's main loop. The
     identity fields are the task row's; they sign the launch token its own
     children are started with.
     """
@@ -96,7 +96,7 @@ def protocol_url() -> str:
 
 def general_purpose_spec(skills: Sequence[Any] | None) -> dict[str, Any]:
     """deepagents' general-purpose sub-agent as a tree node: inherits the model
-    and tools above it, and gets the agent's skills, as the blocking one does."""
+    and tools above it, and gets the agent's skills."""
     spec: dict[str, Any] = dict(GENERAL_PURPOSE_SUBAGENT)
     if skills:
         spec["skills"] = list(skills)
@@ -105,34 +105,11 @@ def general_purpose_spec(skills: Sequence[Any] | None) -> dict[str, Any]:
 
 def top_level(subagents: Sequence[Any] | None, skills: Sequence[Any] | None) -> list[Mapping[str, Any]]:
     """The agent's own sub-agents, with the general-purpose one added when the
-    agent does not declare it (the same rule as the blocking path)."""
+    agent does not declare it (deepagents' own rule)."""
     level = [spec for spec in (subagents or []) if isinstance(spec, Mapping)]
     if not any(spec.get("name") == GENERAL_PURPOSE_NAME for spec in level):
         level.insert(0, general_purpose_spec(skills))
     return level
-
-
-def supports_async(subagents: Any) -> bool:
-    """Whether every node of the tree can run as a task.
-
-    A pre-compiled sub-agent (``runnable``) is an opaque in-memory graph the
-    runner cannot rebuild from a path, so a tree that holds one keeps the
-    blocking path whole (logged), rather than half of it running async.
-    """
-    if subagents is None:
-        return True
-    if not isinstance(subagents, (list, tuple)):
-        return False
-
-    def check(level: Sequence[Any]) -> bool:
-        for spec in level:
-            if not isinstance(spec, Mapping) or "runnable" in spec:
-                return False
-            if not check(spec.get(SUBAGENTS_KEY) or []):
-                return False
-        return True
-
-    return check(subagents)
 
 
 def resolve_chain(
@@ -159,8 +136,8 @@ def resolve_chain(
 def disable_blocking_general_purpose(model: Any) -> None:
     """Switch off deepagents' auto-added blocking general-purpose sub-agent for ``model``.
 
-    ``create_deep_agent`` adds it (and the ``task`` tool) to every agent unless
-    the model's harness profile says otherwise; with async sub-agents on, the
+    ``create_deep_agent`` adds it (and the blocking ``task`` tool) to every
+    agent unless the model's harness profile says otherwise; the
     general-purpose sub-agent is an async task instead, so the blocking copy
     must not exist. The profile is the only override surface and is keyed by
     model spec (registration merges with the summarization exclusion). Only a
@@ -229,6 +206,5 @@ __all__ = [
     "parse_graph_id",
     "protocol_url",
     "resolve_chain",
-    "supports_async",
     "top_level",
 ]

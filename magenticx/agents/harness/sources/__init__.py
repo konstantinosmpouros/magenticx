@@ -18,7 +18,7 @@ from harness.sources.extractors import (
     has_extractor,
     marker,
 )
-from harness.sources.ids import assign_ids, normalise_url, source_id, strip_tracking
+from harness.sources.ids import assign_ids, id_matches_url, normalise_url, source_id, strip_tracking
 from harness.sources.model import SOURCE_ID_PATTERN, Source
 from harness.sources.store import MAX_LISTED_SOURCES, ConversationSourceStore
 
@@ -32,6 +32,7 @@ __all__ = [
     "assign_ids",
     "extract_sources",
     "has_extractor",
+    "id_matches_url",
     "marker",
     "normalise_url",
     "source_id",

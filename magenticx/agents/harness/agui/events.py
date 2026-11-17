@@ -9,10 +9,6 @@ from harness.sources.model import Source
 # Custom event names/constants for AG-UI
 HITL_INTERRUPT_EVENT_TYPE = "HITL_INTERRUPT"
 PLAN_SNAPSHOT_EVENT_TYPE = "PLAN_SNAPSHOT"
-TASK_SUBAGENT_EVENT_TYPE = "TASK_SUBAGENT"
-SUBAGENT_EVENT_TYPE = "SUBAGENT_EVENT"
-SUBAGENT_COMPLETED_EVENT_TYPE = "SUBAGENT_COMPLETED"
-BEFORE_AGENT_EVENT_TYPE = "BEFORE_AGENT_EVENT"
 TOKEN_USAGE_EVENT_TYPE = "TOKEN_USAGE"
 TOOL_USAGE_EVENT_TYPE = "TOOL_USAGE"
 #: The citable pages one tool call returned (plan 42).
@@ -55,52 +51,6 @@ class PlanSnapshot(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Task -> Sub-agent assignment Event
-# ------------------------------------------------------------------
-class TaskSubAgentEvent(BaseModel):
-    """Describes a task delegated to a sub-agent."""
-    task_id: str
-    subagent_type: str
-    description: str
-
-
-# ------------------------------------------------------------------
-# Sub-agent envelope Event
-# ------------------------------------------------------------------
-class SubAgentEvent(BaseModel):
-    """
-    Wraps any normalized AG-UI event emitted by a sub-agent namespace.
-    """
-    task_id: str
-    namespace: List[str]
-    event: Dict[str, Any]
-
-
-# ------------------------------------------------------------------
-# Sub-agent completed Event
-# ------------------------------------------------------------------
-class SubAgentCompletedEvent(BaseModel):
-    """A delegated sub-agent returned: the orchestrator got its ``task`` result.
-
-    Emitted once per ``task`` tool call, when its ToolMessage arrives, so the UI
-    can mark that sub-agent's card done (or failed) while the run goes on — the
-    result text itself is never forwarded (the orchestrator restates it).
-
-    ``task_id`` is the ``task`` tool_call_id (the id TASK_SUBAGENT used);
-    ``namespace`` is the sub-agent's LangGraph namespace path when it was bound
-    to that call, so a UI that keyed the sub-agent's events by namespace can
-    resolve it either way. ``started_at``/``ended_at`` are epoch ms; started_at
-    is the moment the sub-agent's namespace was first seen (absent when that
-    happened on an earlier stream the service no longer remembers).
-    """
-    task_id: str
-    status: Literal["completed", "error"]
-    namespace: list[str] | None = None
-    started_at: int | None = None
-    ended_at: int | None = None
-
-
-# ------------------------------------------------------------------
 # Async sub-agent task events (plan 41)
 # ------------------------------------------------------------------
 class TaskLaunchedEvent(BaseModel):
@@ -136,25 +86,13 @@ class TaskSettledInlineEvent(BaseModel):
 
 
 # ------------------------------------------------------------------
-# Before-agent event
-# ------------------------------------------------------------------
-class BeforeAgentEvent(BaseModel):
-    """
-    Captures the delegated instruction observed in
-    PatchToolCallsMiddleware.before_agent.
-    """
-    message: str
-    metadata: Optional[Dict[str, Any]] = None
-
-
-# ------------------------------------------------------------------
 # Token usage event
 # ------------------------------------------------------------------
 class TokenUsageEvent(BaseModel):
     """Per-AI-message token usage, pulled from ``AIMessage.usage_metadata``.
 
-    Emitted once per settled AI message (main agent or sub-agent). The bridge
-    sums these across the whole run — message_id lets it dedupe defensively.
+    Emitted once per settled AI message (a chat run's agent, or a background
+    task's in its own event stream). The bridge sums these across the whole run — message_id lets it dedupe defensively.
 
     The second group comes from ``UsageMetricsMiddleware``: the model that made
     the call, how long it took, and how full its context window was
@@ -211,8 +149,8 @@ class SourcesEvent(BaseModel):
 
     Synthesised by the normalizer right after the call's ``TOOL_CALL_END`` (and
     its ``TOOL_USAGE``), from the stamp ``SourcesMiddleware`` put on the
-    ToolMessage; a sub-agent's is wrapped in ``SUBAGENT_EVENT`` like its other
-    events. The UI folds every ``SOURCES`` of the visible branch into the map an
+    ToolMessage; a background task's lands in its own event stream like its
+    other events. The UI folds every ``SOURCES`` of the visible branch into the map an
     inline ``[src:ID]`` marker resolves against. Each source is re-validated
     here (``http(s)`` only, capped, no control characters): it is untrusted
     search output on its way to a browser.

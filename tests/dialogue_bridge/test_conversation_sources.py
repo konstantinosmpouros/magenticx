@@ -8,7 +8,8 @@ the bridge:
   unreachable;
 * copies them on fork and drops them with the conversation's reap;
 * freezes the cited ones into a share snapshot, so the public view resolves
-  its markers without a session;
+  its markers without a session, and gives a conversation continued from that
+  link the frozen ones (best-effort);
 * passes the live ``SOURCES`` CUSTOM event through the run's event log intact.
 """
 from __future__ import annotations
@@ -22,12 +23,20 @@ import pytest
 from sqlalchemy import select
 
 import utils.async_tasks as async_tasks
+import utils.inference_start as inference_start
 import utils.runtime_reaps as runtime_reaps
+import utils.shared_conv as shared_conv
 from core.auth.session import require_current_user
 from core.database import ConversationTable, MessageTable, PendingRuntimeReapTable
 from core.settings import settings
-from schema import ConversationSource, ConversationSourcesOut, keep_valid_sources
-from utils.agents import copy_conversation_sources
+from schema import (
+    ConversationSource,
+    ConversationSourcesOut,
+    InferenceStartPayload,
+    MessageIn,
+    keep_valid_sources,
+)
+from utils.agents import copy_conversation_sources, insert_conversation_sources
 from utils.inference_runs import InferenceRunRuntime, append_coalesced, truncate_tool_result
 from utils.task_streams import task_events_key, task_streams
 from utils.validators import validate_userId
@@ -335,6 +344,104 @@ async def test_a_share_still_works_when_the_agents_service_is_down(client, agent
 
     assert share.status_code == 201
     assert (await client.get(f"/v1/shared-conversations/{share.json()['token']}")).json()["sources"] == []
+
+
+# ---------------------------------------------------------------------------
+# Continue from a share: the frozen sources go to the new conversation
+# ---------------------------------------------------------------------------
+async def test_the_insert_posts_the_sources(client, agents_service):
+    path = _sources_path("u1", "c-new")
+    agents_service.on("POST", path, httpx.Response(204))
+
+    await insert_conversation_sources("u1", "c-new", keep_valid_sources([GOOD, OTHER]))
+
+    [call] = agents_service.called("POST", path)
+    assert json.loads(call.content) == {"sources": [GOOD, OTHER]}
+
+
+async def test_an_empty_insert_asks_for_nothing_and_a_failed_one_never_raises(client, agents_service):
+    await insert_conversation_sources("u1", "c-new", [])
+    assert agents_service.calls == []
+
+    agents_service.on("POST", _sources_path("u1", "c-new"), httpx.Response(503))
+    await insert_conversation_sources("u1", "c-new", keep_valid_sources([GOOD]))  # logged, not raised
+
+
+class _AnySourcesPost(dict):
+    """The fake's routes, plus ``reply`` for a POST to any conversation's sources."""
+
+    def __init__(self, routes, reply):
+        super().__init__(routes)
+        self.reply = reply
+
+    def get(self, key, default=None):
+        method, path = key
+        if method == "POST" and path.endswith("/sources"):
+            return self.reply
+        return super().get(key, default)
+
+
+async def _continue_share(client, agents_service, session_factory, seeded_user, seeded_agent, monkeypatch,
+                          *, content: str, insert_status: int = 204):
+    """Share a conversation whose answer is ``content``, then continue the link;
+    the inference start's response and the POST path the new conversation's
+    sources would go to."""
+    conv_id = await _conversation(session_factory, seeded_user.id, seeded_agent, content=content)
+    agents_service.on("GET", _sources_path(seeded_user.id, conv_id),
+                      httpx.Response(200, json={"sources": [GOOD, OTHER]}))
+    share = await client.post(f"/v1/conversations/{seeded_user.id}/{conv_id}/share",
+                              json={"messageId": await _ai_message_id(session_factory, conv_id), "mode": "full"})
+    assert share.status_code == 201
+
+    async def agent_by_id(agent_id):
+        return seeded_agent if agent_id == seeded_agent.id else None
+
+    monkeypatch.setattr(inference_start, "get_agent_by_id", agent_by_id)
+    # The new conversation's id is only known once the start has run: answer
+    # any sources POST.
+    agents_service.routes = _AnySourcesPost(agents_service.routes, httpx.Response(insert_status))
+    async with session_factory() as db:
+        started = await inference_start.start_inference_flow(db=db, user=seeded_user, payload=InferenceStartPayload(
+            mode="shared_continue",
+            sharedConversationToken=share.json()["token"],
+            message=MessageIn(sender="user", type="text", content="Go on"),
+        ))
+    return started, _sources_path(seeded_user.id, started.detail.id), conv_id
+
+
+async def test_continuing_a_share_gives_the_new_conversation_the_frozen_sources(
+        client, agents_service, session_factory, seeded_user, seeded_agent, monkeypatch):
+    started, path, original = await _continue_share(client, agents_service, session_factory, seeded_user,
+                                                    seeded_agent, monkeypatch, content="Grew 12% [src:3fa2c1].")
+
+    assert started.detail.id != original
+    # Only what the snapshot froze (the cited source), under the new conversation.
+    [call] = agents_service.called("POST", path)
+    assert json.loads(call.content) == {"sources": [GOOD]}
+
+
+async def test_a_share_without_sources_continues_without_an_insert(
+        client, agents_service, session_factory, seeded_user, seeded_agent, monkeypatch):
+    started, path, _ = await _continue_share(client, agents_service, session_factory, seeded_user,
+                                             seeded_agent, monkeypatch, content="No citations.")
+
+    assert started.run is not None
+    assert agents_service.called("POST", path) == []
+
+
+async def test_a_failed_insert_never_fails_the_continued_conversation(
+        client, agents_service, session_factory, seeded_user, seeded_agent, monkeypatch):
+    started, path, _ = await _continue_share(client, agents_service, session_factory, seeded_user, seeded_agent,
+                                             monkeypatch, content="Cited [src:3fa2c1].", insert_status=503)
+
+    assert started.run is not None and len(agents_service.called("POST", path)) == 1
+
+
+def test_the_snapshot_s_sources_are_revalidated_on_import():
+    bad = {**OTHER, "url": "javascript:alert(1)"}
+    share = SimpleNamespace(snapshot_json={"sources": [GOOD, bad, "junk", GOOD]})
+    assert shared_conv.snapshot_sources(share) == [ConversationSource.model_validate(GOOD)]
+    assert shared_conv.snapshot_sources(SimpleNamespace(snapshot_json=None)) == []
 
 
 # ---------------------------------------------------------------------------

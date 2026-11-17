@@ -166,7 +166,7 @@ class _Usage:
     """Sums the run's ``TOKEN_USAGE`` events into ``TaskOut.usage`` keys.
 
     A summary call of the task's own automatic compaction counts too: it is
-    the sub-agent's spend, exactly as it was booked for a blocking sub-agent.
+    the sub-agent's spend.
     """
 
     def __init__(self) -> None:
@@ -1028,13 +1028,8 @@ def set_task_runner(runner: TaskRunner | None) -> None:
     _runner = runner
 
 
-def optional_task_runner() -> TaskRunner | None:
-    """The runner, or ``None`` when async sub-agents are off."""
-    return _runner
-
-
 def get_task_runner() -> TaskRunner:
-    """The runner, or a 503 when async sub-agents are off or not started yet."""
+    """The runner, or a 503 before the lifespan has started it."""
     if _runner is None:
         raise HTTPException(status_code=503, detail="Background tasks are not available.")
     return _runner

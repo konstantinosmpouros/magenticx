@@ -4,15 +4,15 @@ from typing import Any
 
 from core.logging import get_logger
 from harness.agui.emitter import encode
-from harness.agui.normalizer import release_namespace_bindings
+from harness.agui.normalizer import release_run_memory
 
 logger = get_logger(__name__)
 
 
 async def release_checkpoint_unless_paused(agent: Any, run_id: str) -> None:
-    """Drop the in-process sub-agent namespace-binding cache when a run ends —
-    unless the graph is parked on a HITL interrupt, in which case keep it so a
-    later ``/resume`` rehydrates the same namespace→task bindings.
+    """Drop the normalizer's in-process run memory when a run ends — unless the
+    graph is parked on a HITL interrupt, in which case keep it so a later
+    ``/resume`` still knows which background tasks it already announced.
 
     The durable Postgres checkpoint is **never** deleted here: threads persist
     across turns (that is the whole point of the durable saver), and reaping is
@@ -21,7 +21,7 @@ async def release_checkpoint_unless_paused(agent: Any, run_id: str) -> None:
     interrupt probe is async because the saver is ``AsyncPostgresSaver`` — the
     sync ``get_state`` is unavailable on an async saver. When the interrupt
     state can't be read we drop the cache (favour a tidy cache over a rare
-    binding miss; the durable checkpoint is unaffected either way).
+    repeated TASK_LAUNCHED; the durable checkpoint is unaffected either way).
     """
     if not run_id:
         return
@@ -34,10 +34,10 @@ async def release_checkpoint_unless_paused(agent: Any, run_id: str) -> None:
     except Exception:
         logger.warning(
             "checkpoint_interrupt_probe_failed",
-            "Could not determine interrupt state; releasing namespace bindings",
+            "Could not determine interrupt state; releasing the run memory",
             exc_info=True,
         )
-    release_namespace_bindings(run_id)
+    release_run_memory(run_id)
 
 
 async def emit_checkpoint_committed(

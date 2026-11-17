@@ -10,6 +10,8 @@ What these pin is the contract the user relies on:
 * the archive holds their data and only their data — no tokens, no share-link
   secrets, no raw event logs, nothing from another user;
 * a text-only export carries no attachment bytes;
+* each conversation's citation sources are in it, revalidated, and an agents
+  service that cannot give them leaves them out without failing the export;
 * a download cut short is not a valid zip, and gives the cooldown back;
 * the cooldown, the token and the concurrency limit cannot be walked around.
 """
@@ -43,9 +45,22 @@ def _export_env(monkeypatch, session_factory):
     data_export.SLOTS._leases.clear()
 
 
-def _agents_handler(frames):
+#: A conversation's citation source, as the agents service lists it (plan 42).
+SOURCE = {"id": "3fa2c1", "url": "https://example.com/a", "title": "A page", "snippet": "Some text",
+          "tool": "tavily-search"}
+
+
+def _agents_handler(frames, sources=None):
+    """The export stream for the export route; ``sources`` (default: one
+    :data:`SOURCE`) for every conversation's sources route."""
     lines = "".join(json.dumps(f) + "\n" for f in frames).encode()
-    return lambda request: httpx.Response(200, content=lines)
+
+    def handle(request):
+        if request.url.path.endswith("/sources"):
+            return httpx.Response(200, json={"sources": [SOURCE] if sources is None else sources})
+        return httpx.Response(200, content=lines)
+
+    return handle
 
 
 AGENT_FRAMES = [
@@ -137,7 +152,7 @@ async def test_a_full_export_holds_the_users_data_and_nothing_else(
         assert {"README.md", "account/profile.json", "account/preferences.json",
                 "conversations/conversations.ndjson", "conversations/shares.ndjson",
                 "conversations/message_usage.ndjson", "conversations/tool_usage.ndjson",
-                "agents/agents.ndjson", "skills/notes/SKILL.md", "skills/notes/logo.png"} <= set(names)
+                "conversations/sources.ndjson", "agents/agents.ndjson", "skills/notes/SKILL.md", "skills/notes/logo.png"} <= set(names)
         assert sorted(m["content"] for m in messages) == ["message 0", "message 1", "message 2"]
         assert len({m["id"] for m in messages}) == 3                  # none skipped, none twice
         # The attachment's bytes, intact, at a path that cannot escape the folder.
@@ -181,6 +196,56 @@ async def test_without_the_agents_service_the_export_says_so(
         manifest = json.loads(zf.read("manifest.json"))
     assert manifest["complete"] is False
     assert manifest["missing"] and "agents" in manifest["missing"][0]
+
+
+@pytest.mark.asyncio
+async def test_each_conversations_sources_are_exported_with_its_id(
+    session_factory, seeded_user, seeded_agent, agents_upstream
+):
+    conv_id = await _seed(session_factory, seeded_user, seeded_agent)
+    seen: list[str] = []
+    bad = {**SOURCE, "id": "abcdef", "url": "javascript:alert(1)"}
+
+    def handle(request):
+        if request.url.path.endswith("/sources"):
+            seen.append(request.url.path)
+            return httpx.Response(200, json={"sources": [SOURCE, bad]})
+        return _agents_handler(AGENT_FRAMES)(request)
+
+    agents_upstream(handler=handle)
+    archive = await _collect(seeded_user.id)
+
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        rows = [json.loads(line) for line in zf.read("conversations/sources.ndjson").splitlines()]
+        manifest = json.loads(zf.read("manifest.json"))
+    # Only the user's own conversation is asked for; the bad source is dropped.
+    assert seen == [f"/users/{seeded_user.id}/conversations/{conv_id}/sources"]
+    assert rows == [{"conversation_id": conv_id, **SOURCE}]
+    assert manifest["records"]["conversations/sources.ndjson"] == 1 and manifest["complete"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [httpx.Response(503), httpx.Response(200, content=b"not json"),
+                                   httpx.Response(200, json={"sources": "nope"})])
+async def test_sources_the_agents_service_cannot_give_leave_the_rest_of_the_export(
+    session_factory, seeded_user, seeded_agent, agents_upstream, reply
+):
+    await _seed(session_factory, seeded_user, seeded_agent)
+
+    def handle(request):
+        if request.url.path.endswith("/sources"):
+            return reply
+        return _agents_handler(AGENT_FRAMES)(request)
+
+    agents_upstream(handler=handle)
+    archive = await _collect(seeded_user.id)
+
+    with zipfile.ZipFile(io.BytesIO(archive)) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        assert zf.read("conversations/sources.ndjson") == b""
+        assert "agents/agents.ndjson" in zf.namelist()           # the rest is all there
+    assert manifest["missing"] == ["citation sources (the agents service was unavailable)"]
+    assert manifest["complete"] is False
 
 
 @pytest.mark.asyncio

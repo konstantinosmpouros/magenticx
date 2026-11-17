@@ -282,20 +282,9 @@ flowchart TD
 
 **`PlanItem` status values:** `"pending"`, `"in_progress"`, `"completed"`.
 
-### `task` → Sub-Agent Delegation
+### `start_async_task` → Background Sub-Agent
 
-When the orchestrator calls `task(subagent_type=..., description=...)`, the normalizer emits a `TASK_SUBAGENT` custom event and marks the tool call as ignored. It also records `pending_tasks[task_id]` for later namespace binding:
-
-```mermaid
-flowchart TD
-    A["tool_name == 'task'"] --> B["Emit TASK_SUBAGENT CustomEvent<br/>{task_id, subagent_type, description}"]
-    B --> C["Mark tool_call_id as ignored"]
-    C --> D["pending_tasks[task_id] = {description, subagent_type}"]
-    D --> E["Sub-agent starts — namespace bound to task_id<br/>via PatchToolCallsMiddleware.before_agent message"]
-    E --> F["All sub-agent SSE events wrapped in SUBAGENT_EVENT envelope"]
-```
-
-The namespace-to-task_id binding happens via message content matching: the before_agent message injected by `PatchToolCallsMiddleware` contains the task description, and the normalizer scans for a `pending_tasks` entry whose description matches. Once bound, every event emitted by that subgraph namespace is re-emitted as a `SUBAGENT_EVENT` carrying the `task_id` and the original event as a nested dict.
+Every sub-agent is a background task (plan 41): the orchestrator calls `start_async_task(subagent_type=..., description=...)`, which returns a task id at once. The normalizer opens no tool card for the call; when its result names the task it emits one `TASK_LAUNCHED {task_id, name, description}`, and the task's own events stream on its own thread into its drill-down, never inside this run (see [async-subagents](../flows/async-subagents.md) and [agui-protocol § Phase 4](agui-protocol.md)). A failed launch shows as an ordinary errored `start_async_task` tool call.
 
 ### `__interrupt__` → HITL
 
@@ -343,7 +332,7 @@ This is the only point in the pipeline where blob storage is accessed for infere
 
 - **The DuckDB instance is per-process and in-memory.** Restarting the RAG service reloads all Excel files from disk into a fresh DuckDB instance. Any query sent between the process restart and the first workbook load will 404. The `TABLES` global is only populated after `_lifespan()` completes.
 
-- **`write_todos` and `task` tool results are never forwarded to the client.** Their `ToolMessage` responses from LangGraph are captured by `_ignored_tool_call_ids` and silently dropped. The agent graph still receives the result internally; the client only sees the `PLAN_SNAPSHOT` or `TASK_SUBAGENT` custom event.
+- **`write_todos` and `start_async_task` tool results are never forwarded to the client.** Their `ToolMessage` responses from LangGraph are consumed silently (`_silent_tools`, `_async_calls`). The agent graph still receives the result internally; the client only sees the `PLAN_SNAPSHOT` or `TASK_LAUNCHED` custom event.
 
 - **HITL stops all other events in that chunk.** If a graph emits both a tool call and an `__interrupt__` in the same update chunk (possible in edge cases), only the `HITLInterruptEvent` is emitted. The client must resume the session before the tool call that triggered the interrupt can complete.
 
@@ -354,8 +343,6 @@ This is the only point in the pipeline where blob storage is accessed for infere
 - **OpenAI embeddings are called by the RAG service, not the agents service.** If `OPENAI_API_KEY` is missing from the RAG service's environment, the Chroma retriever will fail on the first call. The RAG service does not validate the key at startup.
 
 - **The bridge parses agent SSE into detached run state.** `InferenceRunManager` consumes upstream AG-UI frames, updates an in-memory accumulator, and appends each parsed event to the per-run Redis stream (`inference:run:{message_id}:events`). Browser observers connect via WebSocket and replay from that stream. Encoding or framing errors now fail the run instead of being forwarded as opaque bytes.
-
-- **Sub-agent namespace binding can fail silently.** If the `before_agent` message injected by `PatchToolCallsMiddleware` does not match any `pending_tasks` description (e.g., due to whitespace differences), the namespace remains unbound and sub-agent events are emitted without a `SUBAGENT_EVENT` wrapper. The events still reach the client but the UI cannot associate them with the correct task card.
 
 ---
 

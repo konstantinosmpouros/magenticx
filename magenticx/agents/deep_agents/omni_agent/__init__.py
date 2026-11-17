@@ -20,9 +20,7 @@ HITL_GATED_TOOLS: dict[str, bool] = {
     # Code execution — arbitrary shell / python is always user-approved.
     "execute": True,
     # Subagent delegation — researcher / writer hand-offs require approval so
-    # the user can see the prompt before a model spends tokens on it. One gate
-    # under both names (harness.tools.gates.with_gate_aliases): it gates the
-    # blocking `task` while async sub-agents are off, `start_async_task` once on.
+    # the user can see the prompt before a model spends tokens on it.
     "start_async_task": True,
 }
 
@@ -35,7 +33,7 @@ def _helpers() -> list[dict[str, Any]]:
     ``sub-helper`` (three levels below — the most nesting allows, so it does
     the work itself). Distinct names per level: a name may not repeat down a
     branch. Models and tools are inherited from the agent above; every
-    hand-off still goes through the ``task`` approval gate.
+    hand-off still goes through the ``start_async_task`` approval gate.
     """
     prompt = GENERAL_PURPOSE_SUBAGENT["system_prompt"]
     return [

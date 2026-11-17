@@ -1,6 +1,6 @@
 # Export My Data
 
-A user can download everything mAgenticX holds about them — profile, settings, conversations, messages, attachments, scheduled tasks, workflow runs, custom agents, skills and workflows — as one `.zip`, from Settings → Data controls. The **dialogue_bridge** builds the archive; the **agents** service streams its part (custom agents, skills and workflow definitions, which live in `agent_runtime`). The mental model is a **pipe, not a pile**: the archive is never assembled anywhere. A page of rows or a slice of a file is read, written into the zip, sent to the browser and dropped, so neither memory nor disk ever holds more than about a megabyte of it — which matters on Dennis, where 24 GB is shared by every stack on the box. Exports are on by default; `DATA_EXPORT_ENABLED=false` is the kill switch.
+A user can download everything mAgenticX holds about them — profile, settings, conversations, messages, attachments, the web pages their answers cite, scheduled tasks, workflow runs, custom agents, skills and workflows — as one `.zip`, from Settings → Data controls. The **dialogue_bridge** builds the archive; the **agents** service streams its part (custom agents, skills and workflow definitions, which live in `agent_runtime`). The mental model is a **pipe, not a pile**: the archive is never assembled anywhere. A page of rows or a slice of a file is read, written into the zip, sent to the browser and dropped, so neither memory nor disk ever holds more than about a megabyte of it — which matters on Dennis, where 24 GB is shared by every stack on the box. Exports are on by default; `DATA_EXPORT_ENABLED=false` is the kill switch.
 
 ---
 
@@ -11,6 +11,7 @@ flowchart LR
     UI["agentic_ui<br/>Data controls"] -->|"POST token (CSRF)<br/>then GET download"| B["dialogue_bridge<br/>builds the zip"]
     B -->|"pages + 1 MB slices"| PG[("chat_db")]
     B -->|"GET /users/{uid}/export<br/>framed NDJSON"| A["agents"]
+    B -->|"GET …/conversations/{cid}/sources<br/>per conversation"| A
     A -->|"pages + 1 MB slices"| AR[("agent_runtime")]
     B -->|"streamed zip<br/>X-Accel-Buffering: no"| UI
 ```
@@ -35,6 +36,11 @@ sequenceDiagram
     B-->>UI: 200 application/zip — headers sent, body streams
     loop each part, page by page
         B->>DB: next page / next 1 MB slice
+        B-->>UI: zip bytes
+    end
+    loop each conversation (citation sources)
+        B->>A: GET /users/{uid}/conversations/{cid}/sources
+        A-->>B: {"sources": [...]}
         B-->>UI: zip bytes
     end
     B->>A: GET /users/{uid}/export
@@ -82,6 +88,14 @@ Measured locally: a 40 MB attachment streamed in 0.59 s with a 4.2 MB memory pea
 
 If the agents service cannot be reached **before** anything was written, the export continues without this part and `manifest.json` says so (`complete: false`, `missing: [...]`). After a frame has been written the zip cannot be rolled back, so a later failure aborts the whole export.
 
+### Citation sources (plan 42)
+
+A conversation's citation sources — the web pages its search tools returned, which its answers cite as `[src:ID]` — live in the agents service (`agent_runtime.conversation_sources`), per conversation. They are exported by the **bridge** as `conversations/sources.ndjson`, one source per line with its `conversation_id` (`{conversation_id, id, url, title, snippet, tool}`), like every other per-conversation part: for each of the user's conversations (trial chats excluded, by the same keyset walk as messages) the bridge calls the existing internal read, `GET /users/{uid}/conversations/{cid}/sources` (at most 500, newest first), over one HTTP client for the whole part, and validates each source again (`keep_valid_sources`: `http(s)` only, capped) before writing it.
+
+Why the bridge and not the agents stream: conversation data is exported per conversation as `conversations/*.ndjson` rows, the bridge owns which conversations are the user's (and which are trial chats), and the agents stream's archive paths are limited to `agents/`, `skills/` and `workflows/definitions/` — the sources are conversation data, not agent definitions.
+
+**Fail-open.** The first sources call that fails (unreachable, non-2xx, or an unexpected body) ends this part: the rows already written stay, `manifest.json` lists `citation sources (the agents service was unavailable)` in `missing` (so `complete: false`), and the export carries on — one failed call, not one timeout per conversation.
+
 ---
 
 ## The Archive
@@ -95,6 +109,7 @@ account/tool_preferences.ndjson
 conversations/conversations.ndjson
 conversations/messages.ndjson        one message per line, with conversation_id (and any manual compaction)
 conversations/message_usage.ndjson   where each answer's tokens went: main agent and each sub-agent, by model
+conversations/sources.ndjson         citation sources (plan 42): one web page per line, with conversation_id
 conversations/attachments.ndjson     archive_path = where its file is (null in text-only)
 conversations/reports.ndjson
 conversations/shares.ndjson          which conversations were shared — never the link token

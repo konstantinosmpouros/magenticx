@@ -15,6 +15,7 @@ from core.settings import ModelInfo
 from harness.abstractions import deep_agent as deep_agent_module
 from harness.abstractions.deep_agent import DeepAgent
 from harness.async_tasks.runner import task_context
+from harness.async_tasks.specs import TaskNode
 from harness.async_tasks.token import InheritedContext
 from harness.models import (
     EffortMiddleware,
@@ -122,15 +123,20 @@ def test_the_run_context_s_effort_is_read_and_a_bad_one_ignored():
     assert _agent({}).effort is None
 
 
-def test_the_main_agent_and_every_sub_agent_get_the_effort(monkeypatch):
+@pytest.mark.parametrize("path", [(), ("researcher",)])
+def test_the_main_agent_and_every_task_node_get_the_effort(monkeypatch, path):
     captured: dict[str, Any] = {}
     monkeypatch.setattr(deep_agent_module, "create_deep_agent", lambda **kwargs: captured.update(kwargs))
     agent = _agent({"effort": "high"})
     monkeypatch.setattr(agent, "_build_composite_backend", lambda: None)
-    # Blocking sub-agents: built here. (Async ones are task nodes, which get it
-    # from their launcher: test_a_background_task_inherits_the_effort.)
-    monkeypatch.setattr(agent, "_uses_async_subagents", lambda subagents: False)
     monkeypatch.setattr(agent, "_builtin_tools", lambda: [])  # they need the databases
+    if path:
+        # A task node gets the run's effort from its launcher's context
+        # (test_a_background_task_inherits_the_effort); its stack applies it.
+        agent.async_task_node = TaskNode(
+            task_id="t1", depth=len(path), path=path, user_id="u1", conversation_id="c1", root_run_id="r1",
+            branch_thread_id="b1", agent_slug=agent.name, definition_version="v1", inherited=InheritedContext(),
+        )
     agent.build_deep_agent(
         model="openai:gpt-6-luna",
         middleware=[],
@@ -138,11 +144,7 @@ def test_the_main_agent_and_every_sub_agent_get_the_effort(monkeypatch):
         subagents=[{"name": "researcher", "description": "d", "system_prompt": "p"}],
     )
 
-    def efforts(stack):
-        return [m.effort for m in stack if isinstance(m, EffortMiddleware)]
-
-    assert efforts(captured["middleware"]) == ["high"]
-    assert all(efforts(sub["middleware"]) == ["high"] for sub in captured["subagents"])
+    assert [m.effort for m in captured["middleware"] if isinstance(m, EffortMiddleware)] == ["high"]
 
 
 def test_no_effort_means_no_middleware(monkeypatch):
