@@ -790,6 +790,44 @@ export const CanvasDocumentVersionSchema = z
   });
 export type CanvasDocumentVersion = z.output<typeof CanvasDocumentVersionSchema>;
 
+/**
+ * `201 {"path", "version", "created_at"}`: the user's save became version n
+ * (plan 44, Phase 4.2). Without a version number the save cannot be the new
+ * base of the next one, so a missing number is a contract break.
+ */
+export const CanvasDocumentSavedSchema = z
+  .record(z.unknown())
+  .superRefine((raw, ctx) => {
+    if (toCanvasVersionNo(raw.version) === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["version"], message: "version must be a positive integer" });
+    }
+  })
+  .transform((raw) => ({
+    path: toFileText(raw.path) ?? "",
+    version: toCanvasVersionNo(raw.version) ?? 0,
+    createdAt: toFileText(wireField(raw, "created_at", "createdAt")) ?? "",
+  }));
+export type CanvasDocumentSaved = z.output<typeof CanvasDocumentSavedSchema>;
+
+/**
+ * The 409 `detail` of a save whose base is no longer the latest:
+ * `{"code": "stale_base", "message", "current_version", "current_content"}`.
+ * Strict on the fields the conflict dialog needs — without the latest text
+ * there is nothing to compare the user's against, and the save stays failed.
+ */
+export const CanvasStaleBaseSchema = z
+  .object({
+    code: z.literal("stale_base"),
+    current_version: z.number().int().positive(),
+    current_content: z.string(),
+  })
+  .passthrough()
+  .transform((raw) => ({
+    currentVersion: raw.current_version,
+    currentContent: raw.current_content,
+  }));
+export type CanvasStaleBase = z.output<typeof CanvasStaleBaseSchema>;
+
 // ---------------------------------------------------------------------------
 // Realtime voice session (WebRTC SDP answer)
 // ---------------------------------------------------------------------------

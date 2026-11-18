@@ -331,6 +331,17 @@ export default function ChatBody({
     return Math.max(0, v.scrollHeight - v.scrollTop - v.clientHeight);
   }, []);
 
+  // Whether the jump button is worth showing: the newest real content (the end
+  // of the list, NOT the spacer under it) is more than JUMP_BUTTON_DISTANCE
+  // below the fold. Measured from the scroll bottom instead, the spacer alone
+  // could raise the button while the newest line — the run's status line, just
+  // above the composer — was on screen, and the button sat on top of it.
+  const newestContentHidden = React.useCallback(() => {
+    const m = measure();
+    if (!m) return false;
+    return m.contentBottom - (m.scrollTop + m.H) > JUMP_BUTTON_DISTANCE;
+  }, [measure]);
+
   const setSpacerHeight = React.useCallback((px: number) => {
     const el = bottomSpacerRef.current;
     if (el) el.style.height = `${Math.max(0, Math.round(px))}px`;
@@ -591,7 +602,7 @@ export default function ChatBody({
     // changed because the user navigated siblings, not because the stream appended.
     if (suppressFollowRef.current) {
       suppressFollowRef.current = false;
-      setShowJumpToBottom(distanceFromBottom() > JUMP_BUTTON_DISTANCE);
+      setShowJumpToBottom(newestContentHidden());
       return;
     }
 
@@ -600,7 +611,7 @@ export default function ChatBody({
     // toggle, …) — settling at the bottom is owned by the reset effect — we only
     // keep the jump button in sync.
     if (!isStreaming || !isPinnedToBottom) {
-      setShowJumpToBottom(distanceFromBottom() > JUMP_BUTTON_DISTANCE);
+      setShowJumpToBottom(newestContentHidden());
       return;
     }
 
@@ -611,7 +622,7 @@ export default function ChatBody({
     liveTimeline,
     isStreaming,
     isPinnedToBottom,
-    distanceFromBottom,
+    newestContentHidden,
     scheduleFollow,
   ]);
 
@@ -722,7 +733,7 @@ export default function ChatBody({
       if (isEcho) return;
 
       const distance = distanceFromBottom();
-      setShowJumpToBottom(distance > JUMP_BUTTON_DISTANCE);
+      setShowJumpToBottom(newestContentHidden());
 
       if (movedUp > UNPIN_SCROLL_DELTA) {
         // A genuine upward move — even a small one — detaches, regardless of streaming.
@@ -741,7 +752,7 @@ export default function ChatBody({
         setIsPinnedToBottom(true);
       }
     },
-    [distanceFromBottom, isPinnedToBottom, onScrolledPastTop, stopScrollAnim],
+    [distanceFromBottom, newestContentHidden, isPinnedToBottom, onScrolledPastTop, stopScrollAnim],
   );
 
   React.useEffect(() => {

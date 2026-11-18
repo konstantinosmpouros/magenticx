@@ -627,7 +627,23 @@ describe("workflow builder page", () => {
 
   it("on a phone, shows Settings once (under the canvas), not in the top bar too", async () => {
     const width = window.innerWidth;
+    const matchMedia = window.matchMedia;
     Object.defineProperty(window, "innerWidth", { configurable: true, value: 500 });
+    // `useIsMobile` reads the media query, so a phone needs it to match too.
+    window.matchMedia = ((query: string) => {
+      const max = /max-width:\s*(\d+)px/.exec(query);
+      if (!max) return matchMedia.call(window, query);
+      return {
+        matches: 500 <= Number(max[1]),
+        media: query,
+        onchange: null,
+        addListener: () => {},
+        removeListener: () => {},
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        dispatchEvent: () => false,
+      };
+    }) as typeof window.matchMedia;
     try {
       renderAt("/workflows/new");
       await canvas();
@@ -636,6 +652,7 @@ describe("workflow builder page", () => {
       expect(screen.getByRole("button", { name: "Add step" })).toBeInTheDocument();
     } finally {
       Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+      window.matchMedia = matchMedia;
     }
   });
 

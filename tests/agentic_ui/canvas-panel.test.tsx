@@ -4,13 +4,16 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The read-only canvas panel (plan 44, Phase 4.1), over a mocked bridge.
+ * The canvas panel (plan 44, Phases 4.1–4.2), over a mocked bridge.
  *
  * Pinned: a skeleton while the document loads; the document rendered from its
- * markdown with its title, the author and version in the byline and no
- * editing surface; the title's ▾ menu switching documents; an earlier version
- * read from the version menu with a way back; a 404 says the document is gone
- * and offers the file's normal preview; any other failure offers Retry.
+ * markdown with its title, the author and version in the byline; on a desktop
+ * it opens for editing (the mode menu says Editing, the surface is editable,
+ * the toolbar is there), on a phone for reading with the ✎ button that
+ * switches; the title's ▾ menu switching documents; an earlier version read
+ * from the version menu, read-only, with a way back; a 404 says the document
+ * is gone and offers the file's normal preview; any other failure offers
+ * Retry. Saving itself is pinned in `canvas-editing.test.tsx`.
  */
 
 const { api } = vi.hoisted(() => ({
@@ -19,6 +22,7 @@ const { api } = vi.hoisted(() => ({
     getLatestDocument: vi.fn(),
     listDocumentVersions: vi.fn(),
     getDocumentVersion: vi.fn(),
+    saveDocumentVersion: vi.fn(),
   },
 }));
 vi.mock("@/shared/lib/api", () => api);
@@ -26,6 +30,7 @@ vi.mock("@/shared/lib/api", () => api);
 import DocumentCanvas from "@/features/canvas/components/DocumentCanvas";
 import { ApiError } from "@/shared/lib/http";
 import type { CanvasDocumentVersion } from "@/shared/lib/types";
+import { TooltipProvider } from "@/shared/ui/tooltip";
 
 const PATH = "/conversation/output/brief.md";
 
@@ -46,18 +51,20 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
   const client = new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } });
   render(
     <QueryClientProvider client={client}>
-      <DocumentCanvas
-        userId="user-1"
-        conversationId="conv-1"
-        path={PATH}
-        revision="0"
-        compact={false}
-        canToggleFullscreen
-        fullscreen={false}
-        onPreviewFile={null}
-        {...handlers}
-        {...props}
-      />
+      <TooltipProvider>
+        <DocumentCanvas
+          userId="user-1"
+          conversationId="conv-1"
+          path={PATH}
+          revision="0"
+          compact={false}
+          canToggleFullscreen
+          fullscreen={false}
+          onPreviewFile={null}
+          {...handlers}
+          {...props}
+        />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
   return handlers;
@@ -79,7 +86,7 @@ beforeEach(() => {
 });
 
 describe("document canvas", () => {
-  it("shows a skeleton, then the document read-only with its byline", async () => {
+  it("shows a skeleton, then the document for editing with its byline", async () => {
     let resolve: (value: CanvasDocumentVersion) => void = () => {};
     api.getLatestDocument.mockReturnValue(new Promise((done) => (resolve = done)));
     renderCanvas();
@@ -92,11 +99,30 @@ describe("document canvas", () => {
     expect(screen.getByText("versions")).toBeInTheDocument();
     expect(screen.getByLabelText("Written by the agent")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Version 2, the latest/ })).toBeInTheDocument();
-    expect(screen.getByText("Viewing")).toBeInTheDocument();
-    // Read-only: the editable surface is not editable.
-    const surface = screen.getByLabelText("brief, read-only");
-    expect(surface).not.toHaveAttribute("contenteditable", "true");
+    // A desktop opens for editing: the mode menu, an editable surface, the toolbar.
+    expect(screen.getByRole("button", { name: "Mode: Editing. Change mode" })).toBeInTheDocument();
+    expect(screen.getByLabelText("brief, editing")).toHaveAttribute("contenteditable", "true");
+    expect(screen.getByRole("toolbar", { name: "Formatting" })).toBeInTheDocument();
+    expect(screen.getByText("Saved")).toBeInTheDocument();
     expect(screen.queryByLabelText("Loading the document")).not.toBeInTheDocument();
+  });
+
+  it("opens for reading on a phone, and the pencil switches to editing", async () => {
+    api.getLatestDocument.mockResolvedValue(version());
+    renderCanvas({ compact: true });
+    await screen.findByRole("heading", { level: 1, name: "The brief" });
+
+    expect(screen.getByLabelText("brief, read-only")).not.toHaveAttribute(
+      "contenteditable",
+      "true",
+    );
+    expect(screen.queryByRole("toolbar", { name: "Formatting" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Edit document" }));
+    expect(await screen.findByLabelText("brief, editing")).toHaveAttribute(
+      "contenteditable",
+      "true",
+    );
+    expect(screen.getByRole("toolbar", { name: "Formatting" })).toBeInTheDocument();
   });
 
   it("switches to another document of the conversation from the title menu", async () => {
@@ -153,6 +179,12 @@ describe("document canvas", () => {
       expect.anything(),
     );
     expect(screen.getByLabelText("Written by you")).toBeInTheDocument();
+    // An earlier version is read-only: no mode menu, no toolbar.
+    expect(screen.getByLabelText("brief, read-only")).not.toHaveAttribute(
+      "contenteditable",
+      "true",
+    );
+    expect(screen.queryByRole("toolbar", { name: "Formatting" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Show the latest" }));
     expect(await screen.findByRole("heading", { level: 1, name: "The brief" })).toBeInTheDocument();
   });

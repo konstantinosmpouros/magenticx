@@ -3,9 +3,11 @@
  * the loading skeleton (the shape of a title, a byline and paragraphs), a
  * failed load with Retry, and a document that is gone (404: deleted, or the
  * conversation is not the user's) with the file's own preview as the way on.
+ * Plus the two banners over a document: reading an earlier version, and a
+ * newer version that arrived while the user had unsaved edits.
  */
 import type { ReactNode } from "react";
-import { FileQuestion, RotateCw, TriangleAlert } from "lucide-react";
+import { FileQuestion, RotateCw, Sparkles, TriangleAlert } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -129,6 +131,37 @@ export function CanvasVersionBanner({
         className="h-8 shrink-0 px-2 text-[13px] text-foreground [@media(pointer:coarse)]:h-10"
       >
         Show the latest
+      </Button>
+    </div>
+  );
+}
+
+export function CanvasIncomingBanner({
+  version,
+  byAgent,
+  onReview,
+}: {
+  version: number;
+  /** Whether the agent wrote it (else another tab of yours). */
+  byAgent: boolean;
+  onReview: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-center gap-2 border-b border-primary/25 bg-primary/8 px-4 py-2 text-[13px] text-foreground"
+    >
+      <Sparkles className="size-4 shrink-0 text-primary" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">
+        {byAgent ? "The agent" : "You (in another tab)"} saved v{version}. Your edits are kept.
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onReview}
+        className="h-8 shrink-0 px-2 text-[13px] font-medium text-primary hover:text-primary [@media(pointer:coarse)]:h-10"
+      >
+        Review
       </Button>
     </div>
   );

@@ -56,7 +56,12 @@ function TodoMarker(props: PlateElementProps) {
   const readOnly = useReadOnly();
 
   return (
-    <span contentEditable={false} className="absolute -left-6 top-[0.55rem]">
+    // On a touch screen the box keeps its place but its hit area grows to
+    // 44px (a label around it), so a tap toggles it instead of moving the caret.
+    <label
+      contentEditable={false}
+      className="absolute -left-6 top-[0.55rem] flex [@media(pointer:coarse)]:-left-[2.375rem] [@media(pointer:coarse)]:top-[-0.325rem] [@media(pointer:coarse)]:size-11 [@media(pointer:coarse)]:items-center [@media(pointer:coarse)]:justify-center"
+    >
       <input
         type="checkbox"
         aria-label="Done"
@@ -66,6 +71,6 @@ function TodoMarker(props: PlateElementProps) {
         disabled={readOnly}
         className="size-4 cursor-pointer rounded border-border accent-primary disabled:cursor-default"
       />
-    </span>
+    </label>
   );
 }

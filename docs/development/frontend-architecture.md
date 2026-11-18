@@ -92,16 +92,38 @@ src/
                    #   features/attachments' panel + ImageLightbox; useDebouncedValue,
                    #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters); a generated
                    #   `.md` row opens in the canvas of its conversation (`/c/:id?doc=`)
-    canvas/        # the document canvas (plan 44, Phase 4.1 — read-only): CanvasDock (docks the
+    canvas/        # the document canvas (plan 44, Phases 4.1–4.2): CanvasDock (docks the
                    #   canvas beside the chat at ~55%, resizable; covers the chat full screen, on a
                    #   phone and below a 760px card), DocumentCanvas (the panel, lazy-loaded so
-                   #   Plate stays out of the main chunk), canvas_parts/* (CanvasHeader with the ▾
-                   #   document switcher, find and full screen; CanvasDocumentView, the Plate editor
-                   #   read-only; CanvasDocBar, CanvasOutline, CanvasFindBar, CanvasBlockFrame (heading
-                   #   folds), CanvasByline (date, author chip, version menu), CanvasStates (skeleton,
-                   #   error + Retry, 404 → the file's preview)), hooks (useCanvasDocument — the four
-                   #   documents reads through TanStack Query; useCanvasRoute — `?doc=<path>` in the
-                   #   URL), lib/ (markdown — the markdown ⇄ Plate value pipeline, no MDX; editorKit,
+                   #   Plate and the diff stay out of the main chunk; one session per document,
+                   #   keyed by path), canvas_parts/* (CanvasHeader with the ▾ document switcher,
+                   #   the save status, find, history and full screen; CanvasDocumentView, the Plate
+                   #   editor — editable at the latest version, read-only at an earlier one;
+                   #   CanvasDocBar with the Editing / Viewing menu; CanvasToolbar, the floating pill
+                   #   toolbar adapted from Plate's registry (keeps the selection on touch, rises
+                   #   above a phone's keyboard); CanvasTablePicker (the size grid); CanvasBlockMenu
+                   #   (the ⋮⋮ handle + block menu: Delete / Duplicate / Move / Turn into);
+                   #   CanvasTableElement (a table + its floating row / column / delete toolbar);
+                   #   CanvasSaveStatus; CanvasHistory (side
+                   #   panel, a sheet on a phone: read / compare / restore); CanvasCompareView (the
+                   #   word-level diff); CanvasConflictDialog (the 409); CanvasOutline, CanvasFindBar,
+                   #   CanvasBlockFrame (heading folds, the block handle, the selected-block tint),
+                   #   CanvasByline, CanvasStates (skeleton, error +
+                   #   Retry, 404 → the file's preview, the earlier-version and "agent saved vN"
+                   #   banners)), hooks (useCanvasDocument — the documents reads through TanStack
+                   #   Query; useCanvasEditing — the save controller of the open document, the
+                   #   editor's source text, the reload-or-banner rule for a newer version;
+                   #   useCanvasVersionText; useCanvasRoute — `?doc=<path>` in the URL;
+                   #   useKeyboardInset — the on-screen keyboard's overlap, from visualViewport), lib/
+                   #   (saveController — saved only on the user's Save, single flight, base version, 409 → conflict;
+                   #   markdown — the markdown ⇄ Plate value pipeline, no MDX, plus normalizeMarkdown;
+                   #   documentDiff — jsdiff lines refined to words; editorCommands — quote, link
+                   #   and the link URL rule; blockCommands — the target blocks (block selection or
+                   #   the text selection's), delete / duplicate / move / turn into, table insert
+                   #   and the table toolbar's actions; editorDelete — Backspace / Delete across
+                   #   tables, rules, images, code; pasteCleanup — Word / web HTML cleaned before
+                   #   Plate reads it; selectionMemory — the selection a toolbar tap remembers and
+                   #   puts back; shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
                    #   canvasView, outline, find, documentTitle, dates, bylineContext, canvasFile)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)

@@ -12,12 +12,15 @@ import type {
   CanvasDocumentSummary,
   CanvasDocumentVersion,
   CanvasDocumentVersionMeta,
+  CanvasSaveResult,
 } from "../types";
-import { requestJson } from "../http";
+import { ApiError, requestJson } from "../http";
 import {
   CanvasDocumentListSchema,
+  CanvasDocumentSavedSchema,
   CanvasDocumentVersionSchema,
   CanvasDocumentVersionsSchema,
+  CanvasStaleBaseSchema,
 } from "../schemas";
 import { CONVERSATIONS_BASE_PATH } from "./paths";
 
@@ -77,6 +80,43 @@ export async function listDocumentVersions(
     signal,
   });
   return data.versions;
+}
+
+/**
+ * Save the user's text as the document's next version (plan 44, Phase 4.2).
+ * `baseVersion` is the version the edit started from: when it is no longer
+ * the latest (the agent or another tab saved meanwhile), the bridge answers
+ * 409 with the latest version and its text, and this resolves to a
+ * `conflict` instead of throwing — never last-write-wins. The save is a
+ * state change, so it carries the CSRF token; every other failure (429, 422
+ * over the size cap, 5xx) throws an `ApiError`.
+ */
+export async function saveDocumentVersion(
+  userId: string,
+  conversationId: string,
+  save: { path: string; baseVersion: number; content: string },
+  signal?: AbortSignal,
+): Promise<CanvasSaveResult> {
+  try {
+    const data = await requestJson(documentsUrl(userId, conversationId, "/versions"), {
+      method: "POST",
+      csrf: true,
+      body: { path: save.path, base_version: save.baseVersion, content: save.content },
+      schema: CanvasDocumentSavedSchema,
+      fallbackMessage: "Failed to save the document",
+      errorMessages: { 429: "Saving too often. Wait a moment, then try again." },
+      signal,
+    });
+    // Re-parsed like the reads: a fail-open body without a version number
+    // must not become the base of the next save.
+    return { kind: "saved", ...CanvasDocumentSavedSchema.parse(data) };
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      const stale = CanvasStaleBaseSchema.safeParse(error.detailObject);
+      if (stale.success) return { kind: "conflict", ...stale.data };
+    }
+    throw error;
+  }
 }
 
 /** Version `version` of one document, with its markdown (re-parsed like the latest). */

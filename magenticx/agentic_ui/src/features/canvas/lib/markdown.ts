@@ -99,8 +99,34 @@ export function markdownToValue(markdown: string): Value {
   return editor.getApi(MarkdownPlugin).markdown.deserialize(markdown);
 }
 
-/** Serialize a Plate value back to markdown (comment and suggestion marks dropped to text). */
+/**
+ * Serialize a Plate value back to markdown (comment and suggestion marks
+ * dropped to text). Two of the serializer's spellings are noise in a
+ * document the agent reads back, so they go:
+ *
+ * - an empty table cell is written as a zero-width space, an invisible
+ *   character in every new table; an empty GFM cell needs nothing;
+ * - a space left at the end of a line (Enter after a space) is written as
+ *   `&#x20;` to keep it; a trailing space means nothing in markdown. Lines
+ *   inside a fenced code block are left exactly as they are.
+ */
 export function valueToMarkdown(value: Value): string {
   const editor = headlessEditor();
-  return editor.getApi(MarkdownPlugin).markdown.serialize({ value });
+  const text = editor.getApi(MarkdownPlugin).markdown.serialize({ value }).replace(/\u200B/g, "");
+  let fence: string | null = null;
+  return text
+    .split("\n")
+    .map((line) => {
+      const marker = /^\s*(`{3,}|~{3,})/.exec(line)?.[1];
+      if (marker && (fence === null || marker.startsWith(fence))) {
+        fence = fence === null ? marker : null;
+        return line;
+      }
+      return fence === null ? line.replace(/(?:&#x20;)+$/, "") : line;
+    })
+    .join("\n");
 }
+
+/** A document as the editor writes it back: the "unchanged" baseline of a save. */
+export const normalizeMarkdown = (markdown: string): string =>
+  valueToMarkdown(markdownToValue(markdown));

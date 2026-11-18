@@ -6,12 +6,15 @@
  *
  * Adapted from Plate's registry kits (`basic-blocks-kit`, `list-kit`,
  * `table-kit`, `link-kit`), without their AI, mention, emoji and date
- * coupling. Phase 4.1 renders documents read-only; the review plugins
- * (comments, suggestions) arrive with their phases (4.4, 4.6).
+ * coupling. Phase 4.2 edits with the same kit (the toolbar in
+ * `CanvasToolbar` drives these plugins), plus block selection
+ * (`block-selection-kit`: drag over the margin, Esc, Ctrl/Cmd+A, the ⋮⋮
+ * handle) and the canvas's Backspace / Delete rules (`editorDelete.ts`); the
+ * review plugins (comments, suggestions) arrive with their phases (4.4, 4.6).
  */
 import { createElement } from "react";
-import { KEYS } from "platejs";
-import { ParagraphPlugin, type RenderNodeWrapper } from "platejs/react";
+import { isHotkey, KEYS, type Value } from "platejs";
+import { createPlateEditor, ParagraphPlugin, type RenderNodeWrapper } from "platejs/react";
 import {
   BlockquotePlugin,
   BoldPlugin,
@@ -31,6 +34,7 @@ import { LinkPlugin } from "@platejs/link/react";
 import { isOrderedList } from "@platejs/list";
 import { ListPlugin } from "@platejs/list/react";
 import { ImagePlugin } from "@platejs/media/react";
+import { BlockSelectionPlugin } from "@platejs/selection/react";
 import {
   TableCellHeaderPlugin,
   TableCellPlugin,
@@ -52,13 +56,15 @@ import { CodeLeaf, LinkElement, SearchHighlightLeaf } from "@/shared/ui/plate/in
 import {
   TableCellElement,
   TableCellHeaderElement,
-  TableElement,
   TableRowElement,
 } from "@/shared/ui/plate/table-node";
 
 import { CanvasBlockFrame } from "../components/canvas_parts/CanvasBlockFrame";
+import { CanvasTableElement } from "../components/canvas_parts/CanvasTableElement";
 import { canvasViewPlugin } from "./canvasView";
+import { canvasDeletePlugin } from "./editorDelete";
 import { canvasMarkdownPlugin } from "./markdown";
+import { canvasPastePlugin } from "./pasteCleanup";
 
 export const findPlugin = FindReplacePlugin.configure({
   options: { search: "" },
@@ -75,7 +81,9 @@ const LIST_TARGETS = [...KEYS.heading, KEYS.p, KEYS.blockquote, KEYS.codeBlock];
 const canvasBlockFrame: RenderNodeWrapper = ({ path, element }) => {
   if (path.length !== 1) return;
   const index = path[0];
-  return ({ children }) => createElement(CanvasBlockFrame, { index, type: element.type, children });
+  const id = typeof element.id === "string" ? element.id : undefined;
+  return ({ children }) =>
+    createElement(CanvasBlockFrame, { index, id, type: element.type, children });
 };
 
 export const canvasEditorPlugins = [
@@ -88,8 +96,13 @@ export const canvasEditorPlugins = [
   HorizontalRulePlugin.withComponent(HrElement),
   BoldPlugin,
   ItalicPlugin,
-  StrikethroughPlugin,
-  CodePlugin.withComponent(CodeLeaf),
+  // Bold (mod+b) and italic (mod+i) bring their shortcuts; these two take
+  // the ones Plate's registry kit gives them.
+  StrikethroughPlugin.configure({ shortcuts: { toggle: { keys: "mod+shift+x" } } }),
+  CodePlugin.configure({
+    node: { component: CodeLeaf },
+    shortcuts: { toggle: { keys: "mod+e" } },
+  }),
   LinkPlugin.withComponent(LinkElement),
   CodeBlockPlugin.withComponent(CodeBlockElement),
   CodeLinePlugin.withComponent(CodeLineElement),
@@ -114,11 +127,46 @@ export const canvasEditorPlugins = [
     },
     render: { belowNodes: BlockList },
   }),
-  TablePlugin.withComponent(TableElement),
+  TablePlugin.withComponent(CanvasTableElement),
   TableRowPlugin.withComponent(TableRowElement),
   TableCellPlugin.withComponent(TableCellElement),
   TableCellHeaderPlugin.withComponent(TableCellHeaderElement),
+  // Block selection works on top-level blocks only: a markdown document's
+  // nested blocks (cell paragraphs, code lines, quoted paragraphs) move with
+  // their parent. Dragging a selection starts in the margin beside the text;
+  // on a touch screen that drag would fight scrolling, so touch is off there
+  // (the toolbar's Block button is the phone's way in).
+  BlockSelectionPlugin.configure({
+    options: {
+      isSelectable: (_element, path) => path.length === 1,
+      areaOptions: { features: { singleTap: { allow: false }, touch: false } },
+      // With blocks selected the keys go to the plugin's hidden input, which
+      // runs undo / redo itself; the browser's own undo would then reach the
+      // editor as well and undo a second step. Ctrl+Y (Windows redo) is
+      // not handled by the plugin, so it is here.
+      onKeyDownSelecting: (editor, event) => {
+        if (isHotkey(["mod+z", "mod+shift+z"])(event)) event.preventDefault();
+        if (isHotkey("mod+y")(event)) {
+          event.preventDefault();
+          editor.redo();
+        }
+      },
+    },
+  }),
   findPlugin,
   canvasMarkdownPlugin,
   canvasViewPlugin.configure({ render: { aboveNodes: canvasBlockFrame } }),
+  canvasPastePlugin,
+  // Last, so its Backspace / Delete rules run before the table and list ones.
+  canvasDeletePlugin,
 ];
+
+/** Node ids on every block: block selection finds blocks by id (they never reach the markdown). */
+export const CANVAS_NODE_ID = true;
+
+/**
+ * A canvas editor outside React (the same plugins the view mounts): what the
+ * tests drive, so a command is pinned on the editor the user types into.
+ */
+export const createCanvasEditor = (value: Value) =>
+  createPlateEditor({ plugins: canvasEditorPlugins, value, nodeId: CANVAS_NODE_ID });

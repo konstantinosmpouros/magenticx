@@ -190,6 +190,7 @@ export {
   getLatestDocument,
   listDocumentVersions,
   getDocumentVersion,
+  saveDocumentVersion,
 } from "./documents";
 
 export { faviconUrl } from "./favicons";

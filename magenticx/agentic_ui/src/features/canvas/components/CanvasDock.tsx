@@ -10,13 +10,14 @@
  * lazy-loaded (`DocumentCanvas`) behind an error boundary, so a crash in the
  * editor never takes the chat down with it.
  */
-import { lazy, Suspense, useState, type ReactNode } from "react";
+import { lazy, Suspense, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { useIsMobile } from "@/shared/hooks/use-mobile";
 import { useResizablePanel } from "@/shared/hooks/useResizablePanel";
 import { cn } from "@/shared/lib/utils";
 import { SectionBoundary } from "@/shared/ui/SectionBoundary";
 
+import { useChatHeaderHeight } from "../hooks/useChatHeaderHeight";
 import { CanvasSkeleton } from "./canvas_parts/CanvasStates";
 import type { DocumentCanvasProps } from "./DocumentCanvas";
 
@@ -56,6 +57,11 @@ export function CanvasDock({
   const panel = useResizablePanel(CANVAS_PANEL);
   const [fullscreen, setFullscreen] = useState(false);
   const covers = isPhone || panel.layout === "drawer";
+  const docked = Boolean(document) && !covers && !fullscreen;
+  const chatRef = useRef<HTMLDivElement>(null);
+  // Docked beside the chat, the canvas header takes the chat header's height,
+  // so the two bottom lines meet across the split.
+  const chatHeaderHeight = useChatHeaderHeight(chatRef, docked);
 
   const close = () => {
     setFullscreen(false);
@@ -66,7 +72,9 @@ export function CanvasDock({
     <div ref={panel.areaRef} className="relative flex min-h-0 flex-1">
       {/* `isolate`: the chat's own layers (its sticky composer, z-40) stay
           inside it, so a canvas covering the chat paints over all of them. */}
-      <div className="relative isolate flex min-w-0 flex-1 flex-col">{children}</div>
+      <div ref={chatRef} className="relative isolate flex min-w-0 flex-1 flex-col">
+        {children}
+      </div>
 
       {document ? (
         <div
@@ -76,7 +84,14 @@ export function CanvasDock({
               ? "absolute inset-0 z-30"
               : "relative shrink-0 border-l border-border/70 slide-in-from-right-4",
           )}
-          style={covers || fullscreen ? undefined : { width: panel.width }}
+          style={
+            covers || fullscreen
+              ? undefined
+              : ({
+                  width: panel.width,
+                  ...(chatHeaderHeight ? { "--canvas-header-h": `${chatHeaderHeight}px` } : null),
+                } as CSSProperties)
+          }
         >
           {covers || fullscreen ? null : (
             <div
