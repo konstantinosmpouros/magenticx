@@ -42,6 +42,7 @@ async def _file(
     origin: str = "upload",
     presented: bool = False,
     title: str | None = None,
+    source_path: str | None = None,
     with_blob: bool = True,
 ) -> dict[str, str]:
     """One message carrying one attachment, created ``minutes`` after BASE."""
@@ -61,6 +62,7 @@ async def _file(
             origin=origin,
             presented=presented,
             title=title,
+            source_path=source_path,
             blob=BlobTable(data=name.encode()) if with_blob else None,
             created_at=BASE + timedelta(minutes=minutes),
         )
@@ -80,7 +82,8 @@ async def _seed_three_conversations(session_factory, user, agent):
     c = await _conversation(session_factory, user.id, agent, title="Notes", is_archived=True)
     await _file(session_factory, a, name="figures.xlsx", mime="application/octet-stream", minutes=1)
     await _file(session_factory, a, name="report.pdf", mime="application/pdf", minutes=2,
-                origin="generated", presented=True, title="Q3 report")
+                origin="generated", presented=True, title="Q3 report",
+                source_path="/conversation/output/reports/report.pdf")
     await _file(session_factory, b, name="Deck.PPTX", mime="application/vnd.ms-powerpoint", minutes=3)
     await _file(session_factory, b, name="brief.docx",
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -111,7 +114,9 @@ async def test_lists_all_files_across_conversations_newest_first(client, session
     assert report["conversationId"] == a
     assert report["conversationTitle"] == "Budget"
     assert report["blobId"] and report["messageId"] and report["attachmentId"]
+    assert report["sourcePath"] == "/conversation/output/reports/report.pdf"
     assert by_name["figures.xlsx"]["kind"] == "input"
+    assert by_name["figures.xlsx"]["sourcePath"] is None  # uploads have no virtual path
     assert by_name["photo.png"]["conversationId"] == c  # archived chats still count
     # Metadata only: no content is ever serialised.
     for item in payload["items"]:

@@ -622,6 +622,10 @@ class AttachmentTable(Base):
     # the owner: share links and the PDF export carry uploads and presented
     # files only. Every generated row before migration 0039 was presented.
     presented = Column(Boolean, nullable=False, server_default="false")
+    # The virtual path a generated file was presented from (migration 0049,
+    # plan 44): the key of its canvas document's versions in the agents
+    # service. NULL for uploads and for rows captured before the column.
+    source_path = Column(String(1024), nullable=True)
 
     # Blob file
     blob_id = Column(String, ForeignKey("blobs.id", ondelete="CASCADE"), nullable=True, index=True)

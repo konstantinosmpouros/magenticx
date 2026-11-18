@@ -185,4 +185,11 @@ export {
 
 export { getConversationSources } from "./citations";
 
+export {
+  listConversationDocuments,
+  getLatestDocument,
+  listDocumentVersions,
+  getDocumentVersion,
+} from "./documents";
+
 export { faviconUrl } from "./favicons";

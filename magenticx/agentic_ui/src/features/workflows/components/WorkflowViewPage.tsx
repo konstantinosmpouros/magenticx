@@ -29,7 +29,7 @@ import { RunFeed } from "./workflow_view_parts/RunFeed";
 import { RunInputDialog } from "./workflow_view_parts/RunInputDialog";
 import { RunPanel } from "./workflow_view_parts/RunPanel";
 import { RunPicker } from "./workflow_view_parts/RunPicker";
-import { SectionBoundary } from "./workflow_view_parts/SectionBoundary";
+import { SectionBoundary } from "@/shared/ui/SectionBoundary";
 import { StatusIcon } from "./workflow_view_parts/StatusChip";
 import {
   NoRunsState,

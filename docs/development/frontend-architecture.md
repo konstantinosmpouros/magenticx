@@ -57,7 +57,9 @@ src/
       lib/         #   pure helpers, e.g. taskTreeAdapter (task tree → sub-agent cards),
                    #   sources (the citation source registry: durable + events + live,
                    #   plan 42), citationText (markers → [1] + "Sources:" for Copy),
-                   #   answerSources (an answer's sources: pointed-at first, then More)
+                   #   answerSources (an answer's sources: pointed-at first, then More),
+                   #   canvasOpener (the context ChatView provides so ArtifactCard can open a
+                   #   presented `.md` in the canvas; absent on a share, so no button there)
       hooks/       #   useChatEffects, useActiveRunBranchSnap, useConversationRail,
                    #   useKeyboardShortcuts, useTaskClock, useConversationSources,
                    #   useAnswerSources
@@ -88,23 +90,41 @@ src/
                    #   ArtifactsToolbar, ArtifactsStates), hooks (useUserFiles — keyset pages of
                    #   GET /v1/attachments/files; useArtifactActions — preview/download through
                    #   features/attachments' panel + ImageLightbox; useDebouncedValue,
-                   #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters)
+                   #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters); a generated
+                   #   `.md` row opens in the canvas of its conversation (`/c/:id?doc=`)
+    canvas/        # the document canvas (plan 44, Phase 4.1 — read-only): CanvasDock (docks the
+                   #   canvas beside the chat at ~55%, resizable; covers the chat full screen, on a
+                   #   phone and below a 760px card), DocumentCanvas (the panel, lazy-loaded so
+                   #   Plate stays out of the main chunk), canvas_parts/* (CanvasHeader with the ▾
+                   #   document switcher, find and full screen; CanvasDocumentView, the Plate editor
+                   #   read-only; CanvasDocBar, CanvasOutline, CanvasFindBar, CanvasBlockFrame (heading
+                   #   folds), CanvasByline (date, author chip, version menu), CanvasStates (skeleton,
+                   #   error + Retry, 404 → the file's preview)), hooks (useCanvasDocument — the four
+                   #   documents reads through TanStack Query; useCanvasRoute — `?doc=<path>` in the
+                   #   URL), lib/ (markdown — the markdown ⇄ Plate value pipeline, no MDX; editorKit,
+                   #   canvasView, outline, find, documentTitle, dates, bylineContext, canvasFile)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)
 
   shared/                    # cross-cutting, feature-agnostic (imports NOTHING from features)
     ui/                      # design system — shadcn base + ai-elements + react_bits + shadcn-io
                              #   (ai-elements/inline-citation: the citation pill + card, plan 42;
-                             #   site-icon: a source's favicon from our own origin)
+                             #   site-icon: a source's favicon from our own origin;
+                             #   plate/: the canvas editor's node components, from Plate's
+                             #   shadcn registry; SectionBoundary: a section's error boundary)
     lib/                     # api, http, schemas, types, consts, utils + persistence
                              #   (authStorage, uiStateStorage, cookieConsentStorage), shortcuts,
                              #   schedule + workflowSchedule (schedule wording / preview shared
                              #   by Automations → Schedules and the workflow builder),
                              #   citations + remarkCitations + citations-context (inline
                              #   citation markers, the remark plugin, the sources context),
-                             #   siteIcons (favicon host + failed-host memo)
+                             #   siteIcons (favicon host + failed-host memo), canvasDocuments
+                             #   (which files are canvas documents: `sourcePath ?? "/conversation/
+                             #   output/" + name`, `.md` only; the `?doc=` URL)
     stores/                  # workspaceStore (Zustand)
-    hooks/                   # use-mobile, use-toast (framework-generic), useSessionUserId
+    hooks/                   # use-mobile, use-toast (framework-generic), useSessionUserId,
+                             #   useResizablePanel (a dockable right-hand panel's width: the agent
+                             #   builder's inspector and the document canvas)
 
 ```
 

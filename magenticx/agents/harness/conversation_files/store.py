@@ -1,6 +1,7 @@
 """A conversation's files as rows in ``agent_runtime`` (plan 36).
 
-Two tables, so that a byte is stored once however many paths name it:
+Two tables, so that a byte is stored once however many paths name it, plus the
+canvas documents' history (plan 44) that names the same blobs:
 
 * ``conversation_file_blobs`` — ``(user_id, sha256)`` → the bytes, encrypted
   with the checkpointer's key (:mod:`.cipher`). Content-addressed per user, so
@@ -9,8 +10,14 @@ Two tables, so that a byte is stored once however many paths name it:
   given file, and would tie one account's deletion to another's data.
 * ``conversation_files`` — ``(conversation_id, path)`` → a blob. Small rows;
   listing, globbing and forking never touch a byte of content.
+* ``conversation_file_versions`` — the append-only versions of a canvas
+  document (a presented ``.md`` under ``/conversation/output/``), each naming
+  a blob. The logic lives in :mod:`.versions`; the DDL is here because a
+  blob's lifetime is decided here: a version keeps its blob alive exactly like
+  a file does, and a fork, a reap and a purge treat versions as rows of the
+  conversation, in the same transaction as its files.
 
-A blob lives while any row names it. The foreign key from rows to blobs is the
+A blob lives while any row (a file or a version) names it. The foreign key from rows to blobs is the
 guard: a blob still referenced cannot be deleted, so garbage collection can be
 optimistic — delete what *looks* unreferenced, and let the constraint refuse
 the one a concurrent write just picked up (:meth:`_collect_garbage`).
@@ -74,6 +81,32 @@ _DDL = (
     # Serves the account purge, the blob GC's "still referenced?" probe and
     # the foreign key's own check when a blob is deleted.
     "CREATE INDEX IF NOT EXISTS conversation_files_blob_idx ON conversation_files (user_id, sha256)",
+    # A canvas document's versions (plan 44 §4). Append-only: a row is never
+    # updated, and only a reap or a purge deletes one.
+    """
+    CREATE TABLE IF NOT EXISTS conversation_file_versions (
+        id              bigserial PRIMARY KEY,
+        user_id         text NOT NULL,
+        conversation_id text NOT NULL,
+        path            text COLLATE "C" NOT NULL,
+        version         integer NOT NULL,
+        sha256          text NOT NULL,
+        size_bytes      bigint NOT NULL,
+        author          text NOT NULL,
+        base_version    integer,
+        source_run_id   text,
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT conversation_file_versions_unique UNIQUE (conversation_id, path, version),
+        CONSTRAINT conversation_file_versions_blob_fk FOREIGN KEY (user_id, sha256)
+            REFERENCES conversation_file_blobs (user_id, sha256),
+        CONSTRAINT conversation_file_versions_author_ck CHECK (author IN ('agent', 'user')),
+        CONSTRAINT conversation_file_versions_version_ck CHECK (version >= 1),
+        CONSTRAINT conversation_file_versions_path_ck CHECK (path ~ '^/conversation/output/.+[.]md$')
+    )
+    """,
+    # The GC probe, the purge and the foreign key's check, as for the files.
+    "CREATE INDEX IF NOT EXISTS conversation_file_versions_blob_idx "
+    "ON conversation_file_versions (user_id, sha256)",
 )
 
 _COMMENTS = (
@@ -83,6 +116,10 @@ _COMMENTS = (
     "'The agent that last wrote the file. Provenance only; files belong to the conversation.'",
     "COMMENT ON COLUMN conversation_file_blobs.cipher IS "
     "'none, or the LangGraph cipher name (aes) that encrypted data with LANGGRAPH_AES_KEY.'",
+    "COMMENT ON TABLE conversation_file_versions IS "
+    "'Append-only versions of a canvas document (plan 44). Bytes live in conversation_file_blobs.'",
+    "COMMENT ON COLUMN conversation_file_versions.base_version IS "
+    "'The version a save was based on (a user save must name the latest); NULL for a first version.'",
 )
 
 _ENTRY_COLUMNS = "path, size_bytes, sha256, agent_slug, updated_at"
@@ -272,10 +309,13 @@ class ConversationFileStore:
         """Give ``target_id`` every file ``source_id`` has — rows only, no bytes.
 
         The new rows name the same blobs, so a fork costs a few hundred bytes
-        per file however large the files are. Paths the target already has are
-        kept, so a retried copy changes nothing.
+        per file however large the files are. A canvas document's versions
+        come too, so the fork keeps the history and its authors. Paths (and
+        versions) the target already has are kept, so a retried copy changes
+        nothing. Returns the number of files copied.
         """
-        async with self._pool.connection() as conn:
+        params = {"user_id": user_id, "source": source_id, "target": target_id}
+        async with self._pool.connection() as conn, conn.transaction():
             cur = await conn.execute(
                 "INSERT INTO conversation_files "
                 "(conversation_id, path, user_id, sha256, size_bytes, agent_slug, source_run_id, "
@@ -284,32 +324,59 @@ class ConversationFileStore:
                 "created_at, updated_at FROM conversation_files "
                 "WHERE conversation_id = %(source)s AND user_id = %(user_id)s "
                 "ON CONFLICT (conversation_id, path) DO NOTHING",
-                {"user_id": user_id, "source": source_id, "target": target_id},
+                params,
             )
             copied = cur.rowcount or 0
-        logger.info("conversation_files_copied", "Copied a conversation's files to its fork", files=copied)
+            versions = await conn.execute(
+                "INSERT INTO conversation_file_versions "
+                "(user_id, conversation_id, path, version, sha256, size_bytes, author, base_version, "
+                "source_run_id, created_at) "
+                "SELECT user_id, %(target)s, path, version, sha256, size_bytes, author, base_version, "
+                "source_run_id, created_at FROM conversation_file_versions "
+                "WHERE conversation_id = %(source)s AND user_id = %(user_id)s "
+                "ON CONFLICT (conversation_id, path, version) DO NOTHING",
+                params,
+            )
+            copied_versions = versions.rowcount or 0
+        logger.info("conversation_files_copied", "Copied a conversation's files to its fork",
+                    files=copied, versions=copied_versions)
         return copied
 
     async def delete_conversation(self, user_id: str, conversation_id: str) -> tuple[int, int]:
-        """Delete every file of one conversation. Returns ``(files, bytes)``."""
+        """Delete every file and document version of one conversation.
+
+        Returns ``(files, bytes)`` for the files. The versions go in the same
+        transaction, and the blobs either named go with them.
+        """
         async with self._pool.connection() as conn, conn.transaction():
             cur = await conn.execute(
                 f"DELETE FROM conversation_files WHERE {_SCOPE} RETURNING sha256, size_bytes",
                 _scope(user_id, conversation_id),
             )
             rows = await cur.fetchall()
-            await self._collect_garbage(conn, user_id, sorted({row["sha256"] for row in rows}))
+            versions = await conn.execute(
+                f"DELETE FROM conversation_file_versions WHERE {_SCOPE} RETURNING sha256",
+                _scope(user_id, conversation_id),
+            )
+            version_rows = await versions.fetchall()
+            named = {row["sha256"] for row in rows} | {row["sha256"] for row in version_rows}
+            await self._collect_garbage(conn, user_id, sorted(named))
         removed = sum(int(row["size_bytes"]) for row in rows)
         logger.info("conversation_files_reaped", "Deleted a conversation's files",
-                    files=len(rows), bytes=removed)
+                    files=len(rows), versions=len(version_rows), bytes=removed)
         return len(rows), removed
 
     async def purge_user(self, user_id: str) -> dict[str, int]:
-        """Account deletion: every file and blob the user has, in one transaction."""
+        """Account deletion: every file, version and blob the user has, in one transaction."""
         async with self._pool.connection() as conn, conn.transaction():
             files = await conn.execute("DELETE FROM conversation_files WHERE user_id = %s", (user_id,))
+            versions = await conn.execute("DELETE FROM conversation_file_versions WHERE user_id = %s", (user_id,))
             blobs = await conn.execute("DELETE FROM conversation_file_blobs WHERE user_id = %s", (user_id,))
-        counts = {"conversation_files": files.rowcount or 0, "conversation_file_blobs": blobs.rowcount or 0}
+        counts = {
+            "conversation_files": files.rowcount or 0,
+            "conversation_file_versions": versions.rowcount or 0,
+            "conversation_file_blobs": blobs.rowcount or 0,
+        }
         logger.info("conversation_files_purged", "Deleted a user's conversation files", **counts)
         return counts
 
@@ -358,7 +425,7 @@ class ConversationFileStore:
         return sha256
 
     async def _collect_garbage(self, conn: Any, user_id: str, sha256s: list[str]) -> None:
-        """Delete the blobs among ``sha256s`` that no file names any more.
+        """Delete the blobs among ``sha256s`` that no file and no version names any more.
 
         Runs in a savepoint inside the caller's transaction, so it sees the
         caller's own deletes. When a concurrent write picks a blob up between
@@ -374,7 +441,10 @@ class ConversationFileStore:
                     await conn.execute(
                         "DELETE FROM conversation_file_blobs b "
                         "WHERE b.user_id = %s AND b.sha256 = ANY(%s) AND NOT EXISTS ("
-                        "SELECT 1 FROM conversation_files f WHERE f.user_id = b.user_id AND f.sha256 = b.sha256)",
+                        "SELECT 1 FROM conversation_files f WHERE f.user_id = b.user_id AND f.sha256 = b.sha256"
+                        ") AND NOT EXISTS ("
+                        "SELECT 1 FROM conversation_file_versions v "
+                        "WHERE v.user_id = b.user_id AND v.sha256 = b.sha256)",
                         (user_id, sha256s),
                     )
                 return

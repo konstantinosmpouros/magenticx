@@ -172,7 +172,7 @@ Every file of the user's across conversations, **metadata only** (never a byte o
 | `q` | case-insensitive filename substring (≤ 200 chars; `%` / `_` are literal) |
 | `cursor` / `limit` | opaque keyset cursor on (`created_at`, `id`), newest first; `limit` 1–100, default 30. A malformed cursor is a `400` |
 
-Response `UserFilesPage{items, nextCursor}`; each `UserFileOut` carries `attachmentId`, `blobId`, `fileName`, `mime`, `size`, `kind`, `type`, `conversationId`, `conversationTitle`, `messageId`, `createdAt`, `presented`, `title`, `summary`.
+Response `UserFilesPage{items, nextCursor}`; each `UserFileOut` carries `attachmentId`, `blobId`, `fileName`, `mime`, `size`, `kind`, `type`, `conversationId`, `conversationTitle`, `messageId`, `createdAt`, `presented`, `title`, `summary`, `sourcePath` (the presented virtual path, which canvas document a `.md` output opens; null for uploads and older rows).
 
 Left out on purpose: other users' files, **private (incognito) chats and "Try it" trials** (every list in the app hides them), and rows without a blob. Deleted conversations and messages drop out by themselves — deletes are hard, and attachments cascade. Archived chats are included. Auth: `validate_userId`, then `files_list_rate_limit` (120/60 per user). The query walks `conversations.user_id` → `messages.conversation_id` → `attachments.message_id`, all indexed; no new index or migration.
 
@@ -339,6 +339,7 @@ sequenceDiagram
 | **A snapshot.** The attachment keeps the version presented, even if the agent edits the file later | Cards, share links, forks and the PDF export show what the user was shown |
 | **Bounded.** `/conversation/output/` only, ≤ `OUTPUT_MAX_FILE_BYTES` (25 MB) each, fetched `OUTPUT_CAPTURE_BATCH_FILES` (20) at a time | An upload or offload can never become a deliverable; the snapshot is a downloadable attachment |
 | **Fail-open** | The answer is already persisted: an unreachable agents service or bad base64 is logged and skipped |
+| **`source_path`** records the presented virtual path (migration `0049`); a presented `.md` is also captured as a canvas document version (`POST …/documents/capture`, fail-open) | The canvas opens the right document's versions, subfolders included — see [canvas](canvas.md) |
 | **`presented = false` rows** (stored by the capture of every written file before plan 36) are kept and stay the owner's: shares and the PDF export carry uploads and presented files only (`is_shareable`) | |
 
 ### Forks and deletion

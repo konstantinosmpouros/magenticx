@@ -14,7 +14,7 @@ import { ICON_BUTTON, VIEW_MOTION } from "@/features/workflows/lib/consts";
 import { ExecutionDetails } from "./ExecutionDetails";
 import { ExecutionTimeline } from "./ExecutionTimeline";
 import { RunResult } from "./RunResult";
-import { SectionBoundary } from "./SectionBoundary";
+import { SectionBoundary } from "@/shared/ui/SectionBoundary";
 
 type RunPanelProps = {
   run: WorkflowRun;

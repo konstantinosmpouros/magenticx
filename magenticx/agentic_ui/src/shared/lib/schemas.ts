@@ -680,6 +680,9 @@ const toUserFile = (raw: Record<string, unknown>) => ({
   presented: raw.presented === true,
   title: toFileText(raw.title),
   summary: toFileText(raw.summary),
+  // The presented virtual path of a generated file (plan 44, Phase 4.1): which
+  // canvas document an output row opens. Null for uploads and older rows.
+  sourcePath: toFileText(raw.sourcePath ?? raw.source_path),
 });
 
 export const UserFilesPageSchema = z.record(z.unknown()).transform((raw) => ({
@@ -691,6 +694,101 @@ export const UserFilesPageSchema = z.record(z.unknown()).transform((raw) => ({
 }));
 export type UserFilesPage = z.infer<typeof UserFilesPageSchema>;
 export type UserFile = UserFilesPage["items"][number];
+
+// ---------------------------------------------------------------------------
+// Canvas documents (plan 44, Phase 4.1): a presented `.md` file under
+// `/conversation/output/` with versions, each written by the agent or the user.
+// The bridge answers snake_case (its pass-through of the agents service); the
+// camelCase spelling is read too, so an aliasing bridge model changes nothing.
+// Field-whitelisted like every transform here. A version without its markdown
+// or its number is a contract break: it fails loudly in development (and in
+// CI) rather than opening an empty document.
+// ---------------------------------------------------------------------------
+export const CANVAS_DOCUMENT_AUTHORS = ["agent", "user"] as const;
+export type CanvasDocumentAuthor = (typeof CANVAS_DOCUMENT_AUTHORS)[number];
+
+/** A wire field under its snake_case name, or its camelCase alias. */
+const wireField = (raw: Record<string, unknown>, snake: string, camel: string): unknown =>
+  raw[snake] ?? raw[camel];
+
+const toCanvasAuthor = (value: unknown): CanvasDocumentAuthor =>
+  value === "user" ? "user" : "agent";
+
+const toCanvasCount = (value: unknown): number =>
+  typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+
+const toCanvasVersionNo = (value: unknown): number | null =>
+  typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+
+/** The file name of a virtual path (`/conversation/output/a/brief.md` → `brief.md`). */
+const canvasName = (raw: Record<string, unknown>, path: string): string =>
+  toFileText(raw.name) ?? path.slice(path.lastIndexOf("/") + 1);
+
+const toCanvasDocumentSummary = (raw: Record<string, unknown>) => {
+  const path = toFileText(raw.path) ?? "";
+  return {
+    path,
+    name: canvasName(raw, path),
+    version: toCanvasVersionNo(raw.version) ?? 0,
+    author: toCanvasAuthor(raw.author),
+    updatedAt: toFileText(wireField(raw, "updated_at", "updatedAt")) ?? "",
+    sizeBytes: toCanvasCount(wireField(raw, "size_bytes", "sizeBytes")),
+  };
+};
+
+/** `{"documents": [...]}`: the conversation's canvas documents, latest version each, newest first. */
+export const CanvasDocumentListSchema = z.record(z.unknown()).transform((raw) =>
+  (Array.isArray(raw.documents) ? raw.documents : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map(toCanvasDocumentSummary)
+    .filter((doc) => doc.path && doc.version > 0),
+);
+export type CanvasDocumentSummary = z.output<typeof CanvasDocumentListSchema>[number];
+
+const toCanvasVersionMeta = (raw: Record<string, unknown>) => ({
+  version: toCanvasVersionNo(raw.version) ?? 0,
+  author: toCanvasAuthor(raw.author),
+  baseVersion: toCanvasVersionNo(wireField(raw, "base_version", "baseVersion")),
+  createdAt: toFileText(wireField(raw, "created_at", "createdAt")) ?? "",
+  sizeBytes: toCanvasCount(wireField(raw, "size_bytes", "sizeBytes")),
+});
+
+/** `{"path", "versions": [...]}`: every version of one document, newest first. */
+export const CanvasDocumentVersionsSchema = z.record(z.unknown()).transform((raw) => ({
+  path: toFileText(raw.path) ?? "",
+  versions: (Array.isArray(raw.versions) ? raw.versions : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map(toCanvasVersionMeta)
+    .filter((meta) => meta.version > 0),
+}));
+export type CanvasDocumentVersionMeta = z.output<
+  typeof CanvasDocumentVersionsSchema
+>["versions"][number];
+
+/** One version with its markdown: the latest (`/documents/latest`) or version n. */
+export const CanvasDocumentVersionSchema = z
+  .record(z.unknown())
+  .superRefine((raw, ctx) => {
+    if (typeof raw.content !== "string") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "content must be a string" });
+    }
+    if (toCanvasVersionNo(raw.version) === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["version"], message: "version must be a positive integer" });
+    }
+    if (!toFileText(raw.path)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["path"], message: "path is required" });
+    }
+  })
+  .transform((raw) => {
+    const path = toFileText(raw.path) ?? "";
+    return {
+      path,
+      name: canvasName(raw, path),
+      ...toCanvasVersionMeta(raw),
+      content: typeof raw.content === "string" ? raw.content : "",
+    };
+  });
+export type CanvasDocumentVersion = z.output<typeof CanvasDocumentVersionSchema>;
 
 // ---------------------------------------------------------------------------
 // Realtime voice session (WebRTC SDP answer)

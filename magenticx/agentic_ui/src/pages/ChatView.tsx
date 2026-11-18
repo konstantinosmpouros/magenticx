@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import type { Variants } from "framer-motion";
 import { Textarea } from "@/shared/ui/textarea";
@@ -17,6 +18,10 @@ import { EffortPicker } from "@/features/chat/components/EffortPicker";
 import { createCommandActions } from "@/features/chat/handlers/commandActions";
 import { useSlashCommands } from "@/features/chat/hooks/useSlashCommands";
 import { Loader } from "@/shared/ui/shadcn-io/loader";
+import { CanvasDock } from "@/features/canvas/components/CanvasDock";
+import { useCanvasRoute } from "@/features/canvas/hooks/useCanvasRoute";
+import { findCanvasFile } from "@/features/canvas/lib/canvasFile";
+import { CanvasOpenerContext } from "@/features/chat/lib/canvasOpener";
 
 import { AGENTS_PATH, agentPath } from "@/features/agents/lib/routes";
 import { useChatWorkspaceContext } from "@/app/workspaceContext";
@@ -48,7 +53,8 @@ const BODY_MODES = ["chat", "voice"] as const;
 
 /**
  * The conversation surface for routes "/" and "/c/:conversationId": header,
- * the voice/chat body transition shell, the composer, and the load overlay.
+ * the voice/chat body transition shell, the composer, and the load overlay —
+ * and, when `?doc=` names one, the document canvas docked beside them (plan 44).
  * Pure presentation — all state/handlers come from the workspace context built
  * by ChatShell. Rendered via <Outlet/> (or directly as ChatShell children for
  * the shared-conversation path).
@@ -102,6 +108,7 @@ export default function ChatView() {
     openProfilePanel,
     handleRenameConversation,
     exportConversationPdf,
+    attachmentPreview,
   } = useChatWorkspaceContext();
 
   // Read straight from the store rather than through the workspace bundle.
@@ -149,6 +156,25 @@ export default function ChatView() {
       toast,
     ],
   );
+  // The document canvas (plan 44, Phase 4.1): open when the URL names a
+  // document of the conversation in the route. The route's id, not the loaded
+  // conversation's: a reload opens the document while the chat still loads.
+  const { conversationId: routeConversationId } = useParams();
+  const canvas = useCanvasRoute();
+  // The documents routes are per user, like the conversation's other reads.
+  const canvasConversationId = (userId && routeConversationId) || null;
+  const canvasPath = canvasConversationId ? canvas.path : null;
+  const conversationMessages = useMemo(
+    () =>
+      currentConversation?.id === canvasConversationId ? (currentConversation?.messages ?? []) : [],
+    [currentConversation?.id, currentConversation?.messages, canvasConversationId],
+  );
+  const canvasFile = useMemo(
+    () => (canvasPath ? findCanvasFile(conversationMessages, canvasPath) : null),
+    [conversationMessages, canvasPath],
+  );
+  const { openFilePreview } = attachmentPreview;
+
   const slash = useSlashCommands({
     userId,
     agentId: selectedAgent || currentConversation?.agent?.id || null,
@@ -161,214 +187,236 @@ export default function ChatView() {
   });
 
   return (
-    <>
-      {/* Header */}
-      <ChatHeader
-        agents={agents}
-        inactiveAgent={inactiveAgentFallback}
-        selectedAgent={selectedAgent}
-        onAgentChange={handleAgentChange}
-        agentTriggerRef={agentTriggerRef}
-        agentPickerOpen={overlayMenus.isAgentPickerOpen}
-        onAgentPickerOpenChange={overlayMenus.setIsAgentPickerOpen}
-        // Private mode is chosen before the first message; a stored private
-        // chat offers "Save chat" instead (one-way: it becomes a normal chat).
-        showPrivateToggle={(currentConversation?.messages?.length ?? 0) === 0}
-        isPrivateMode={isPrivateMode}
-        onTogglePrivate={handleTogglePrivateMode}
-        onSaveConversation={
-          currentConversation?.id && currentConversation.isPrivate
-            ? handleSaveCurrentConversation
-            : undefined
+    <CanvasOpenerContext.Provider value={canvasConversationId ? canvas.open : null}>
+      <CanvasDock
+        document={
+          userId && canvasConversationId && canvasPath
+            ? {
+                userId,
+                conversationId: canvasConversationId,
+                path: canvasPath,
+                // A run that ends may have written a new version: re-read then.
+                revision: `${conversationMessages.length}:${isCurrentConversationBusy ? 1 : 0}`,
+                onSelectPath: canvas.switchTo,
+                onClose: canvas.close,
+                onPreviewFile: canvasFile
+                  ? () => {
+                      canvas.close();
+                      openFilePreview(canvasFile.attachment, canvasFile.message);
+                    }
+                  : null,
+              }
+            : null
         }
-        showBottomBorder={headerHasDivider}
-        showConversationActions={Boolean(currentConversation?.id)}
-        isConversationArchived={Boolean(currentConversation?.isArchived)}
-        isConversationReported={Boolean(currentConversation?.isReported)}
-        conversationActionsOpen={overlayMenus.isHeaderActionMenuOpen}
-        onConversationActionsOpenChange={overlayMenus.setIsHeaderActionMenuOpen}
-        onArchiveConversation={handleArchiveCurrentConversation}
-        onUnarchiveConversation={handleUnarchiveCurrentConversation}
-        onReportConversation={handleReportCurrentConversation}
-        onDeleteConversation={handleDeleteCurrentConversation}
-        onShareConversation={openFullConversationShareDialog}
-        canShareConversation={canShareFullConversation}
-        onNewChat={handleNewChat}
-        isStreaming={isCurrentConversationBusy}
-        onManageAgents={() => navigate(AGENTS_PATH)}
-      />
+      >
+        {/* Header */}
+        <ChatHeader
+          agents={agents}
+          inactiveAgent={inactiveAgentFallback}
+          selectedAgent={selectedAgent}
+          onAgentChange={handleAgentChange}
+          agentTriggerRef={agentTriggerRef}
+          agentPickerOpen={overlayMenus.isAgentPickerOpen}
+          onAgentPickerOpenChange={overlayMenus.setIsAgentPickerOpen}
+          // Private mode is chosen before the first message; a stored private
+          // chat offers "Save chat" instead (one-way: it becomes a normal chat).
+          showPrivateToggle={(currentConversation?.messages?.length ?? 0) === 0}
+          isPrivateMode={isPrivateMode}
+          onTogglePrivate={handleTogglePrivateMode}
+          onSaveConversation={
+            currentConversation?.id && currentConversation.isPrivate
+              ? handleSaveCurrentConversation
+              : undefined
+          }
+          showBottomBorder={headerHasDivider}
+          showConversationActions={Boolean(currentConversation?.id)}
+          isConversationArchived={Boolean(currentConversation?.isArchived)}
+          isConversationReported={Boolean(currentConversation?.isReported)}
+          conversationActionsOpen={overlayMenus.isHeaderActionMenuOpen}
+          onConversationActionsOpenChange={overlayMenus.setIsHeaderActionMenuOpen}
+          onArchiveConversation={handleArchiveCurrentConversation}
+          onUnarchiveConversation={handleUnarchiveCurrentConversation}
+          onReportConversation={handleReportCurrentConversation}
+          onDeleteConversation={handleDeleteCurrentConversation}
+          onShareConversation={openFullConversationShareDialog}
+          canShareConversation={canShareFullConversation}
+          onNewChat={handleNewChat}
+          isStreaming={isCurrentConversationBusy}
+          onManageAgents={() => navigate(AGENTS_PATH)}
+        />
 
-      {/* Region below the header — the flex column for the body + composer, and
+        {/* Region below the header — the flex column for the body + composer, and
           the area the empty-state lift is measured against (useChatEffects).
           Measuring THIS box (instead of the whole shell, which includes the
           header) and clipping to it is what makes it structurally impossible
           for the lifted greeting/composer to overlap the header and steal its
           clicks. */}
-      <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
-        {/* Chat Messages Container*/}
-        <div className="voice-chat-transition-shell relative flex flex-1 min-h-0 overflow-hidden">
-          {/* Keyed by surface in a fixed order, so the chat body that is leaving
+        <div className="relative flex flex-1 min-h-0 flex-col overflow-hidden">
+          {/* Chat Messages Container*/}
+          <div className="voice-chat-transition-shell relative flex flex-1 min-h-0 overflow-hidden">
+            {/* Keyed by surface in a fixed order, so the chat body that is leaving
               is the same element that was showing — it keeps its scroll
               position while it fades out instead of remounting at the top. */}
-          {BODY_MODES.filter(
-            (mode) => mode === bodyTransition.current || mode === bodyTransition.exiting,
-          ).map((mode) => {
-            const leaving = mode === bodyTransition.exiting;
-            return (
-              <motion.div
-                key={mode}
-                className={`voice-chat-panel ${leaving ? "voice-chat-panel-exit" : "voice-chat-panel-enter"}`}
-                aria-hidden={leaving || undefined}
-                variants={reduceMotion ? FADE_PANEL : mode === "chat" ? CHAT_PANEL : VOICE_PANEL}
-                // The first chat body is simply there; a surface arriving later
-                // enters.
-                initial={mode === "chat" && !bodyTransition.exiting ? false : "hidden"}
-                animate={leaving ? "exit" : "shown"}
-              >
-                {renderConversationBody(mode)}
-              </motion.div>
-            );
-          })}
-        </div>
+            {BODY_MODES.filter(
+              (mode) => mode === bodyTransition.current || mode === bodyTransition.exiting,
+            ).map((mode) => {
+              const leaving = mode === bodyTransition.exiting;
+              return (
+                <motion.div
+                  key={mode}
+                  className={`voice-chat-panel ${leaving ? "voice-chat-panel-exit" : "voice-chat-panel-enter"}`}
+                  aria-hidden={leaving || undefined}
+                  variants={reduceMotion ? FADE_PANEL : mode === "chat" ? CHAT_PANEL : VOICE_PANEL}
+                  // The first chat body is simply there; a surface arriving later
+                  // enters.
+                  initial={mode === "chat" && !bodyTransition.exiting ? false : "hidden"}
+                  animate={leaving ? "exit" : "shown"}
+                >
+                  {renderConversationBody(mode)}
+                </motion.div>
+              );
+            })}
+          </div>
 
-        {/* Input Area */}
-        <ChatInputBar
-          mode={voiceSession.isActive ? "voice" : "chat"}
-          voiceBarVisible={voiceBarReady}
-          chatBarVisible={chatBarReady}
-          // Always at the bottom; the empty screen lifts it to the middle, so
-          // it stays mounted and glides between a conversation and a new chat.
-          // Voice mode keeps it at the bottom once the bar has settled there.
-          isMessagesEmpty={composer.isMessagesEmpty}
-          positionClass="sticky bottom-0 left-0 right-0 z-40 px-6 pt-6"
-          liftY={settledVoiceActive ? null : composer.liftY}
+          {/* Input Area */}
+          <ChatInputBar
+            mode={voiceSession.isActive ? "voice" : "chat"}
+            voiceBarVisible={voiceBarReady}
+            chatBarVisible={chatBarReady}
+            // Always at the bottom; the empty screen lifts it to the middle, so
+            // it stays mounted and glides between a conversation and a new chat.
+            // Voice mode keeps it at the bottom once the bar has settled there.
+            isMessagesEmpty={composer.isMessagesEmpty}
+            positionClass="sticky bottom-0 left-0 right-0 z-40 px-6 pt-6"
+            liftY={settledVoiceActive ? null : composer.liftY}
 
-          // pass through your existing state/handlers/refs
-          attachments={composer.attachments}
-          isPrivateMode={isPrivateMode}
-          thinkingActive={isCurrentConversationBusy && thinkingState?.isActive}
-          isStreaming={isCurrentConversationBusy}
-          slash={voiceSession.isActive ? null : slash}
-          effortControl={
-            <EffortPicker
-              efforts={agentEffort.efforts}
-              effort={agentEffort.effort}
-              onChange={agentEffort.setEffort}
-            />
-          }
-          agentMapControl={
-            <AgentMapButton
-              map={agentMap}
-              agentName={agentMapAgentName}
-              visible={!composer.isMessagesEmpty}
-            />
-          }
-          planControl={
-            <PlanButton
-              plans={conversationPlans}
-              agentName={agentMapAgentName}
-              visible={!composer.isMessagesEmpty}
-            />
-          }
-          currentMessage={composer.currentMessage}
-          setCurrentMessage={composer.setCurrentMessage}
-          handlePaste={composer.handlePaste}
-          handleSendMessage={handleSendMessage}
-          handleStopStreaming={handleStopStreaming}
-          canQueueWhileStreaming={canQueueSend}
-          composerNotices={
-            <ComposerTaskNotices
-              queuedMessage={queuedMessage}
-              onCancelQueued={() => void handleCancelQueuedMessage()}
-            />
-          }
-          isImageFile={composer.isImageFile}
-          getImageUrl={composer.getImageUrl}
-          handleImageClick={handleImageClick}
-          removeAttachment={composer.removeAttachment}
-          handleFileUpload={composer.handleFileUpload}
-          fileInputRef={composer.fileInputRef}
-          textareaRef={composer.textareaRef}
-          containerRef={composer.composerContainerRef}
-          textareaMaxHeight={composer.textareaMaxHeight}
-          onDictationSubmit={composer.handleDictationSubmit}
-          onDictationStatusChange={composer.handleDictationStatusChange}
-          dictationStatus={composer.dictationStatus}
-          dictationRequestSignal={composer.dictationRequestSignal}
-          dictationCancelSignal={composer.dictationCancelSignal}
-          onVoiceMode={triggerVoiceMode}
-          voiceStatus={voiceSession.status}
-          voiceMuted={voiceSession.muted}
-          onCloseVoiceMode={voiceSession.close}
-          onToggleVoiceMute={voiceSession.toggleMute}
-          onVoiceTextSubmit={voiceSession.sendText}
+            // pass through your existing state/handlers/refs
+            attachments={composer.attachments}
+            isPrivateMode={isPrivateMode}
+            thinkingActive={isCurrentConversationBusy && thinkingState?.isActive}
+            isStreaming={isCurrentConversationBusy}
+            slash={voiceSession.isActive ? null : slash}
+            effortControl={
+              <EffortPicker
+                efforts={agentEffort.efforts}
+                effort={agentEffort.effort}
+                onChange={agentEffort.setEffort}
+              />
+            }
+            agentMapControl={
+              <AgentMapButton
+                map={agentMap}
+                agentName={agentMapAgentName}
+                visible={!composer.isMessagesEmpty}
+              />
+            }
+            planControl={
+              <PlanButton
+                plans={conversationPlans}
+                agentName={agentMapAgentName}
+                visible={!composer.isMessagesEmpty}
+              />
+            }
+            currentMessage={composer.currentMessage}
+            setCurrentMessage={composer.setCurrentMessage}
+            handlePaste={composer.handlePaste}
+            handleSendMessage={handleSendMessage}
+            handleStopStreaming={handleStopStreaming}
+            canQueueWhileStreaming={canQueueSend}
+            composerNotices={
+              <ComposerTaskNotices
+                queuedMessage={queuedMessage}
+                onCancelQueued={() => void handleCancelQueuedMessage()}
+              />
+            }
+            isImageFile={composer.isImageFile}
+            getImageUrl={composer.getImageUrl}
+            handleImageClick={handleImageClick}
+            removeAttachment={composer.removeAttachment}
+            handleFileUpload={composer.handleFileUpload}
+            fileInputRef={composer.fileInputRef}
+            textareaRef={composer.textareaRef}
+            containerRef={composer.composerContainerRef}
+            textareaMaxHeight={composer.textareaMaxHeight}
+            onDictationSubmit={composer.handleDictationSubmit}
+            onDictationStatusChange={composer.handleDictationStatusChange}
+            dictationStatus={composer.dictationStatus}
+            dictationRequestSignal={composer.dictationRequestSignal}
+            dictationCancelSignal={composer.dictationCancelSignal}
+            onVoiceMode={triggerVoiceMode}
+            voiceStatus={voiceSession.status}
+            voiceMuted={voiceSession.muted}
+            onCloseVoiceMode={voiceSession.close}
+            onToggleVoiceMute={voiceSession.toggleMute}
+            onVoiceTextSubmit={voiceSession.sendText}
 
-          // UI deps
-          Tooltip={Tooltip}
-          TooltipTrigger={TooltipTrigger}
-          TooltipContent={TooltipContent}
-          toast={toast}
-          currentAgent={inputBarAgent ?? undefined}
-          Textarea={Textarea}
-          hitlTakeover={
-            activeHitlInterrupt && activeConversationRun && activeHitlIsQuestion ? (
-              // The agent's clarifying questions: answered (or skipped) through
-              // the same resume, the answers riding in `value`.
-              <AskUserTakeover
-                key={activeHitlInterrupt.id}
-                interrupt={{
-                  interruptId: activeHitlInterrupt.id,
-                  threadId: activeHitlInterrupt.threadId,
-                  content: activeHitlInterrupt.content,
-                }}
-                agentName={inputBarAgent?.name}
-                onResolve={(resolution) =>
-                  resumeInferenceRunHandler(activeConversationRun.id, {
+            // UI deps
+            Tooltip={Tooltip}
+            TooltipTrigger={TooltipTrigger}
+            TooltipContent={TooltipContent}
+            toast={toast}
+            currentAgent={inputBarAgent ?? undefined}
+            Textarea={Textarea}
+            hitlTakeover={
+              activeHitlInterrupt && activeConversationRun && activeHitlIsQuestion ? (
+                // The agent's clarifying questions: answered (or skipped) through
+                // the same resume, the answers riding in `value`.
+                <AskUserTakeover
+                  key={activeHitlInterrupt.id}
+                  interrupt={{
                     interruptId: activeHitlInterrupt.id,
                     threadId: activeHitlInterrupt.threadId,
-                    ...resolution,
-                  })
-                }
-              />
-            ) : activeHitlInterrupt && activeConversationRun ? (
-              <HitlInputTakeover
-                interrupt={{
-                  interruptId: activeHitlInterrupt.id,
-                  threadId: activeHitlInterrupt.threadId,
-                  content: activeHitlInterrupt.content,
-                }}
-                pendingCount={pendingRunInterrupts.length}
-                onResolve={(decisions) =>
-                  resumeInferenceRunHandler(activeConversationRun.id, {
+                    content: activeHitlInterrupt.content,
+                  }}
+                  agentName={inputBarAgent?.name}
+                  onResolve={(resolution) =>
+                    resumeInferenceRunHandler(activeConversationRun.id, {
+                      interruptId: activeHitlInterrupt.id,
+                      threadId: activeHitlInterrupt.threadId,
+                      ...resolution,
+                    })
+                  }
+                />
+              ) : activeHitlInterrupt && activeConversationRun ? (
+                <HitlInputTakeover
+                  interrupt={{
                     interruptId: activeHitlInterrupt.id,
                     threadId: activeHitlInterrupt.threadId,
-                    // Overall decision (legacy/back-compat field): approve
-                    // unless every action was rejected. Per-action outcomes
-                    // ride in `decisions`.
-                    decision: decisions.some((d) => d.decision === "approve")
-                      ? "approve"
-                      : "reject",
-                    reason: decisions.find((d) => d.decision === "reject" && d.reason)?.reason,
-                    decisions,
-                  })
-                }
-              />
-            ) : null
-          }
-          starterSuggestions={canShowStarterSuggestions ? starterSuggestions : []}
-          onStarterSuggestionSelect={handleStarterSuggestionSelect}
-        />
+                    content: activeHitlInterrupt.content,
+                  }}
+                  pendingCount={pendingRunInterrupts.length}
+                  onResolve={(decisions) =>
+                    resumeInferenceRunHandler(activeConversationRun.id, {
+                      interruptId: activeHitlInterrupt.id,
+                      threadId: activeHitlInterrupt.threadId,
+                      // Overall decision (legacy/back-compat field): approve
+                      // unless every action was rejected. Per-action outcomes
+                      // ride in `decisions`.
+                      decision: decisions.some((d) => d.decision === "approve")
+                        ? "approve"
+                        : "reject",
+                      reason: decisions.find((d) => d.decision === "reject" && d.reason)?.reason,
+                      decisions,
+                    })
+                  }
+                />
+              ) : null
+            }
+            starterSuggestions={canShowStarterSuggestions ? starterSuggestions : []}
+            onStarterSuggestionSelect={handleStarterSuggestionSelect}
+          />
 
-        {/* The card's footer: under the composer in a conversation, at the
+          {/* The card's footer: under the composer in a conversation, at the
             bottom edge while the empty screen lifts the composer. */}
-        <ChatDisclaimer />
-      </div>
-
-      {loadingConversation && (
-        <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-slate-950/35 backdrop-blur-md transition-opacity duration-200 animate-fade-in">
-          <Loader size={36} className="text-white/90" />
+          <ChatDisclaimer />
         </div>
-      )}
-    </>
+
+        {loadingConversation && (
+          <div className="pointer-events-none absolute inset-0 z-40 flex items-center justify-center bg-slate-950/35 backdrop-blur-md transition-opacity duration-200 animate-fade-in">
+            <Loader size={36} className="text-white/90" />
+          </div>
+        )}
+      </CanvasDock>
+    </CanvasOpenerContext.Provider>
   );
 }

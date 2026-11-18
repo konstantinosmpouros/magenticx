@@ -53,6 +53,7 @@ const page = (items: Record<string, unknown>[], nextCursor: string | null = null
 
 function renderPage(props: Partial<React.ComponentProps<typeof ArtifactsPage>> = {}) {
   const onOpenConversation = vi.fn();
+  const onOpenCanvas = vi.fn();
   const onStartChat = vi.fn();
   render(
     <TooltipProvider>
@@ -60,13 +61,14 @@ function renderPage(props: Partial<React.ComponentProps<typeof ArtifactsPage>> =
         <ArtifactsPage
           userId="user-1"
           onOpenConversation={onOpenConversation}
+          onOpenCanvas={onOpenCanvas}
           onStartChat={onStartChat}
           {...props}
         />
       </SidebarProvider>
     </TooltipProvider>,
   );
-  return { onOpenConversation, onStartChat };
+  return { onOpenConversation, onOpenCanvas, onStartChat };
 }
 
 const lastParams = () => api.listUserFiles.mock.calls.at(-1)?.[1];
@@ -217,6 +219,33 @@ describe("the Artifacts page", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open conversation Quarterly numbers" }));
     expect(onOpenConversation).toHaveBeenCalledWith("conv-1");
+  });
+
+  it("opens a generated .md in the canvas of its conversation, and only that", async () => {
+    api.listUserFiles.mockResolvedValue(
+      page([
+        file({ attachmentId: "a-md", fileName: "brief.md", mime: "text/markdown", type: "text", conversationId: "conv-9" }),
+        file({
+          attachmentId: "a-nested",
+          fileName: "plan.md",
+          mime: "text/markdown",
+          type: "text",
+          source_path: "/conversation/output/drafts/plan.md",
+        }),
+        file({ attachmentId: "a-in", fileName: "notes.md", mime: "text/markdown", type: "text", kind: "input" }),
+      ]),
+    );
+    const { onOpenCanvas } = renderPage();
+    await screen.findAllByTestId("artifact-row");
+
+    // The name and the action both open it; the presented path wins over the name.
+    fireEvent.click(screen.getByRole("button", { name: "brief.md" }));
+    expect(onOpenCanvas).toHaveBeenLastCalledWith("conv-9", "/conversation/output/brief.md");
+    fireEvent.click(screen.getByRole("button", { name: "Open plan.md in canvas" }));
+    expect(onOpenCanvas).toHaveBeenLastCalledWith("conv-1", "/conversation/output/drafts/plan.md");
+    // An upload is never a canvas document.
+    expect(screen.queryByRole("button", { name: "Open notes.md in canvas" })).not.toBeInTheDocument();
+    expect(onOpenCanvas).toHaveBeenCalledTimes(2);
   });
 
   it("previews a document in the preview panel, against the file's own conversation", async () => {

@@ -1,6 +1,7 @@
 import { motion, type Variants } from "framer-motion";
 
 import ArtifactsPage from "@/features/artifacts/components/ArtifactsPage";
+import { canvasDocumentHref } from "@/shared/lib/canvasDocuments";
 
 import { useChatWorkspaceContext } from "@/app/workspaceContext";
 
@@ -41,7 +42,10 @@ export default function ArtifactsView() {
     >
       <ArtifactsPage
         userId={userId ?? null}
-        onOpenConversation={(conversationId) => navigate(`/c/${encodeURIComponent(conversationId)}`)}
+        onOpenConversation={(conversationId) =>
+          navigate(`/c/${encodeURIComponent(conversationId)}`)
+        }
+        onOpenCanvas={(conversationId, path) => navigate(canvasDocumentHref(conversationId, path))}
         onStartChat={() => navigate("/")}
       />
     </motion.div>

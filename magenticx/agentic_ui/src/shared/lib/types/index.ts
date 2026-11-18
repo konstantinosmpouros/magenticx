@@ -42,3 +42,4 @@ export type * from "./export";
 export type * from "./account";
 export type * from "./ui";
 export type * from "./citations";
+export type * from "./canvas";

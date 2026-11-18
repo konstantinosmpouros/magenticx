@@ -35,10 +35,13 @@ import {
 export default function ArtifactsPage({
   userId,
   onOpenConversation,
+  onOpenCanvas,
   onStartChat,
 }: {
   userId: string | null;
   onOpenConversation: (conversationId: string) => void;
+  /** Opens a canvas document in its conversation (plan 44, Phase 4.1). */
+  onOpenCanvas: (conversationId: string, path: string) => void;
   onStartChat: () => void;
 }) {
   const reduceMotion = useReducedMotion();
@@ -137,6 +140,7 @@ export default function ArtifactsPage({
                     onPreview={actions.openPreview}
                     onDownload={actions.download}
                     onOpenConversation={onOpenConversation}
+                    onOpenCanvas={onOpenCanvas}
                   />
                 ))}
               </motion.ul>
@@ -175,7 +179,11 @@ export default function ArtifactsPage({
           if (actions.previewFile) actions.download(actions.previewFile);
         }}
       />
-      <ImageLightbox src={actions.imageSrc} filename={actions.imageName} onClose={actions.closeImage} />
+      <ImageLightbox
+        src={actions.imageSrc}
+        filename={actions.imageName}
+        onClose={actions.closeImage}
+      />
     </div>
   );
 }

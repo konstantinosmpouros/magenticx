@@ -49,6 +49,10 @@ export const transformAttachment = (attachment: Record<string, any>): Attachment
   title: attachment?.title ?? undefined,
   summary: attachment?.summary ?? undefined,
   presented: attachment?.presented === true,
+  // The virtual path the agent presented the file at (plan 44, Phase 4.1):
+  // which canvas document a generated `.md` opens. Absent for uploads and
+  // for files stored before the bridge recorded it.
+  sourcePath: toOptionalString(attachment?.sourcePath ?? attachment?.source_path),
 });
 
 // The slash command a user message ran (plan 35): only a well-formed name, or

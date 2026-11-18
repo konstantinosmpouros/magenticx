@@ -30,6 +30,10 @@ class AttachmentOut(BaseModel):
     title: Optional[str] = Field(None, validation_alias="title")
     summary: Optional[str] = Field(None, validation_alias="summary")
     presented: bool = Field(False, validation_alias="presented")
+    # The virtual path the agent presented a generated file from (e.g.
+    # ``/conversation/output/brief.md``): how the canvas finds a document's
+    # versions (plan 44). None for uploads and rows captured before 0049.
+    source_path: Optional[str] = Field(None, validation_alias="source_path")
 
     # keep ORM relation for computation but don't serialize it
     blob: Optional[BlobOut] = Field(None, validation_alias="blob", exclude=True)
@@ -131,6 +135,9 @@ class UserFileOut(BaseModel):
     # The agent's display metadata, on presented outputs only.
     title: Optional[str] = None
     summary: Optional[str] = None
+    # The presented virtual path (e.g. /conversation/output/brief.md), so a
+    # canvas document opens at its real path; None for uploads and old rows.
+    sourcePath: Optional[str] = None
 
 
 class UserFilesPage(BaseModel):

@@ -48,7 +48,7 @@ from utils.hitl_decisions import (
     stale_decisions_from_conflict,
 )
 from utils.model_pricing import call_cost_micros
-from utils.output_capture import capture_presented_files
+from utils.output_capture import capture_canvas_documents, capture_presented_files
 from utils.run_activity import RunActivity, count_run_activity
 from utils.usage_rollups import add_answer_to_rollups
 from utils.inference import (
@@ -1722,6 +1722,8 @@ async def _finish_run(run_id: str, runtime: InferenceRunRuntime, status_value: s
         # The files the agent presented this run, in this transaction: their
         # cards must find them when the terminal frame reaches the UI.
         await capture_presented_files(db, run, conversation, runtime.presented_artifacts)
+        # The presented canvas documents (plan 44) as the agent's versions; fail-open.
+        await capture_canvas_documents(run, conversation, runtime.presented_artifacts)
 
         await db.commit()
 

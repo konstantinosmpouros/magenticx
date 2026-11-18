@@ -34,6 +34,7 @@
       "vitest": ["./node_modules/vitest"],
       "@testing-library/*": ["./node_modules/@testing-library/*"],
       "react-router-dom": ["./node_modules/react-router-dom"],
+      "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
       // A test that drives a hook through its own state (`useState`).
       "react": ["./node_modules/@types/react"],
       // Point at the TYPE declarations, not the .js: mapping these to the

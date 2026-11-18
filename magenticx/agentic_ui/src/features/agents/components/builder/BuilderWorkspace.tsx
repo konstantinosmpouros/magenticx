@@ -25,7 +25,7 @@ import type { UserAgentsHandlers } from "@/features/agents/hooks/useUserAgents";
 import type { AgentCatalogs } from "@/features/agents/hooks/useAgentCatalogs";
 import { depthOf, ensureUids, locate, useAgentDraft } from "@/features/agents/hooks/useAgentDraft";
 import { useDraftAutosave } from "@/features/agents/hooks/useDraftAutosave";
-import { useInspectorPanel } from "@/features/agents/hooks/useInspectorPanel";
+import { useResizablePanel } from "@/shared/hooks/useResizablePanel";
 import { useLeaveGuard } from "@/shared/hooks/useLeaveGuard";
 import { useServerValidation } from "@/features/agents/hooks/useServerValidation";
 import { useAgentTrial } from "@/features/agents/hooks/useAgentTrial";
@@ -58,6 +58,20 @@ import { BuilderContext, type BuilderContextValue } from "./builderContext";
 import { Inspector } from "./inspector/Inspector";
 import { IssuesMenu } from "./IssuesMenu";
 import { YamlPanel } from "./YamlPanel";
+
+/**
+ * The inspector's sizing: below an 880px builder it slides over the canvas;
+ * docked, it is 340–760px wide (420 by default) and the canvas keeps 420px.
+ */
+const INSPECTOR_PANEL = {
+  storageKey: "magenticx:agent-builder:inspector-width",
+  min: 340,
+  max: 760,
+  defaultWidth: 420,
+  siblingMin: 420,
+  dockMinArea: 880,
+  label: "Resize the inspector",
+} as const;
 
 // The canvas brings React Flow along: its own chunk, fetched when the builder opens.
 const loadBuilderCanvas = () => import("./canvas/BuilderCanvas");
@@ -153,7 +167,7 @@ export function BuilderWorkspace({
   const [saving, setSaving] = React.useState<"checking" | "saving" | "approvals" | null>(null);
   const [approvalsFailed, setApprovalsFailed] = React.useState(false);
   const [sheetOpen, setSheetOpen] = React.useState(false);
-  const panel = useInspectorPanel();
+  const panel = useResizablePanel(INSPECTOR_PANEL);
   // Too narrow to share the row: the inspector slides over the canvas on a pick.
   const drawer = !mobile && panel.layout === "drawer";
   // Once created, every later save (a Retry, a further edit) is an update.
@@ -619,7 +633,9 @@ export function BuilderWorkspace({
               </button>
             </TooltipTrigger>
             <TooltipContent side="bottom" className="text-xs">
-              {isNew ? "Create the agent; this is its first version" : "Save your changes as a new version"}
+              {isNew
+                ? "Create the agent; this is its first version"
+                : "Save your changes as a new version"}
             </TooltipContent>
           </Tooltip>
         </header>
@@ -666,7 +682,10 @@ export function BuilderWorkspace({
         </AnimatePresence>
 
         {/* ---- canvas + inspector ---- */}
-        <div ref={panel.areaRef} className="relative flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row">
+        <div
+          ref={panel.areaRef}
+          className="relative flex min-h-0 flex-1 flex-col overflow-hidden md:flex-row"
+        >
           <div
             className={cn(
               "relative min-h-0 min-w-0 flex-1 bg-[radial-gradient(ellipse_at_top,hsl(var(--primary)/0.05),transparent_60%)]",
@@ -692,7 +711,10 @@ export function BuilderWorkspace({
               <button
                 type="button"
                 onClick={() => setSheetOpen(true)}
-                className={cn(SECONDARY_BUTTON, "absolute right-3 top-3 z-10 px-3 py-1.5 text-xs shadow-sm")}
+                className={cn(
+                  SECONDARY_BUTTON,
+                  "absolute right-3 top-3 z-10 px-3 py-1.5 text-xs shadow-sm",
+                )}
               >
                 <PanelRightOpen className="h-3.5 w-3.5" aria-hidden />
                 Edit panel
@@ -722,7 +744,8 @@ export function BuilderWorkspace({
                 ? (event) => {
                     // A key from a portalled menu bubbles here through React too: not ours.
                     const inside = event.currentTarget.contains(event.target as Node);
-                    if (event.key === "Escape" && inside && !event.defaultPrevented) setSheetOpen(false);
+                    if (event.key === "Escape" && inside && !event.defaultPrevented)
+                      setSheetOpen(false);
                   }
                 : undefined
             }

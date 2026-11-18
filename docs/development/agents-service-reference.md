@@ -110,7 +110,8 @@ magenticx/agents/
 │   │   └── versions.py         describe_changes (what a save changed), the version kinds
 │   ├── conversation_files/     a conversation's files in agent_runtime (plan 36)
 │   ├── sources/                citable sources (plan 42): Source schema, ids, extractor registry, conversation_sources store
-│   │   ├── store.py            ConversationFileStore — path rows + encrypted, content-addressed blobs
+│   │   ├── store.py            ConversationFileStore — path rows + encrypted, content-addressed blobs (+ the versions DDL)
+│   │   ├── versions.py         DocumentVersionStore — a canvas document's append-only versions (plan 44)
 │   │   ├── backend.py          ConversationFilesBackend (BackendProtocol) for /conversation/ + the offload dirs
 │   │   ├── inputs.py           InputView — /conversation/input/ read from the bridge, LRU by hash
 │   │   └── files.py · paths.py · cipher.py   per-run view · path normaliser · checkpointer AES cipher
@@ -146,6 +147,7 @@ magenticx/agents/
 │   ├── generation.py           POST /titles/generate, POST /suggestions/generate
 │   ├── inference.py            POST /stream, POST /resume, compaction  ★ core
 │   ├── conversation_files.py   GET files (presented snapshot), POST files/copy (fork), POST reap
+│   ├── documents.py            canvas documents (plan 44): list, latest, versions, one version, save, capture
 │   ├── conversation_sources.py GET sources, POST sources (insert), POST sources/copy (fork), DELETE sources (plan 42)
 │   ├── memories.py             GET/GET/DELETE memories
 │   ├── skills.py               11 skill endpoints (catalogue search, sources, user pool, remote Add, per-agent enablement)
@@ -238,7 +240,7 @@ Settings groups (env alias → default):
 
 ---
 
-## 5. HTTP API — all 24 endpoints
+## 5. HTTP API — all 30 endpoints
 
 Every endpoint below carries `dependencies=[Depends(require_internal_caller)]` (validates the `X-Internal-Proxy-Secret` header via `secrets.compare_digest`; 403 otherwise). No rate limiting, auth, or CSRF anywhere — those are the bridge's job. `/health` is the only unauthenticated route.
 
@@ -253,8 +255,14 @@ Every endpoint below carries `dependencies=[Depends(require_internal_caller)]` (
 | 6 | POST | `/agents/{agent_slug}/stream` | inference | `Request` | SSE `text/event-stream` | 200 |
 | 7 | POST | `/agents/{agent_slug}/resume` | inference | `AgentResumeRequest` | SSE `text/event-stream` | 200 |
 | 8 | GET | `/users/{uid}/conversations/{cid}/files?paths=` | conversation_files | — | `ReadOutputFilesResponse` — presented `/conversation/output/` files, base64 (≤ `OUTPUT_MAX_FILES`, each ≤ `OUTPUT_MAX_FILE_BYTES`, else `missing`) | 200 (422 too many) |
-| 9 | POST | `/users/{uid}/conversations/{cid}/reap` | conversation_files | `ReapConversationRequest` | — the conversation's checkpoint threads, every file and every source (by conversation id) | 204 (503 → the bridge's outbox retries) |
-| 9a | POST | `/users/{uid}/conversations/{cid}/files/copy` | conversation_files | `CopyConversationFilesRequest` | `CopyConversationFilesResponse` — a fork's file rows (no bytes copied) | 200 |
+| 9 | POST | `/users/{uid}/conversations/{cid}/reap` | conversation_files | `ReapConversationRequest` | — the conversation's checkpoint threads, every file, document version and source (by conversation id) | 204 (503 → the bridge's outbox retries) |
+| 9a | POST | `/users/{uid}/conversations/{cid}/files/copy` | conversation_files | `CopyConversationFilesRequest` | `CopyConversationFilesResponse` — a fork's file rows and canvas document versions (no bytes copied) | 200 |
+| 9a′ | GET | `/users/{uid}/conversations/{cid}/documents?limit=` | documents | — | `DocumentListResponse{documents: [{path, name, version, author, updated_at, size_bytes}]}` — each canvas document at its latest version, newest first (≤ `limit`, 1–200, default 100; plan 44) | 200 |
+| 9a″ | GET | `/users/{uid}/conversations/{cid}/documents/latest?path=` | documents | — | `DocumentVersionContent{path, name, version, author, base_version, created_at, size_bytes, content}`. A `.md` file with no versions yet is recorded as v1 (author `agent`) first | 200 (404 neither versions nor file; 422 not a `.md` under `/conversation/output/`) |
+| 9a‴ | GET | `/users/{uid}/conversations/{cid}/documents/versions?path=&limit=` | documents | — | `DocumentVersionsResponse{path, versions: [{version, author, base_version, created_at, size_bytes}]}` — newest first, no text | 200 (422) |
+| 9a⁗ | GET | `/users/{uid}/conversations/{cid}/documents/versions/{n}?path=` | documents | — | `DocumentVersionContent` for version `n` | 200 (404, 422) |
+| 9a⁵ | POST | `/users/{uid}/conversations/{cid}/documents/versions` | documents | `SaveDocumentVersionRequest{path, base_version ≥ 1, content}` | `SaveDocumentVersionResponse{path, version, created_at}` — author `user`; the text also replaces the `conversation_files` row, so the agent reads the latest version. Serialised per (conversation, path) by an advisory lock | 201 (409 `{"detail": {code: "stale_base", message, current_version, current_content}}`; 422 path, or content over 1 MiB UTF-8; 404) |
+| 9a⁶ | POST | `/users/{uid}/conversations/{cid}/documents/capture` | documents | `CaptureDocumentsRequest{paths (≤ 50), source_run_id?}` | `CaptureDocumentsResponse{captured: [{path, version, created}]}` — the run-end call: each eligible path's current file becomes an `agent` version if its bytes differ from the latest (same bytes → `created: false`); ineligible or missing paths, and files over 1 MiB, are skipped | 200 |
 | 9b | GET | `/users/{uid}/conversations/{cid}/sources` | conversation_sources | — | `ConversationSourcesResponse{sources: [{id, url, title, snippet, tool}]}` — newest first, ≤ 500 (plan 42) | 200 |
 | 9b′ | POST | `/users/{uid}/conversations/{cid}/sources` | conversation_sources | `InsertConversationSourcesRequest{sources: [Source]}` — each a full `Source` (http(s) only, capped, unknown keys refused), ≤ 500 or 422 | — upserts them for the conversation; a source whose id is not its URL's (`id_matches_url`) is dropped alone. The bridge gives a conversation continued from a share link the snapshot's frozen sources (plan 42) | 204 |
 | 9c | POST | `/users/{uid}/conversations/{cid}/sources/copy` | conversation_sources | `CopyConversationSourcesRequest{target_conversation_id}` | — a fork gets the source conversation's sources (ids it already has are kept) | 204 |
@@ -611,7 +619,7 @@ Structured, async, per-request-context logging.
 
 ## 21. Schemas reference (`schema/` package — one module per concept, re-exporting `__init__.py`)
 
-`Request{messages, config}` · `ResumeActionDecision{decision, reason?}` · `AgentResumeRequest{config, thread_id, decision, reason?, value?, interrupt_id?, decisions?}` · `InputFileIn{filename, mime, base64, size}` · `SeedInputFilesRequest{files}` · `SeedInputFilesResponse{written}` · `EmbedRequest{texts}` · `EmbedResponse{embeddings, model, dimensions}` · `ReapConversationRequest{thread_ids}` · `TitleRequest{user_input}` · `ConversationTitle{titles}` · `SuggestionsRequest{user_input}` · `ConversationSuggestions{suggestions}` · `ReadAloudRequest{text, voice?}` · `TranscriptionResponse{text}` · `RealtimeSessionRequest{sdp, model?, voice?, instructions, metadata}` · `RealtimeSessionResponse{sdp, model, voice}` · `AgentManifest{id, slug, name, version?, type, description, icon}` · `ToolManifest{server_id, tool_name, description, parameter_count}` · `SkillManifest{name, description, content, category}` · `SkillManifestEntry{name, type, description, source_path, category}` · `GlobalManifest{version, skills}` · `UserManifest{version, skills}` · `SkillFile{path, content, encoding, size}` · `CustomSkillCreate{name, description, files}` · `UserSkillDetail{…entry + content + files}` · `MemoryEntry{name, summary, created_at?, updated_at?, source_conversation_id?}` · `MemoryDetail{…entry + content}` · `@dataclass(frozen=True) AgentDefinition{slug, cls, manifest}` · `WorkflowWrite{spec}` · `WorkflowIssue{nodeId, path, message}` · `WorkflowValidation{ok, errors}` · `WorkflowSummary{id, owner_user_id, name, description, latest_version_no, created_at, updated_at}` · `WorkflowDetail{…summary + draft, spec}` · `WorkflowCatalog{kinds}` · `WorkflowResume{decision: approve|reject, comment?}` · `WorkflowRunRequest{run_id, thread_id, owner_user_id, workflow_id, version_no?, inputs, resume?, trigger_kind: manual|schedule, fired_at?}`.
+`Request{messages, config}` · `ResumeActionDecision{decision, reason?}` · `AgentResumeRequest{config, thread_id, decision, reason?, value?, interrupt_id?, decisions?}` · `InputFileIn{filename, mime, base64, size}` · `SeedInputFilesRequest{files}` · `SeedInputFilesResponse{written}` · `EmbedRequest{texts}` · `EmbedResponse{embeddings, model, dimensions}` · `ReapConversationRequest{thread_ids}` · `SaveDocumentVersionRequest{path, base_version, content}` · `CaptureDocumentsRequest{paths, source_run_id?}` · `DocumentVersionContent{path, name, version, author, base_version?, created_at, size_bytes, content}` · `TitleRequest{user_input}` · `ConversationTitle{titles}` · `SuggestionsRequest{user_input}` · `ConversationSuggestions{suggestions}` · `ReadAloudRequest{text, voice?}` · `TranscriptionResponse{text}` · `RealtimeSessionRequest{sdp, model?, voice?, instructions, metadata}` · `RealtimeSessionResponse{sdp, model, voice}` · `AgentManifest{id, slug, name, version?, type, description, icon}` · `ToolManifest{server_id, tool_name, description, parameter_count}` · `SkillManifest{name, description, content, category}` · `SkillManifestEntry{name, type, description, source_path, category}` · `GlobalManifest{version, skills}` · `UserManifest{version, skills}` · `SkillFile{path, content, encoding, size}` · `CustomSkillCreate{name, description, files}` · `UserSkillDetail{…entry + content + files}` · `MemoryEntry{name, summary, created_at?, updated_at?, source_conversation_id?}` · `MemoryDetail{…entry + content}` · `@dataclass(frozen=True) AgentDefinition{slug, cls, manifest}` · `WorkflowWrite{spec}` · `WorkflowIssue{nodeId, path, message}` · `WorkflowValidation{ok, errors}` · `WorkflowSummary{id, owner_user_id, name, description, latest_version_no, created_at, updated_at}` · `WorkflowDetail{…summary + draft, spec}` · `WorkflowCatalog{kinds}` · `WorkflowResume{decision: approve|reject, comment?}` · `WorkflowRunRequest{run_id, thread_id, owner_user_id, workflow_id, version_no?, inputs, resume?, trigger_kind: manual|schedule, fired_at?}`.
 
 ---
 

@@ -1,11 +1,17 @@
 import type { ReactNode } from "react";
-import { Download, Eye, LoaderCircle, MessageSquareText } from "lucide-react";
+import { Download, Eye, LoaderCircle, MessageSquareText, PanelRight } from "lucide-react";
 
+import { canvasDocumentPath } from "@/shared/lib/canvasDocuments";
 import { cn } from "@/shared/lib/utils";
 import type { UserFile } from "@/shared/lib/types";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { formatBytes } from "@/features/attachments/components/attachment_preview_parts";
-import { FILE_TYPE_META, fileExtension, fileIcon, formatFileDate } from "@/features/artifacts/lib/fileFilters";
+import {
+  FILE_TYPE_META,
+  fileExtension,
+  fileIcon,
+  formatFileDate,
+} from "@/features/artifacts/lib/fileFilters";
 
 function RowAction({
   label,
@@ -41,9 +47,11 @@ function RowAction({
  * One file on the Artifacts page: its type tile, name, where it came from
  * (Input / Output and the conversation), when, and how big — then Preview,
  * Download and Open conversation. The name is itself the Preview button, the
- * biggest target on the row.
+ * biggest target on the row — except for a canvas document (a generated
+ * `.md`, plan 44), whose name opens it in the canvas of its conversation,
+ * with an Open in canvas action first.
  *
- * On a phone the meta line wraps under the name and the three actions stay a
+ * On a phone the meta line wraps under the name and the actions stay a
  * fixed 40px strip on the right, so a long file name truncates rather than
  * pushing them off screen.
  */
@@ -53,12 +61,14 @@ export function ArtifactRow({
   onPreview,
   onDownload,
   onOpenConversation,
+  onOpenCanvas,
 }: {
   file: UserFile;
   previewBusy: boolean;
   onPreview: (file: UserFile) => void;
   onDownload: (file: UserFile) => void;
   onOpenConversation: (conversationId: string) => void;
+  onOpenCanvas: (conversationId: string, path: string) => void;
 }) {
   const meta = FILE_TYPE_META[file.type];
   const Icon = fileIcon(file.type, file.fileName);
@@ -67,6 +77,8 @@ export function ArtifactRow({
   const size = formatBytes(file.size ?? undefined);
   const conversation = file.conversationTitle || "Untitled conversation";
   const output = file.kind === "output";
+  const canvasPath = output ? canvasDocumentPath(file) : null;
+  const open = () => (canvasPath ? onOpenCanvas(file.conversationId, canvasPath) : onPreview(file));
 
   return (
     <li
@@ -89,7 +101,7 @@ export function ArtifactRow({
       <div className="min-w-0 flex-1">
         <button
           type="button"
-          onClick={() => onPreview(file)}
+          onClick={open}
           className="block max-w-full truncate rounded text-left text-sm font-medium text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
         >
           {file.fileName}
@@ -127,7 +139,16 @@ export function ArtifactRow({
       </div>
 
       <div className="flex flex-shrink-0 items-center">
-        <RowAction label={`Preview ${file.fileName}`} onClick={() => onPreview(file)} busy={previewBusy}>
+        {canvasPath ? (
+          <RowAction label={`Open ${file.fileName} in canvas`} onClick={open}>
+            <PanelRight size={17} aria-hidden />
+          </RowAction>
+        ) : null}
+        <RowAction
+          label={`Preview ${file.fileName}`}
+          onClick={() => onPreview(file)}
+          busy={previewBusy}
+        >
           {previewBusy ? (
             <LoaderCircle size={17} aria-hidden className="animate-spin" />
           ) : (

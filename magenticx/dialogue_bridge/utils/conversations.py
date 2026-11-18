@@ -360,6 +360,9 @@ async def clone_branch_to_conversation(
                 summary=source_attachment.summary,
                 content_sha256=source_attachment.content_sha256,
                 presented=source_attachment.presented,
+                # The fork has the same documents (the agents service copies their
+                # versions), so its cards open the same canvas paths.
+                source_path=source_attachment.source_path,
                 # The fork's history names its uploads by these, so they move
                 # with the file (the agent reads them in the fork too).
                 workspace_name=source_attachment.workspace_name,

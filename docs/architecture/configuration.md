@@ -153,6 +153,8 @@ Who signs session JWTs and which public keys verify them. Production signs with 
 | `SUGGESTIONS_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `10` / `60` | Starter-suggestion generation (LLM-backed) per user. |
 | `COMPACTION_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `10` / `600` | Compacting a conversation (the context panel's button or `/compact`), or undoing it (plan 34), per user, after auth — each compaction is a summary call over most of the conversation. |
 | `SOURCES_READ_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `120` / `60` | Reading a conversation's citation sources (`GET /v1/conversations/{user}/{conversation}/sources`, plan 42), per user, after auth — each read is one agents-service call. |
+| `DOCUMENT_READ_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `120` / `60` | Opening a canvas document, its history or one version (`GET /v1/conversations/{user}/{conversation}/documents…`, plan 44), per user, after auth — each read is one agents-service call. |
+| `DOCUMENT_SAVE_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `30` / `60` | Saving a canvas document version (`POST …/documents/versions`, plan 44), per user, after auth + CSRF — each save writes a version. |
 | `FAVICON_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `600` / `60` | Site icons for the source chips (`GET /v1/favicons/{user}?host=`, plan 42), per user, after auth — an answer can show dozens; most are served from Redis. |
 | `FAVICONS_ENABLED` | `true` | Fetch site icons for the source chips at all; off → every chip shows the site's initial. |
 | `FAVICON_SERVICE_URLS` | DuckDuckGo `ip3`, then Google `s2` | Comma-separated icon services tried in order, `{host}` = the validated hostname (the bridge never contacts the sites themselves). |

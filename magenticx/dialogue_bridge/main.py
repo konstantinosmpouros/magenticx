@@ -44,6 +44,7 @@ from router import (
     preferences_router,
     conversations_router,
     conversation_tasks_router,
+    documents_router,
     tasks_router,
     export_router,
     favicons_router,
@@ -291,6 +292,13 @@ app.include_router(
     conversation_tasks_router,
     prefix="/v1/conversations",
     tags=["Tasks"],
+)
+# Plan 44: a conversation's canvas documents. Three segments and more, like
+# the task routes, so they never shadow /{user_id}/{conversation_id}.
+app.include_router(
+    documents_router,
+    prefix="/v1/conversations",
+    tags=["Documents"],
 )
 app.include_router(
     tasks_router,

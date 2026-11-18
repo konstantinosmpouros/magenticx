@@ -124,6 +124,13 @@ def build_conversation_sources_url(user_id: str, conversation_id: str) -> str:
     return f"{base}/users/{user_id}/conversations/{conversation_id}/sources"
 
 
+def build_conversation_documents_url(user_id: str, conversation_id: str) -> str:
+    """A conversation's canvas documents in the agents service (plan 44): their
+    versions are keyed by the conversation, like its files."""
+    base = AGENTS_SERVICE_URL.rstrip("/")
+    return f"{base}/users/{user_id}/conversations/{conversation_id}/documents"
+
+
 def build_conversation_reap_url(user_id: str, conversation_id: str) -> str:
     """POST endpoint that drops a deleted conversation's threads and files."""
     base = AGENTS_SERVICE_URL.rstrip("/")

@@ -23,6 +23,9 @@ export type AttachmentOut = {
   title?: string;
   summary?: string;
   presented?: boolean;
+  // The virtual path a generated file was presented at (e.g.
+  // `/conversation/output/brief.md`); undefined for uploads and older rows.
+  sourcePath?: string;
 };
 
 // Attachment input for API requests (base64 format)

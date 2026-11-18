@@ -22,6 +22,10 @@ _BODY = """\
   is too small to read, call it again on the same path with a `region` to zoom
   in — the result tells you the pixel dimensions to aim at, and each call is a
   fresh look.
+- **Make a file only when the user asks for one.** When they name a format
+  (Word, Excel, PowerPoint, PDF), make that file. Otherwise answer in the chat,
+  however long the answer — never write and present a file on your own
+  initiative.
 - **Hand over a document** with `present_artifact`, after writing the file to
   `/conversation/output/`. A file left in `output/` is invisible to the user;
   presenting it drops a downloadable card into the conversation at that point,

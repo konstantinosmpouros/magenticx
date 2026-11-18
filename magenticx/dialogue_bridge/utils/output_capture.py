@@ -10,9 +10,16 @@ links, forks and the PDF export carry it like any other attachment.
 
 Every stored row is ``AttachmentTable(origin="generated", presented=True)`` +
 ``BlobTable`` on the answer, with ``content_sha256`` taken from the bytes
-received. Fail-open throughout: the answer is already persisted, so an
-unreachable agents service, a file gone or bad base64 is logged and skipped —
-never a failed run.
+received, and ``source_path`` set to the virtual path it was presented from.
+
+A presented ``.md`` under ``/conversation/output/`` is also a canvas document
+(plan 44): after the snapshot, :func:`capture_canvas_documents` asks the
+agents service to record its current file as the agent's next version, so the
+canvas history has every version the agent handed over.
+
+Fail-open throughout: the answer is already persisted, so an unreachable
+agents service, a file gone or bad base64 is logged and skipped — never a
+failed run.
 """
 from __future__ import annotations
 
@@ -28,9 +35,36 @@ from core.logging import get_context, get_logger
 from core.security.internal_trust import internal_service_headers
 from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
-from utils.agents import build_conversation_files_url
+from utils.agents import build_conversation_documents_url, build_conversation_files_url
 
 logger = get_logger(__name__)
+
+#: Where a deliverable is presented from, and what makes it a canvas document.
+OUTPUT_PREFIX = "/conversation/output/"
+DOCUMENT_SUFFIX = ".md"
+#: The column's bound (``attachments.source_path``, migration 0049).
+SOURCE_PATH_MAX_CHARS = 1024
+
+
+def _source_path(path: Any) -> str | None:
+    """The presented virtual path, kept only when it is one (under output/, bounded)."""
+    if isinstance(path, str) and path.startswith(OUTPUT_PREFIX) and len(path) <= SOURCE_PATH_MAX_CHARS:
+        return path
+    return None
+
+
+def canvas_document_paths(presented: list[dict[str, Any]]) -> list[str]:
+    """The presented paths that are canvas documents: ``.md`` files under output/.
+
+    A plain filter; the agents service validates each path again (normalised,
+    no traversal) and skips any it does not accept.
+    """
+    found: list[str] = []
+    for artifact in presented:
+        path = _source_path(artifact.get("path"))
+        if path and path.endswith(DOCUMENT_SUFFIX) and path not in found:
+            found.append(path)
+    return found
 
 
 async def fetch_output_files(url: str, paths: list[str]) -> list[dict[str, Any]]:
@@ -79,6 +113,8 @@ async def _store_fetched(
                 title=meta.get("title") or None,
                 summary=meta.get("summary") or None,
                 presented=True,
+                # The canvas finds the document's versions by this path.
+                source_path=_source_path(f.get("path")),
                 # From the bytes actually stored, not anyone's claim.
                 content_sha256=hashlib.sha256(raw).hexdigest(),
                 blob=BlobTable(data=raw),
@@ -113,3 +149,40 @@ async def capture_presented_files(
         stored, skipped = stored + done, skipped + missed
     logger.info("presented_files_captured", "Stored the files the agent presented",
                 run_id=run.id, captured=stored, skipped=skipped)
+
+
+async def capture_canvas_documents(
+    run: MessageTable,
+    conversation: ConversationTable | None,
+    presented: list[dict[str, Any]],
+) -> None:
+    """At finalize, after the snapshot: record the presented canvas documents as versions.
+
+    One call to the agents service's ``POST …/documents/capture`` with the
+    presented ``.md`` paths under output/. It is idempotent upstream (the same
+    bytes add no version), so a retried finalize is harmless. Fail-open: a
+    failure is logged and the run finalizes anyway — the canvas then records
+    the file as v1 the first time it is opened.
+    """
+    document_paths = canvas_document_paths(presented)
+    if conversation is None or not document_paths:
+        return
+    url = f"{build_conversation_documents_url(str(conversation.user_id), str(run.conversation_id))}/capture"
+    try:
+        async with httpx.AsyncClient(
+            timeout=settings.http.agents_timeout, verify=get_httpx_verify(), cert=get_httpx_client_cert()
+        ) as client:
+            resp = await client.post(
+                url,
+                json={"paths": document_paths, "source_run_id": str(run.id)},
+                headers=internal_service_headers(get_context().get("request_id")),
+            )
+            resp.raise_for_status()
+            captured = resp.json().get("captured")
+    except (httpx.HTTPError, ValueError, AttributeError) as exc:
+        logger.warning("canvas_documents_capture_failed", "Could not record the presented documents' versions",
+                       run_id=run.id, documents=len(document_paths), error_type=type(exc).__name__)
+        return
+    created = sum(1 for c in captured if isinstance(c, dict) and c.get("created")) if isinstance(captured, list) else 0
+    logger.info("canvas_documents_captured", "Recorded the presented documents' versions",
+                run_id=run.id, documents=len(document_paths), created=created)

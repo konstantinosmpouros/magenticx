@@ -1272,6 +1272,12 @@ class RateLimitSettings(BaseSettings):
     # agents-service call, so it gets its own per-user window.
     sources_read_max_attempts: int = Field(120, validation_alias="SOURCES_READ_RATE_LIMIT_MAX_ATTEMPTS")
     sources_read_window_seconds: int = Field(60, validation_alias="SOURCES_READ_RATE_LIMIT_WINDOW_SECONDS")
+    # Canvas documents (plan 44): opening one, its history or a version is a
+    # read; saving a version is a mutation. Each is one agents-service call.
+    document_read_max_attempts: int = Field(120, validation_alias="DOCUMENT_READ_RATE_LIMIT_MAX_ATTEMPTS")
+    document_read_window_seconds: int = Field(60, validation_alias="DOCUMENT_READ_RATE_LIMIT_WINDOW_SECONDS")
+    document_save_max_attempts: int = Field(30, validation_alias="DOCUMENT_SAVE_RATE_LIMIT_MAX_ATTEMPTS")
+    document_save_window_seconds: int = Field(60, validation_alias="DOCUMENT_SAVE_RATE_LIMIT_WINDOW_SECONDS")
     favicon_max_attempts: int = Field(600, validation_alias="FAVICON_RATE_LIMIT_MAX_ATTEMPTS")
     favicon_window_seconds: int = Field(60, validation_alias="FAVICON_RATE_LIMIT_WINDOW_SECONDS")
 

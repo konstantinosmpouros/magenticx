@@ -306,6 +306,23 @@ sources_read_rate_limit = rate_limit(
     emit_headers=True,
 )
 
+# A conversation's canvas documents (plan 44) — per user, after auth (+ CSRF
+# on the save). Reads are frequent (opening, switching, the history); a save
+# writes a version, so it gets the tighter window.
+document_read_rate_limit = rate_limit(
+    (settings.rate_limit.document_read_max_attempts, settings.rate_limit.document_read_window_seconds),
+    scope="document-read",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
+document_save_rate_limit = rate_limit(
+    (settings.rate_limit.document_save_max_attempts, settings.rate_limit.document_save_window_seconds),
+    scope="document-save",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
 # Site icons for the source chips (plan 42) — per user, after auth. An answer
 # can show dozens at once, so a roomier budget; most are served from Redis.
 favicon_rate_limit = rate_limit(

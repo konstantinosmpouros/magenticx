@@ -191,7 +191,9 @@ async def test_an_account_purge_takes_every_file_of_that_user_only(store):
     await store.create("u1", "c2", "/conversation/b.md", b"b", agent_slug="omni")
     await store.create("u2", "c3", "/conversation/c.md", b"c", agent_slug="omni")
 
-    assert await store.purge_user("u1") == {"conversation_files": 2, "conversation_file_blobs": 2}
+    assert await store.purge_user("u1") == {
+        "conversation_files": 2, "conversation_file_versions": 0, "conversation_file_blobs": 2,
+    }
     assert await store.read("u2", "c3", "/conversation/c.md") == b"c"
 
 

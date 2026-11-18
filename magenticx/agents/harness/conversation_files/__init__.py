@@ -10,6 +10,8 @@ is now rows, and lives exactly as long as the conversation:
 * ``files`` — one run's view of both; ``backend`` — that view as the
   deepagents filesystem behind ``/conversation/``, ``/large_tool_results/``
   and ``/conversation_history/``.
+* ``versions`` — a canvas document's append-only versions (plan 44), over
+  the same blobs.
 * ``paths`` — the one normaliser every path goes through; ``cipher`` — the
   checkpointer's AES key and cipher, reused for the bytes.
 """
@@ -17,10 +19,12 @@ from harness.conversation_files.backend import ConversationFilesBackend
 from harness.conversation_files.files import ConversationFiles
 from harness.conversation_files.inputs import InputsUnavailable
 from harness.conversation_files.store import ConversationFileStore
+from harness.conversation_files.versions import DocumentVersionStore
 
 __all__ = [
     "ConversationFileStore",
     "ConversationFiles",
     "ConversationFilesBackend",
+    "DocumentVersionStore",
     "InputsUnavailable",
 ]

@@ -2,9 +2,9 @@ import { Component, type ErrorInfo, type ReactNode } from "react";
 import { CircleAlert, RotateCcw } from "lucide-react";
 
 /**
- * An error boundary around one section of the workflow view (graph,
- * timeline, details), so a crash in one — or the graph's lazy chunk failing
- * to load — leaves the others standing. A class component because React has
+ * An error boundary around one section of a page — the workflow view's
+ * graph, timeline and details, the document canvas beside the chat — so a
+ * crash in one, or its lazy chunk failing to load, leaves the rest standing. A class component because React has
  * no hook for boundaries; "Try again" re-mounts the section.
  */
 type Props = { label: string; children: ReactNode; className?: string };
@@ -18,8 +18,7 @@ export class SectionBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    if (import.meta.env.DEV)
-      console.error(`Workflow view: ${this.props.label} crashed`, error, info);
+    if (import.meta.env.DEV) console.error(`Section crashed: ${this.props.label}`, error, info);
   }
 
   render() {

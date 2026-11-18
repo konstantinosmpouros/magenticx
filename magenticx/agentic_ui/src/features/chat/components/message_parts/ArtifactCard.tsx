@@ -1,10 +1,12 @@
 import { useState } from "react";
-import { Download, Eye, FileText, Loader2, Sparkles } from "lucide-react";
+import { Download, Eye, FileText, Loader2, PanelRight, Sparkles } from "lucide-react";
 import type { ArtifactBlock, AttachmentOut, MessageOut } from "@/shared/lib/types";
 import { classifyAttachmentPreview } from "@/features/attachments/components/attachment_preview_parts";
 import { useIsMobile } from "@/shared/hooks/use-mobile";
 import { useAttachmentObjectUrl } from "@/features/chat/hooks/useAttachmentObjectUrl";
 import { ImageLightbox } from "@/shared/ui/ImageLightbox";
+import { canvasDocumentPath } from "@/shared/lib/canvasDocuments";
+import { useCanvasOpener } from "@/features/chat/lib/canvasOpener";
 
 type ArtifactCardProps = {
   block: ArtifactBlock;
@@ -22,7 +24,9 @@ type ArtifactCardProps = {
 // position in the run timeline. The downloadable bytes live on the message's
 // matching generated attachment (persisted at run finalize); we reconcile to it
 // by filename. Until it exists (mid-stream, before finalize), the card shows a
-// "Preparing…" state instead of dead actions.
+// "Preparing…" state instead of dead actions. A presented `.md` is a canvas
+// document (plan 44): where the chat has a canvas beside it, the card opens it
+// there; elsewhere (a public share) it previews or downloads as before.
 export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: ArtifactCardProps) {
   const isMobile = useIsMobile();
   const [expanded, setExpanded] = useState(false);
@@ -43,6 +47,11 @@ export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: 
     size: attachment?.size,
   }).previewable;
   const canPreview = previewable && !isMobile && Boolean(onPreview);
+  const openCanvas = useCanvasOpener();
+  const canvasPath =
+    ready && attachment
+      ? canvasDocumentPath({ fileName: attachment.name, sourcePath: attachment.sourcePath })
+      : null;
 
   const download = () => {
     if (attachment && message) onDownload?.(attachment, message);
@@ -61,7 +70,9 @@ export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: 
 
   // Tapping the card is the fallback affordance (esp. mobile, where the hover
   // actions don't exist): preview on desktop when possible, else download.
-  const activate = () => (canPreview ? preview() : download());
+  // A canvas document opens in the canvas, on a phone too (it fills the screen).
+  const activate = () =>
+    openCanvas && canvasPath ? openCanvas(canvasPath) : canPreview ? preview() : download();
 
   if (imageUrl) {
     return (
@@ -146,11 +157,30 @@ export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: 
                 <span>Preparing…</span>
               </div>
             )}
+            {openCanvas && canvasPath ? (
+              <div className="mt-2 flex items-center gap-1.5 text-[11px] font-medium text-primary/80">
+                <PanelRight size={12} aria-hidden="true" />
+                <span>Open in canvas</span>
+              </div>
+            ) : null}
           </div>
         </div>
 
         {ready && attachment && message ? (
           <div className="pointer-events-none absolute right-2.5 top-2.5 flex items-center gap-1 opacity-0 transition-opacity duration-200 group-hover/artifact:pointer-events-auto group-hover/artifact:opacity-100 group-focus-within/artifact:pointer-events-auto group-focus-within/artifact:opacity-100">
+            {openCanvas && canvasPath ? (
+              <button
+                type="button"
+                aria-label={`Open ${primary} in canvas`}
+                className="flex h-7 w-7 items-center justify-center rounded-full border border-border/50 bg-background/90 text-foreground shadow-sm backdrop-blur-sm transition hover:scale-105 hover:text-primary"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openCanvas(canvasPath);
+                }}
+              >
+                <PanelRight size={14} />
+              </button>
+            ) : null}
             {canPreview ? (
               <button
                 type="button"

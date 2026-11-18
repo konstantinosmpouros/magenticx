@@ -205,6 +205,7 @@ async def list_user_files(
             att.presented,
             att.title,
             att.summary,
+            att.source_path,
             att.created_at,
             att.message_id,
             conv.id.label("conversation_id"),
@@ -257,4 +258,5 @@ def _row_to_item(r: Any) -> UserFileOut:
         presented=bool(r.presented),
         title=r.title,
         summary=r.summary,
+        sourcePath=r.source_path,
     )

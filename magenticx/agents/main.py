@@ -33,6 +33,7 @@ from router.catalog import router as catalog_router
 from router.commands import router as commands_router
 from router.conversation_files import router as conversation_files_router
 from router.conversation_sources import router as conversation_sources_router
+from router.documents import router as documents_router
 from router.embeddings import router as embeddings_router
 from router.export import router as export_router
 from router.generation import router as generation_router
@@ -150,6 +151,7 @@ app.include_router(catalog_router)
 app.include_router(commands_router)
 app.include_router(conversation_files_router)
 app.include_router(conversation_sources_router)
+app.include_router(documents_router)
 app.include_router(embeddings_router)
 app.include_router(export_router)
 app.include_router(generation_router)
