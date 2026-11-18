@@ -8,9 +8,11 @@ import { useIsMobile } from "@/shared/hooks/use-mobile";
 
 /**
  * A panel that slides in over the right of the page — a bottom sheet on a
- * phone — without taking the page away: it is not modal, so the canvas, the
- * import's file and the paste box stay usable beside it. Escape or its close
- * button puts it away; a click elsewhere does not.
+ * phone — without taking the page away: it is not modal, so no overlay blocks
+ * the page. Escape, its close button or a click anywhere outside it puts it
+ * away, and that click still reaches what it was aimed at (a canvas node, a
+ * toolbar button). Focus leaving on its own (a file picker closing, a toast)
+ * does not close it: only a pointer press does.
  */
 export function SidePanel({
   open,
@@ -43,8 +45,11 @@ export function SidePanel({
           />
         ) : null}
         <DialogPrimitive.Content
-          onInteractOutside={(event) => {
-            if (!mobile) event.preventDefault();
+          onFocusOutside={(event) => event.preventDefault()}
+          onPointerDownOutside={(event) => {
+            // A toast is not "the page": pressing it must not close the panel.
+            const target = event.target as Element | null;
+            if (target?.closest?.("[data-sonner-toaster]")) event.preventDefault();
           }}
           className={cn(
             "fixed z-50 flex flex-col bg-background text-foreground shadow-[0_24px_60px_-20px_hsl(var(--foreground)/0.35)] focus:outline-none",
