@@ -257,6 +257,14 @@ usage_analytics_rate_limit = rate_limit(
     emit_headers=True,
 )
 
+# The Artifacts page's file listing (plan 44) — per user, after auth.
+files_list_rate_limit = rate_limit(
+    (settings.rate_limit.files_list_max_attempts, settings.rate_limit.files_list_window_seconds),
+    scope="files-list",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
 # Compacting a conversation, or undoing it (plan 34) — per user, after auth.
 compaction_rate_limit = rate_limit(
     (settings.rate_limit.compaction_max_attempts, settings.rate_limit.compaction_window_seconds),

@@ -23,6 +23,7 @@ import { useConversationPlans } from "@/features/chat/hooks/useConversationPlans
 import { useProfilePanel } from "@/features/settings/hooks/useProfilePanel";
 import { useUserAgents } from "@/features/agents/hooks/useUserAgents";
 import { isAgentsPath } from "@/features/agents/lib/routes";
+import { isArtifactsPath } from "@/features/artifacts/lib/routes";
 import { useSettingsPanels } from "@/features/settings/hooks/useSettingsPanels";
 import { useAttachmentPreview } from "@/features/attachments/hooks/useAttachmentPreview";
 import { useOverlayMenus } from "@/features/chat/hooks/useOverlayMenus";
@@ -318,15 +319,18 @@ export function useChatWorkspace({
   //   "/automations"    → the Automations page ("/tasks" redirects there)
   //   "/agents…"        → the Agents pages (gallery, an agent, the builder)
   //   "/workflows/…"    → a workflow's view (its latest run, or one run)
-  // conversationId is undefined on "/", "/automations", "/agents…" and "/workflows/…".
+  //   "/artifacts"      → the Artifacts page (every file, across conversations)
+  // conversationId is undefined on "/", "/automations", "/agents…", "/workflows/…"
+  // and "/artifacts".
   const { conversationId } = useParams();
   const location = useLocation();
   const isAutomationsRoute = isAutomationsPath(location.pathname);
   const isAgentsRoute = isAgentsPath(location.pathname);
   const isWorkflowsRoute = isWorkflowsPath(location.pathname);
-  // A full page over the chat (Automations, Agents or a workflow): no
-  // conversation surface — the page replaces the chat body.
-  const isPageRoute = isAutomationsRoute || isAgentsRoute || isWorkflowsRoute;
+  const isArtifactsRoute = isArtifactsPath(location.pathname);
+  // A full page over the chat (Automations, Agents, a workflow or Artifacts):
+  // no conversation surface — the page replaces the chat body.
+  const isPageRoute = isAutomationsRoute || isAgentsRoute || isWorkflowsRoute || isArtifactsRoute;
   // Create toast wrapper for handlers
   const toastWrapper = useCallback(
     (opts: { title: string; description?: string; variant?: string; duration?: number }) => {

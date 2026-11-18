@@ -5,6 +5,8 @@ Two different things live behind one module, and the split is the point:
 * The **catalogue** is the remote skill sources (plan 30), indexed by the agents
   service into ``agent_runtime``. The bridge forwards a search and an Add; only
   the agents service ever reaches a remote source.
+* The **platform skills** (plan 44) ship with the agents image and are on for
+  every deep agent. The bridge forwards two reads; there is nothing to write.
 * The **user's pool, its content and its per-agent assignments** are owned by
   the agents service too, in ``agent_runtime``. They used to be mirrored into
   ``chat_db`` and kept in step by a 900-second reconciliation pass; that copy
@@ -38,6 +40,7 @@ logger = get_logger(__name__)
 
 _AGENTS_BASE_URL = settings.upstream.agents_service_url.rstrip("/")
 _AGENTS_CATALOGUE_SEARCH_ENDPOINT = f"{_AGENTS_BASE_URL}/skills/catalogue/search"
+_AGENTS_PLATFORM_SKILLS_ENDPOINT = f"{_AGENTS_BASE_URL}/skills/platform"
 
 
 def _user_pool_url(user_id: str) -> str:
@@ -133,6 +136,84 @@ async def search_catalogue(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Agents service returned a malformed search payload.",
+        )
+    return payload
+
+
+async def _get_platform_upstream(url: str, *, operation: str, public_detail: str) -> Any:
+    """GET one platform-skills read from the agents service.
+
+    A 404 is passed on as the user's 404 (the skill does not exist, or the tier
+    is off); every other upstream failure is mapped to ``public_detail`` so no
+    upstream message reaches the UI unreviewed.
+    """
+    upstream_headers = internal_service_headers(get_context().get("request_id"))
+    try:
+        async with httpx.AsyncClient(
+            timeout=_default_timeout(), verify=get_httpx_verify(), cert=get_httpx_client_cert()
+        ) as client:
+            resp = await upstream_error_handler.run_with_retries(
+                logger,
+                lambda: client.get(url, headers=upstream_headers),
+                upstream_service="agents",
+                operation=operation,
+            )
+            if resp.status_code == status.HTTP_404_NOT_FOUND:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No platform skill of that name.",
+                )
+            resp.raise_for_status()
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        upstream_error_handler.raise_http_error(
+            logger,
+            exc,
+            event=f"{operation}_failed",
+            message="Agents service returned an HTTP error reading the platform skills",
+            public_detail=public_detail,
+            upstream_service="agents",
+            operation=operation,
+        )
+    except httpx.RequestError as exc:
+        upstream_error_handler.raise_request_error(
+            logger,
+            exc,
+            event=f"{operation}_unreachable",
+            message="Agents service is unreachable reading the platform skills",
+            public_detail=public_detail,
+            upstream_service="agents",
+            operation=operation,
+        )
+    return resp.json()
+
+
+async def list_platform_skills() -> List[Dict[str, Any]]:
+    """The platform skills every deep agent gets (plan 44); empty when the tier is off.
+
+    Uncached, like every read here: the agents service answers from memory, so
+    the hop is the whole cost and a copy would only be one more thing to expire.
+    """
+    payload = await _get_platform_upstream(
+        _AGENTS_PLATFORM_SKILLS_ENDPOINT,
+        operation="platform_skills_list",
+        public_detail="Could not load the platform skills. Please try again.",
+    )
+    return payload if isinstance(payload, list) else []
+
+
+async def get_platform_skill_detail(*, skill_name: str) -> Dict[str, Any]:
+    """One platform skill with its SKILL.md text, for the read-only viewer."""
+    payload = await _get_platform_upstream(
+        f"{_AGENTS_PLATFORM_SKILLS_ENDPOINT}/{skill_name}",
+        operation="platform_skill_detail",
+        public_detail="Could not load the skill. Please try again.",
+    )
+    if not isinstance(payload, dict):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Agents service returned a malformed platform skill payload.",
         )
     return payload
 

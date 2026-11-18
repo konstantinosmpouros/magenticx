@@ -1,11 +1,13 @@
 /**
- * Skills API — the remote catalogue search, the per-(user, agent) enablement
- * toggles, and the user's personal skill pool (remote additions + custom
- * uploads).
+ * Skills API — the remote catalogue search, the platform skills (read-only),
+ * the per-(user, agent) enablement toggles, and the user's personal skill pool
+ * (remote additions + custom uploads).
  */
 import type {
   CatalogueSearchPage,
   CustomSkillCreatePayload,
+  PlatformSkill,
+  PlatformSkillDetail,
   UserSkill,
   UserSkillDetail,
 } from "../types";
@@ -13,6 +15,8 @@ import { requestJson, requestVoid } from "../http";
 import { PROXY_LIMIT_MB } from "../uploadGuards";
 import {
   CatalogueSearchPageSchema,
+  PlatformSkillDetailSchema,
+  PlatformSkillListSchema,
   StringListSchema,
   UserSkillDetailSchema,
   UserSkillListSchema,
@@ -38,6 +42,24 @@ export async function searchCatalogue(
     signal: options.signal,
     errorMessages: { 429: "Searching too quickly — wait a moment and try again." },
     fallbackMessage: "Failed to search the skill catalogue",
+  });
+}
+
+// The platform skills (plan 44): shipped with the agents image and on for every
+// deep agent, so the list is the same for every user and there is nothing to
+// write. Empty when the server has the tier switched off.
+export async function getPlatformSkills(): Promise<PlatformSkill[]> {
+  return requestJson(`${SKILLS_BASE_PATH}/platform`, {
+    schema: PlatformSkillListSchema,
+    fallbackMessage: "Failed to load the platform skills",
+  });
+}
+
+// One platform skill with its full SKILL.md text, for the read-only viewer.
+export async function getPlatformSkillDetail(skillName: string): Promise<PlatformSkillDetail> {
+  return requestJson(`${SKILLS_BASE_PATH}/platform/${encodeURIComponent(skillName)}`, {
+    schema: PlatformSkillDetailSchema,
+    fallbackMessage: `Failed to load the platform skill ${skillName}`,
   });
 }
 

@@ -13,6 +13,7 @@ import WorkflowView from "./pages/WorkflowView";
 import WorkflowBuilderView from "./pages/WorkflowBuilderView";
 import LegacyTasksRedirect from "./pages/LegacyTasksRedirect";
 import AgentsView from "./pages/AgentsView";
+import ArtifactsView from "./pages/ArtifactsView";
 import AgentsGallery from "./features/agents/pages/AgentsGallery";
 import AgentPage from "./features/agents/pages/AgentPage";
 import AgentBuilderPage from "./features/agents/pages/AgentBuilderPage";
@@ -25,6 +26,7 @@ import { CookieConsentBanner } from "@/shared/ui/cookie-consent-banner";
 import { hasCookieConsent } from "@/shared/lib/cookieConsentStorage";
 import { AUTOMATIONS_PATH, LEGACY_TASKS_PATH } from "@/features/automations/lib/routes";
 import { WORKFLOWS_PATH } from "@/features/workflows/lib/routes";
+import { ARTIFACTS_PATH } from "@/features/artifacts/lib/routes";
 
 const queryClient = new QueryClient();
 
@@ -64,6 +66,8 @@ const App = () => {
                 <Route path="/" element={<ChatView />} />
                 <Route path="/c/:conversationId" element={<ChatView />} />
                 <Route path={AUTOMATIONS_PATH} element={<AutomationsView />} />
+                {/* Every file of the user's, across conversations (plan 44). */}
+                <Route path={ARTIFACTS_PATH} element={<ArtifactsView />} />
                 {/* The old Schedules URL, for one release: query kept. */}
                 <Route path={LEGACY_TASKS_PATH} element={<LegacyTasksRedirect />} />
                 {/* The workflow builder (plan 38, step 3): a new workflow, or one being edited. */}

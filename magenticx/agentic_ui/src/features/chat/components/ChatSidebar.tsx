@@ -1,30 +1,30 @@
 ﻿import * as React from "react";
 import {
-  MessageSquare,
-  MoreHorizontal,
-  PanelLeft,
-  Search,
   Archive,
-  Flag,
-  Trash2,
-  Pencil,
-  Pin,
-  PinOff,
   ArrowRight,
   ChevronRight,
   ChevronsUpDown,
   FileText,
+  Flag,
   HelpCircle,
   Keyboard,
   LifeBuoy,
   LogOut,
+  MessageSquare,
+  MoreHorizontal,
   Palette,
+  PanelLeft,
+  Pencil,
+  Pin,
+  PinOff,
+  Search,
   Settings,
+  Shapes,
   ShieldCheck,
+  Trash2,
   UserRound,
   Workflow,
 } from "lucide-react";
-import { PiWaveformBold } from "react-icons/pi";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Loader } from "@/shared/ui/shadcn-io/loader";
@@ -88,15 +88,16 @@ type ChatSidebarProps = {
   onTitleClick: () => void;
   onNewChat: () => void;
   onOpenSearch: () => void;
-  onVoiceMode?: () => void;
   /** Open the Automations page ("/automations"). */
   onOpenAutomations?: () => void;
   /** Automations with a live run: the badge on the Automations entry. */
   automationsRunningCount?: number;
   /** Open the Agents section ("/agents"). */
   onOpenAgents?: () => void;
+  /** Open the Artifacts page ("/artifacts"): every file, across conversations. */
+  onOpenArtifacts?: () => void;
   /** The page open over the chat, if any — its menu entry is highlighted. */
-  activePage?: "automations" | "agents" | null;
+  activePage?: "automations" | "agents" | "artifacts" | null;
   /** The user's workflows: one entry each in the Workflows section (hidden when there are none). */
   workflows?: WorkflowSummary[];
   /** The workflow whose view is open, if any — its entry is highlighted. */
@@ -394,10 +395,10 @@ export default function ChatSidebar({
   onTitleClick,
   onNewChat,
   onOpenSearch,
-  onVoiceMode,
   onOpenAutomations,
   automationsRunningCount = 0,
   onOpenAgents,
+  onOpenArtifacts,
   activePage = null,
   workflows = [],
   activeWorkflowId = null,
@@ -504,13 +505,6 @@ export default function ChatSidebar({
     }
   }, [onOpenSearch, isMobile, setOpenMobile]);
 
-  const handleVoiceModeClick = React.useCallback(() => {
-    onVoiceMode?.();
-    if (isMobile) {
-      setOpenMobile(false);
-    }
-  }, [onVoiceMode, isMobile, setOpenMobile]);
-
   const handleAutomationsClick = React.useCallback(() => {
     onOpenAutomations?.();
     if (isMobile) {
@@ -536,11 +530,18 @@ export default function ChatSidebar({
     }
   }, [onOpenAgents, isMobile, setOpenMobile]);
 
+  const handleArtifactsClick = React.useCallback(() => {
+    onOpenArtifacts?.();
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  }, [onOpenArtifacts, isMobile, setOpenMobile]);
+
   // The open page's entry wears the selected conversation row's highlight (the
-  // hover surface and the brand bar), gliding between Automations and Agents. Its
+  // hover surface and the brand bar), gliding between the pages. Its
   // own layoutId: a page and a chat are never open at once, but the two lists
   // animate independently.
-  const pageHighlight = (page: "automations" | "agents") =>
+  const pageHighlight = (page: "automations" | "agents" | "artifacts") =>
     activePage === page ? (
       // A soft pill in the theme's colour (no side bar): it reads at a glance in
       // the open rail and in the collapsed one. Between the pages it glides on a
@@ -1179,16 +1180,25 @@ export default function ChatSidebar({
           <SidebarMenuItem>
             <SidebarMenuButton
               size="lg"
-              onClick={handleVoiceModeClick}
+              onClick={handleArtifactsClick}
+              isActive={activePage === "artifacts"}
+              aria-current={activePage === "artifacts" ? "page" : undefined}
               className={cn(
-                `group/nav !flex !h-9 gap-1 items-center rounded-xl bg-transparent px-1.5 py-0 text-sm text-foreground/90 transition-colors supports-[hover:hover]:${INTERACTIVE_SURFACE}`,
+                `group/nav relative !flex !h-9 gap-1 items-center !overflow-visible rounded-xl bg-transparent px-1.5 py-0 text-sm text-foreground/90 transition-colors supports-[hover:hover]:${INTERACTIVE_SURFACE}`,
+                PAGE_ENTRY_ACTIVE,
               )}
-              tooltip="Voice mode"
+              tooltip="Artifacts"
             >
-              <div className="grid size-9 flex-shrink-0 place-items-center">
-                <PiWaveformBold className={`!h-[18px] !w-[18px] ${NAV_ICON_MOTION}`} />
+              {pageHighlight("artifacts")}
+              <div
+                className={cn(
+                  "relative z-[1] grid size-9 flex-shrink-0 place-items-center",
+                  PAGE_ICON_ACTIVE,
+                )}
+              >
+                <Shapes className={`!h-[18px] !w-[18px] ${NAV_ICON_MOTION}`} />
               </div>
-              <span className={RAIL_LABEL}>Voice mode</span>
+              <span className={cn("relative z-[1]", RAIL_LABEL)}>Artifacts</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

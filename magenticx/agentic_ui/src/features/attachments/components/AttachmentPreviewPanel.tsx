@@ -22,9 +22,14 @@ import {
 
 type AttachmentLike = AttachmentOut | Record<string, unknown> | File | string;
 
+/**
+ * What the panel previews. Only the message's id is read (the blob routes are
+ * keyed by it), so a caller outside a chat — the Artifacts page — can pass just
+ * `{ id }` instead of a whole message.
+ */
 export type AttachmentPreviewTarget = {
   attachment: AttachmentLike;
-  message: MessageOut;
+  message: Pick<MessageOut, "id">;
 };
 
 type AttachmentPreviewPanelProps = {
@@ -32,7 +37,7 @@ type AttachmentPreviewPanelProps = {
   userId?: string | null;
   conversationId?: string | null;
   onClose: () => void;
-  onDownload: (attachment: AttachmentLike, message: MessageOut) => void;
+  onDownload: (attachment: AttachmentLike, message: Pick<MessageOut, "id">) => void;
 };
 
 type PreviewState =

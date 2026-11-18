@@ -82,8 +82,7 @@ magenticx/agents/
 │   │   ├── deep_agent.py       DeepAgent(BaseAgent, ABC): deepagents lifecycle, filesystem, subagents, HITL
 │   │   ├── agent_spec.py       AgentSpec/ModelSpec/SubAgentSpec/ToolRef — the parsed agent.yaml contract
 │   │   ├── yaml_agent.py       YamlDeepAgent: one generic deep agent built from an AgentSpec
-│   │   ├── user_agents.py      User-authored agent validation + atomic write/read/delete + version list/read
-│   │   └── agent_seed.py       Boot: seed the image's platform agent folders onto the volume
+│   │   └── user_agents.py      User-authored agent validation + atomic write/read/delete + version list/read
 │   ├── workflows/              ★ workflow engine (plan 38): spec, state, templating, rules, validator, compiler,
 │   │                             runner, events (envelope), ssrf, store (DDL on boot), catalog, nodes/<kind>.py
 │   ├── agui/                   ★ AG-UI protocol (NOT runtime/protocols/agui)
@@ -122,6 +121,7 @@ magenticx/agents/
 │   │   ├── scratch_store.py    BranchScratchStore — the default route as rows per (conversation, branch thread) (plan 41)
 │   │   ├── scratch_backend.py  BranchScratchBackend (the default route) + resolve_branch_thread_id
 │   │   ├── scratch_migration.py  one-shot import of legacy in-state `files` (delete in the next release)
+│   │   ├── retired_agents.py   one-shot boot prune of retired platform agents (`omni-yaml-v1`) off the volume (delete in the next release)
 │   │   ├── memory.py           AGENTS.md index helpers (remember tool backing)
 │   │   └── agent_md_template.py  AGENTS_MD_TEMPLATE seed string
 │   └── skill_registry/
@@ -173,7 +173,7 @@ magenticx/agents/
 
 **Lifespan** — `_lifespan` (`main.py:185-209`), in strict order:
 1. Install the loop exception handler.
-2. `seed_global_agents()` then `refresh_registry()` — seed the built-in declarative agents onto the volume and re-scan so they join `AGENT_REGISTRY` (they are invisible at import, before the seed).
+2. `prune_retired_platform_agents()` then `refresh_registry()` — **one-shot** (`harness/filesystem/retired_agents.py`, delete in the next release): remove the retired `omni-yaml-v1` folder from `<global_root>/agents/` and re-scan so it also leaves `AGENT_REGISTRY`, which discovered it at import. Logs `retired_platform_agents_pruned` once, then is a silent no-op. No platform agent ships as YAML any more (the image's `agents_seed/` and its boot-time copy are gone); the scan stays for a folder placed on the volume out of band.
 3. `await init_durable_checkpointer(app)` (`harness/checkpointer/bootstrap.py`) — **fail fast/loud** if `agent_runtime` is unreachable.
 4. Spawn the **remote-skill sync task** (`run_remote_skill_sync_loop`, `harness/skill_registry/remote/sync.py`) — indexes the allowlisted skill sources into `agent_runtime` ~2 min after boot, then daily, under an advisory lock. Returns at once when `REMOTE_SKILLS_ENABLED=false`. See [remote-skills](../flows/remote-skills.md).
 5. `yield`.
@@ -266,6 +266,8 @@ Every endpoint below carries `dependencies=[Depends(require_internal_caller)]` (
 | 12 | DELETE | `/agents/{slug}/users/{uid}/memories/{name}` | memories | — | — | 204 |
 | 13 | GET | `/skills/catalogue/search` | skills | `q`, `source`, `limit` ≤ 50, `offset` (query) | `CatalogueSearchPage` | 200 |
 | 14 | GET | `/skills/remote/sources` | skills | — | `List[RemoteSourceStatus]` | 200 |
+| 14a | GET | `/skills/platform` | skills | — | `List[PlatformSkill]` — the platform skills (plan 44): `name`, `description`, `licence`, `source_label`, `source_repo`, `source_commit`, `upstream_url`, `file_count`; `[]` when the tier is off (see [remote-skills § Platform skills](../flows/remote-skills.md#platform-skills)) | 200 |
+| 14b | GET | `/skills/platform/{skill_name}` | skills | — | `PlatformSkillDetail` — the row plus `content`, the whole `SKILL.md` | 200 (404 unknown / tier off; 422 name outside `[a-z0-9-]`) |
 | 15 | GET | `/users/{uid}/skills` | skills | — | `List[SkillManifestEntry]` | 200 |
 | 16 | GET | `/users/{uid}/skills/{skill_name}` | skills | — | `UserSkillDetail` | 200 |
 | 17a | GET | `/users/{uid}/export` | export | — | framed NDJSON stream (see [data-export](../flows/data-export.md)) | 200 |
@@ -537,6 +539,8 @@ chat_db attachments (via the bridge) → /conversation/input/  (uploads, read-on
 ## 14. Skills & memory systems
 
 **The skill catalogue is remote** (plan 30). The image bundles no skills of its own: a daily lifespan task indexes eight allowlisted public sources into `skill_catalogue` in `agent_runtime`, the Skills tab searches that index, and a skill's content is downloaded — pinned to one upstream commit and verified file by file — only when someone adds it, then stored once as a shared copy. A user's pool, their custom skill files and their per-agent assignments are rows in the same database. The whole flow, its gates and its failure modes are in [remote-skills](../flows/remote-skills.md). Pool entries of the old `global` kind still read from the catalogue copy an earlier image seeded on the volume; nothing creates one.
+
+**Platform skills** (plan 44) are the exception to "bundles no skills": Anthropic's `docx`, `xlsx`, `pptx`, `pdf`, shipped in `harness/skill_registry/platform_skills/` and mounted read-only at `/platform_skills/` for every deep agent (lowest precedence). They are never pool entries; `GET /skills/platform[/{name}]` (rows 14a/14b, `platform_listing.py`) describes them read-only for the Skills tab.
 
 **Two tiers at *runtime*** (`/default_skills/` = what the agent ships with, `/skills/` = what the user enabled; defaults are loaded last so they win a name clash, and both mounts are write-denied — see [agent-development](agent-development.md)). **Three tiers in the *management* flow:** the remote catalogue (`GET /skills/catalogue/search`) → a per-user **pool** (`/users/{uid}/skills`, add-remote or create-custom) → per-(user, agent) **enablement** (`/agents/{slug}/users/{uid}/skills`, an `agent_skills` row that the `/skills/` mount reads through `SkillStore`).
 

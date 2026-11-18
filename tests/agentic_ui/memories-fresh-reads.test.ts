@@ -31,7 +31,7 @@ const { api } = vi.hoisted(() => ({
 vi.mock("@/shared/lib/api", () => api);
 vi.mock("@/shared/lib/toast", () => ({ toastError: vi.fn() }));
 
-const AGENT = "omni-yaml-v1";
+const AGENT = "omni-agent-v1";
 const KEY = `${AGENT}::m1`;
 
 const row = (updatedAt: string, summary = "a summary") => ({

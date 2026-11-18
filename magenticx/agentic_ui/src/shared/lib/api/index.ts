@@ -50,6 +50,8 @@ export { getTools, getAgentModels, getBuiltinTools, getSuggestions } from "./cat
 
 export {
   searchCatalogue,
+  getPlatformSkills,
+  getPlatformSkillDetail,
   getUserAgentSkills,
   enableUserAgentSkill,
   disableUserAgentSkill,
@@ -108,7 +110,9 @@ export {
   fetchAttachmentBlob,
   fetchAttachmentPreviewBlob,
   fetchDocxPreviewToken,
+  listUserFiles,
 } from "./attachments";
+export type { ListUserFilesParams } from "./attachments";
 
 export {
   generateMessageReadAloudAudio,

@@ -27,7 +27,7 @@ from core.logging import (
     shutdown_logging,
 )
 from harness.skill_registry import run_remote_skill_sync_loop
-from harness.abstractions import seed_global_agents
+from harness.filesystem.retired_agents import prune_retired_platform_agents
 from utils.agents import refresh_registry
 from router.account import router as account_router
 from router.agent_protocol import router as agent_protocol_router
@@ -94,9 +94,10 @@ async def _lifespan(app: FastAPI):
         # Langfuse traces (opt-in): a no-op without LANGFUSE_BASE_URL + keys,
         # and a client that cannot start leaves tracing off, never the service.
         init_langfuse()
-        # Seed built-in declarative (YAML) agents into the global volume, then
-        # re-scan so they join AGENT_REGISTRY (invisible at import, before seed).
-        seed_global_agents()
+        # One-shot (delete in the release after this one): remove the retired
+        # omni-yaml-v1 folder from the volume, then re-scan so it also leaves
+        # AGENT_REGISTRY, which discovered it at import, before the prune.
+        prune_retired_platform_agents()
         refresh_registry()
         # Durable checkpointer — fail fast and loud if agent_runtime is
         # unreachable; cross-turn resume depends on it.

@@ -8,6 +8,8 @@ import type { SkillFile } from "../schemas";
 export type {
   CatalogueSearchPage,
   CatalogueSkill,
+  PlatformSkill,
+  PlatformSkillDetail,
   RemoteProvenance,
   SkillFile,
   UserSkill,
@@ -16,7 +18,7 @@ export type {
 
 // Skills tab sub-view. The tab opens on the hub (a row per area); each row
 // navigates into a dedicated view, and a Back control returns to the hub.
-export type SkillsSubView = "hub" | "global" | "mine" | "agents" | "create";
+export type SkillsSubView = "hub" | "platform" | "global" | "mine" | "agents" | "create";
 
 // A node in a skill's folder tree, derived from a flat list of file paths.
 // `path` is the full relative path to this node; folders have children.

@@ -1,5 +1,5 @@
-"""Skills registry DTOs: a user's pool, skill files, custom-skill create, and the
-search over the remote skill catalogue (plan 30)."""
+"""Skills registry DTOs: a user's pool, skill files, custom-skill create, the
+search over the remote skill catalogue (plan 30) and the platform skills (plan 44)."""
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
@@ -114,3 +114,31 @@ class CatalogueSearchPage(BaseModel):
     limit: int = 10
     offset: int = 0
     remote_enabled: bool = False
+
+
+class PlatformSkill(BaseModel):
+    """One platform skill — a row of ``GET /v1/skills/platform``. Mirrors
+    :class:`agents.schemas.PlatformSkill`.
+
+    Shipped with the agents image and always on for every deep agent: nothing
+    to add, assign or remove. ``licence`` is what the skill's own LICENSE.txt
+    carries (``None`` when unrecognised); ``source_repo`` / ``source_commit``
+    are the upstream it was taken from; ``upstream_url`` links its folder at
+    that commit.
+    """
+
+    name: str
+    description: str = ""
+    licence: Optional[str] = None
+    source_label: str = ""
+    source_repo: str = ""
+    source_commit: str = ""
+    upstream_url: Optional[str] = None
+    file_count: int = 0
+
+
+class PlatformSkillDetail(PlatformSkill):
+    """A platform skill with its full ``SKILL.md`` text — the response of
+    ``GET /v1/skills/platform/{name}``, for a read-only view."""
+
+    content: str = ""

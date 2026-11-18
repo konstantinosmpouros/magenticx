@@ -204,7 +204,8 @@ export function createAttachmentHandlers(ctx: AttachmentsCtx) {
     });
   };
 
-  const handleFileDownload = async (attachment: any, message: MessageOut) => {
+  // Only the message's id is read, so the preview panel can pass `{ id }`.
+  const handleFileDownload = async (attachment: any, message: Pick<MessageOut, "id">) => {
     const { userId, currentConversation } = ctx;
     // Downloads only work for persisted blobs tied to a real conversation/message.
     if (!userId || !currentConversation) {

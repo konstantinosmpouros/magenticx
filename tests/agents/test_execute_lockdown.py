@@ -19,7 +19,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-import yaml
 from deepagents.backends.protocol import SandboxBackendProtocol
 from deepagents.middleware.filesystem import supports_execution
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -495,15 +494,6 @@ def test_the_spec_loader_refuses_execute_false_too(agents_service):
     spec = spec_module.AgentSpec.model_validate(_definition(hitl={"execute": False}))
     errors = spec.reference_errors(is_known_model=lambda _m: True, is_known_native_tool=lambda _t: True)
     assert any("hitl.execute" in e and "cannot be set to false" in e for e in errors)
-
-
-def test_the_seeded_yaml_agent_with_execute_true_still_loads(agents_service):
-    spec_module = importlib.import_module("harness.abstractions.agent_spec")
-    seed = AGENTS_SRC / "harness" / "agents_seed" / "omni-yaml-v1" / "agent.yaml"
-    spec = spec_module.AgentSpec.model_validate(yaml.safe_load(seed.read_text(encoding="utf-8")))
-    assert spec.hitl.get("execute") is True
-    errors = spec.reference_errors(is_known_model=lambda _m: True, is_known_native_tool=lambda _t: True)
-    assert not [e for e in errors if "hitl" in e]
 
 
 def test_a_try_it_trial_gates_execute_at_every_depth(agents_service, monkeypatch):

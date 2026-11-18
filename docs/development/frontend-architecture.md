@@ -39,6 +39,7 @@ src/
     AutomationsView.tsx      #   "/automations" (?agent= / ?template= open the create form)
     LegacyTasksRedirect.tsx  #   "/tasks" → "/automations", query kept (one release)
     AgentsView.tsx           #   "/agents…" — layout over the chat; the agents pages render in its outlet
+    ArtifactsView.tsx        #   "/artifacts" — every file of the user's, across conversations (plan 44)
     Login.tsx  SharedConvPage.tsx
     TermsAndConditions.tsx  PrivacyPolicy.tsx
     NotFound.tsx  ErrorPage.tsx
@@ -75,12 +76,19 @@ src/
                    #   modals, not settings tabs), profile_parts/* (General/Personalization
                    #   (+CustomInstructionsDialog)/Voice/Usage/Security/DataControls/Account
                    #   real tabs + ComingSoon stubs + Skills/Mcp workspace tabs),
-                   #   useProfilePanel, useSkills, useUsageSummary, preferences handler
+                   #   useProfilePanel, useSkills, useCatalogueSearch, usePlatformSkills
+                   #   (read-only Platform page: PlatformSkillsView), useUsageSummary,
+                   #   preferences handler
     sharing/       # SharePanel + share handler
     reporting/     # ReportPanel + report handler
     search/        # SearchPanel + search handler
     voice/         # VoiceModeBody + useChatVoiceMode + useRealtimeVoiceSession + voice handler
     attachments/   # AttachmentPreviewPanel + attachment_preview_parts/* + attachment handler
+    artifacts/     # the Artifacts page (plan 44): ArtifactsPage, artifacts_parts/* (ArtifactRow,
+                   #   ArtifactsToolbar, ArtifactsStates), hooks (useUserFiles — keyset pages of
+                   #   GET /v1/attachments/files; useArtifactActions — preview/download through
+                   #   features/attachments' panel + ImageLightbox; useDebouncedValue,
+                   #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)
 
@@ -165,8 +173,8 @@ attachment preview or a person's text is never rewritten). The provider sits in
 ## Known transitional state
 
 The former `pages/ChatPage.tsx` shell is gone: `App.tsx` mounts
-`app/WorkspaceShell` as a layout route around `/`, `/c/:id`, `/automations` and
-`/agents…`, so the shell never unmounts while the URL picks the view in its
+`app/WorkspaceShell` as a layout route around `/`, `/c/:id`, `/automations`,
+`/agents…`, `/workflows/…` and `/artifacts`, so the shell never unmounts while the URL picks the view in its
 `<Outlet/>`. The workspace bundle reaches the views through a React context
 (`app/workspaceContext.ts`), not a store slice — the file's header explains why.
 

@@ -54,7 +54,8 @@ def global_root() -> Path:
 
 
 def global_agents_root() -> Path:
-    """Where built-in agent definitions are seeded from the image."""
+    """Where platform agent definition folders are discovered (none ship in
+    the image any more; see ``harness.filesystem.retired_agents``)."""
     return global_root() / "agents"
 
 

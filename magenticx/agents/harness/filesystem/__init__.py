@@ -8,7 +8,8 @@ write-deny ladder that goes with it; ``middleware`` is the filesystem
 middleware every stack runs those through. ``scratch_store`` /
 ``scratch_backend`` are the workspace's default route — one branch's scratch
 files as rows, shared live by the orchestrator and its async tasks (plan 41) —
-and ``scratch_migration`` the one-shot import of the old in-state scratch.
+and ``scratch_migration`` the one-shot import of the old in-state scratch;
+``retired_agents`` is the one-shot prune of retired platform agents' folders.
 Nothing a user or a run produces is a directory any more; see
 :mod:`harness.conversation_files`.
 """

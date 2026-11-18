@@ -12,8 +12,6 @@ checkpointing, filesystem, tools):
   that makes an agent *configurable* rather than coded.
 * :class:`YamlDeepAgent` — one generic deep agent driven entirely by an
   ``AgentSpec``, so a folder of config is a working agent.
-* :func:`seed_global_agents` — copies the image's platform agent folders onto the
-  mounted volume at boot.
 * the user-agent authoring surface (``validate_write`` / ``write_user_agent`` /
   ``list_user_agents`` / ``get_user_agent`` / ``delete_user_agent``) — the same
   spec, authored per user through the builder UI.
@@ -27,7 +25,6 @@ from harness.abstractions.langgraph_agent import LangGraphAgent
 from harness.abstractions.deep_agent import DeepAgent
 from harness.abstractions.agent_spec import AgentSpec, ModelSpec, SubAgentSpec, ToolRef
 from harness.abstractions.yaml_agent import YamlDeepAgent
-from harness.abstractions.agent_seed import seed_global_agents
 from harness.abstractions.user_agents import (
     AgentValidationError,
     delete_user_agent,
@@ -51,7 +48,6 @@ __all__ = [
     "delete_user_agent",
     "get_user_agent",
     "list_user_agents",
-    "seed_global_agents",
     "validate_write",
     "write_user_agent",
 ]

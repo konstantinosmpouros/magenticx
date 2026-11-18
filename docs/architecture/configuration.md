@@ -159,6 +159,7 @@ Who signs session JWTs and which public keys verify them. Production signs with 
 | `FAVICON_TIMEOUT_SECONDS` / `FAVICON_MAX_BYTES` | `4` / `32768` | Per upstream call; a bigger icon is refused. |
 | `FAVICON_CACHE_TTL_SECONDS` / `FAVICON_MISS_TTL_SECONDS` | `604800` / `86400` | Redis `favicon:{host}`: an icon for a week, "no icon" for a day. |
 | `USAGE_ANALYTICS_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `60` / `60` | Every Settings → Usage read (plan 33), per user, after auth. Generous for browsing; one conversation's page can count older answers from their event logs. |
+| `FILES_LIST_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `120` / `60` | The Artifacts page's file listing (`GET /v1/attachments/files/{user_id}`, plan 44), per user, after auth. Metadata only, but each page (search, filters, load more) joins across all of the user's files. |
 | `REFRESH_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `10` / `60` | Session refresh (OCI KMS mint) per client IP. |
 | `WS_CONNECT_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `20` / `60` | Run-stream WebSocket handshakes per user (enforced in-route; close code `4429`). |
 | `USER_RATE_LIMIT_MAX_CALLS` | `300` | App-wide aggregate budget per verified user (per-IP fallback) per window. |
@@ -473,7 +474,7 @@ A model newer than the pinned `langchain-openai` needs both facts stated. An unk
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `MAGENTICX_GLOBAL_ROOT` | `/var/magenticx/global` | The global plane on the `magenticx_data` volume: built-in agent definitions and the skills catalogue (build-time content). |
+| `MAGENTICX_GLOBAL_ROOT` | `/var/magenticx/global` | The global plane on the `magenticx_data` volume: platform agent folders (`agents/<slug>/`, scanned at boot; none ship in the image any more) and the skills catalogue (build-time content). |
 | `PLATFORM_SKILLS_ENABLED` | `true` | The platform skills tier (plan 44): Anthropic's document skills (docx, xlsx, pptx, pdf), mounted read-only at `/platform_skills/` in every deep agent. `false` drops the mount, and the next remote sync re-admits the catalogue copies it had refused. |
 | `PLATFORM_SKILLS_ROOT` | `harness/skill_registry/platform_skills` (in the image) | Where the platform skills are read from. Tests point it elsewhere; leave it in deployments. |
 | `CONVERSATION_FILE_MAX_BYTES` | `104857600` (100 MB) | Largest single conversation file (plan 36). A technical safety limit — one file is held in memory to encrypt and write it — not a quota: there is none, and no TTL. An over-cap `write_file`/`edit_file` returns an error the model can act on. |

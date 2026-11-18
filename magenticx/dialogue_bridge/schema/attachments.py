@@ -1,6 +1,7 @@
-"""Attachment DTOs: upload input, blob/attachment output, image gallery rows, DOCX preview token."""
+"""Attachment DTOs: upload input, blob/attachment output, image gallery rows, DOCX preview token,
+and the Artifacts page's cross-conversation file listing."""
 import base64
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from core.settings import settings
 from schema.base import UTCDateTime
@@ -104,3 +105,36 @@ class ImageOut(BaseModel):
     mime: str = Field(..., validation_alias="mime_type")
     createdAt: UTCDateTime = Field(..., validation_alias="created_at")
     dataB64: str
+
+
+class UserFileOut(BaseModel):
+    """One row of the Artifacts page (plan 44): a file of the user's, metadata only.
+
+    Never carries content. The ids are exactly what the existing download /
+    preview routes take (``/download/{user_id}/{conversationId}/{messageId}/{blobId}``),
+    so the bytes keep going through those routes and their ownership checks.
+    """
+    attachmentId: str
+    blobId: str
+    fileName: str
+    mime: str
+    size: Optional[int] = None
+    # "input" = the user uploaded it; "output" = the agent made and presented it.
+    kind: Literal["input", "output"]
+    # Derived from the MIME type or the extension (utils/user_files.py).
+    type: Literal["pdf", "doc", "sheet", "slides", "image", "text", "other"]
+    conversationId: str
+    conversationTitle: Optional[str] = None
+    messageId: str
+    createdAt: UTCDateTime
+    presented: bool = False
+    # The agent's display metadata, on presented outputs only.
+    title: Optional[str] = None
+    summary: Optional[str] = None
+
+
+class UserFilesPage(BaseModel):
+    """A keyset page of :class:`UserFileOut`, newest first; ``nextCursor`` is
+    null on the last page."""
+    items: list[UserFileOut]
+    nextCursor: Optional[str] = None

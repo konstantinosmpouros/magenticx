@@ -3,6 +3,8 @@
 // ------------------------------------------------------
 // `DocxPreviewTokenResponse` is inferred from its Zod schema (see `../schemas`).
 export type { DocxPreviewTokenResponse } from "../schemas";
+// The Artifacts page's listing (plan 44), inferred the same way.
+export type { UserFile, UserFileKind, UserFileType, UserFilesPage } from "../schemas";
 
 // Backend attachment type from API response
 export type AttachmentOut = {

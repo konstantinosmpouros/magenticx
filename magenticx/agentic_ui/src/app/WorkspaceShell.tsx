@@ -25,6 +25,7 @@ import ShareConversationDialog from "@/features/sharing/components/SharePanel";
 
 import { AGENTS_PATH, isAgentsPath } from "@/features/agents/lib/routes";
 import { AUTOMATIONS_PATH, isAutomationsPath } from "@/features/automations/lib/routes";
+import { ARTIFACTS_PATH, isArtifactsPath } from "@/features/artifacts/lib/routes";
 import {
   isWorkflowsPath,
   workflowIdFromPath,
@@ -180,10 +181,11 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
   const isAutomationsPage = isAutomationsPath(pathname);
   const isAgentsPage = isAgentsPath(pathname);
   const isWorkflowsPage = isWorkflowsPath(pathname);
+  const isArtifactsPage = isArtifactsPath(pathname);
+  // Any page over the chat: no incognito card, no context meter.
+  const isOverChatPage = isAutomationsPage || isAgentsPage || isWorkflowsPage || isArtifactsPage;
   const activeWorkflowId = isWorkflowsPage ? workflowIdFromPath(pathname) : null;
-  const incognitoClass = useIncognitoCard(
-    isPrivateMode && !isAutomationsPage && !isAgentsPage && !isWorkflowsPage,
-  );
+  const incognitoClass = useIncognitoCard(isPrivateMode && !isOverChatPage);
   // The route view's surface: the chat, or one of the pages over it. Moving
   // within a surface (chat to chat, agent to agent) never remounts it.
   const surfaceKey = isAutomationsPage
@@ -192,7 +194,9 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
       ? "agents"
       : isWorkflowsPage
         ? "workflows"
-        : "chat";
+        : isArtifactsPage
+          ? "artifacts"
+          : "chat";
   // Main Chat Interface
   if (!authResolved) {
     return (
@@ -273,11 +277,19 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
           onTitleClick={guarded(handleTitleClick)}
           onNewChat={guarded(handleNewChat)}
           onOpenSearch={handleOpenSearch}
-          onVoiceMode={guarded(triggerVoiceMode)}
           onOpenAutomations={guarded(() => navigate(AUTOMATIONS_PATH))}
           automationsRunningCount={automations.runningCount}
           onOpenAgents={guarded(() => navigate(AGENTS_PATH))}
-          activePage={isAgentsPage ? "agents" : isAutomationsPage ? "automations" : null}
+          onOpenArtifacts={guarded(() => navigate(ARTIFACTS_PATH))}
+          activePage={
+            isAgentsPage
+              ? "agents"
+              : isAutomationsPage
+                ? "automations"
+                : isArtifactsPage
+                  ? "artifacts"
+                  : null
+          }
           workflows={workflows.workflows}
           activeWorkflowId={activeWorkflowId}
           onOpenWorkflow={guarded((workflowId: string) => navigate(workflowPath(workflowId)))}
@@ -288,7 +300,7 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
           onLogout={handleLogout}
           userProfile={userProfile}
           contextControl={
-            isAutomationsPage || isAgentsPage || isWorkflowsPage
+            isOverChatPage
               ? null
               : (renderTrigger) => (
                   <ContextMeter

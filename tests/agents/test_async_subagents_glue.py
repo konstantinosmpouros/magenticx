@@ -18,12 +18,10 @@ from __future__ import annotations
 import asyncio
 import importlib
 import json
-from pathlib import Path
 from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
-import yaml
 from deepagents import create_deep_agent
 from deepagents.middleware.async_subagents import _notification_message
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
@@ -31,10 +29,6 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, Too
 from langgraph.checkpoint.memory import MemorySaver
 
 TASK_ID = "5b0c7f0e-1111-4222-8333-944455556666"
-SEED_OMNI = (
-    Path(__file__).resolve().parents[2]
-    / "magenticx" / "agents" / "harness" / "agents_seed" / "omni-yaml-v1" / "agent.yaml"
-)
 
 
 class _Scripted(FakeMessagesListChatModel):
@@ -527,12 +521,6 @@ def test_a_stored_task_gate_reaches_start_async_task(agent_spec, gates):
     # A definition stored before the cut-over still gates (or clears) delegation.
     assert not _resolve(gates, own=_spec(agent_spec, {"task": False}).hitl).get("start_async_task")
     assert _resolve(gates, own=_spec(agent_spec, {"task": True}).hitl)["start_async_task"] is True
-
-
-def test_the_seed_omni_definition_loads_with_the_new_key(agent_spec):
-    spec = agent_spec.AgentSpec.model_validate(yaml.safe_load(SEED_OMNI.read_text(encoding="utf-8")))
-    assert spec.hitl.get("start_async_task") is True
-    assert "task" not in spec.hitl
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import {
   FilePlus,
   Library,
   Loader2,
+  Lock,
   Plus,
   RotateCw,
   Search,
@@ -29,7 +30,9 @@ import type {
 } from "@/shared/lib/types";
 import { usePanelHeader } from "@/features/settings/panel-header-context";
 import { useCatalogueSearch } from "@/features/settings/hooks/useCatalogueSearch";
+import { usePlatformSkills } from "@/features/settings/hooks/usePlatformSkills";
 import { InfoCard, SkillHubRow, SoftPanel, ToggleSwitch } from "./shared";
+import PlatformSkillsView from "./PlatformSkillsView";
 import SkillBuilder from "./SkillBuilder";
 import SkillFilesViewer from "./SkillFilesViewer";
 import SkillProvenance from "./SkillProvenance";
@@ -187,6 +190,11 @@ export default function SkillsTab({
   // Publish the inner page to the panel's own header instead of stacking a
   // second title under it. The hub keeps the section's static metadata.
   const SUBVIEW_HEADERS: Partial<Record<SkillsSubView, { title: string; description: string }>> = {
+    platform: {
+      title: "Platform skills",
+      description:
+        "Built into mAgenticX and always on for every deep agent. Open one to read its SKILL.md.",
+    },
     mine: {
       title: "Your skills",
       description:
@@ -281,6 +289,17 @@ export default function SkillsTab({
   const myPoolNames = useMemo(() => new Set((mySkills ?? []).map((s) => s.name)), [mySkills]);
   const catalogTruncated = Math.max(0, catalog.total - catalog.results.length);
 
+  // The platform skills (plan 44): read-only, the same for every user. Loaded
+  // on tab entry so the hub row can show its count before the view is opened.
+  const platform = usePlatformSkills();
+  const platformMeta = platform.error
+    ? "unavailable"
+    : platform.loading
+      ? "loading…"
+      : platform.skills.length === 0
+        ? "off"
+        : `${platform.skills.length} always on`;
+
   return (
     <div className="space-y-6 animate-fade-in">
       <AnimatePresence mode="wait" initial={false}>
@@ -288,6 +307,16 @@ export default function SkillsTab({
           <motion.div key="skills-hub" className="space-y-3" {...skillsViewMotionProps}>
             <SkillHubRow
               index={0}
+              reduceMotion={Boolean(prefersReducedMotion)}
+              icon={<Lock className="h-5 w-5" aria-hidden />}
+              title="Platform skills"
+              subtitle="Built in · Word, Excel, PowerPoint, PDF"
+              meta={platformMeta}
+              actionLabel="View"
+              onClick={() => setSkillsView("platform")}
+            />
+            <SkillHubRow
+              index={1}
               reduceMotion={Boolean(prefersReducedMotion)}
               icon={<Library className="h-5 w-5" aria-hidden />}
               title="Skill catalogue"
@@ -303,7 +332,7 @@ export default function SkillsTab({
               onClick={() => setSkillsView("global")}
             />
             <SkillHubRow
-              index={1}
+              index={2}
               reduceMotion={Boolean(prefersReducedMotion)}
               icon={<Sparkles className="h-5 w-5" aria-hidden />}
               title="My skills"
@@ -313,7 +342,7 @@ export default function SkillsTab({
               onClick={() => setSkillsView("mine")}
             />
             <SkillHubRow
-              index={2}
+              index={3}
               reduceMotion={Boolean(prefersReducedMotion)}
               icon={<Bot className="h-5 w-5" aria-hidden />}
               title="Agent skills"
@@ -323,7 +352,7 @@ export default function SkillsTab({
               onClick={() => setSkillsView("agents")}
             />
             <SkillHubRow
-              index={3}
+              index={4}
               reduceMotion={Boolean(prefersReducedMotion)}
               icon={<FilePlus className="h-5 w-5" aria-hidden />}
               title="Create a skill"
@@ -337,6 +366,16 @@ export default function SkillsTab({
               Reusable playbooks your deep agents load when relevant — add or author them here, then
               assign per agent.
             </p>
+          </motion.div>
+        ) : null}
+
+        {skillsView === "platform" ? (
+          <motion.div key="skills-platform" {...skillsViewMotionProps}>
+            <PlatformSkillsView
+              platform={platform}
+              cardMotion={skillCardMotion}
+              prefersReducedMotion={prefersReducedMotion}
+            />
           </motion.div>
         ) : null}
 
@@ -674,6 +713,18 @@ export default function SkillsTab({
           <motion.div key="skills-agents" {...skillsViewMotionProps}>
             <InfoCard>
               <div className="flex flex-col gap-3">
+                {platform.skills.length > 0 ? (
+                  <p className="flex items-start gap-2 rounded-[1.1rem] bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+                    <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/70" aria-hidden />
+                    <span>
+                      Always on for every agent:{" "}
+                      <span className="font-medium text-foreground/80">
+                        {platform.skills.map((s) => s.name).join(", ")}
+                      </span>{" "}
+                      (platform skills).
+                    </span>
+                  </p>
+                ) : null}
                 {(mySkills?.length ?? 0) === 0 ? (
                   <p className="text-sm text-muted-foreground">
                     Your pool is empty. Go back and add some skills first.

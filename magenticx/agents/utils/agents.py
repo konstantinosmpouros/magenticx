@@ -12,9 +12,13 @@ sources, hybrid during the migration to declarative agents:
    agent **overrides** a
    Python-class agent with the same slug (the migration direction).
 
-The registry is **refreshable**, not frozen at import: the global volume is
-seeded during the service lifespan (after import), so :func:`refresh_registry`
-must be called once the seed is in place to pick up the built-in YAML agents.
+No platform agent ships in YAML form any more (the image's ``agents_seed/``
+and its boot-time copy are gone); the scan stays for a folder placed on the
+volume out of band.
+
+The registry is **refreshable**, not frozen at import: the service lifespan
+may change the volume after import (today: the one-shot prune of retired
+platform agents), so :func:`refresh_registry` re-scans once that is done.
 It mutates ``AGENT_REGISTRY`` **in place** so modules that did
 ``from utils.agents import AGENT_REGISTRY`` observe the update.
 """
@@ -377,9 +381,9 @@ async def definition_candidates(
 def refresh_registry() -> Dict[str, AgentDefinition]:
     """Re-scan sources and update ``AGENT_REGISTRY`` **in place**.
 
-    Called from the service lifespan after the global volume is seeded, so the
-    built-in YAML agents (invisible at import time, before the seed) become
-    available. Mutating in place keeps existing ``AGENT_REGISTRY`` references
+    Called from the service lifespan once it has changed the global volume (the
+    one-shot prune of retired platform agents), so the registry matches what
+    is on disk. Mutating in place keeps existing ``AGENT_REGISTRY`` references
     valid."""
     fresh = _build_registry()
     AGENT_REGISTRY.clear()

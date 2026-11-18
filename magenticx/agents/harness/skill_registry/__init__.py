@@ -12,6 +12,10 @@ entry is one of:
   deleted. Still readable from the volume so nothing a user holds breaks; no
   code path can create one.
 
+The platform skills (plan 44) are not pool entries either: they ship with the
+image, every deep agent gets them, and :mod:`.platform_listing` describes them
+for the Skills tab.
+
 A platform agent's own bundled ``skills/`` folder is a different thing (tier ①
 of that agent) and is not part of this subsystem.
 """
@@ -19,6 +23,11 @@ from harness.skill_registry.remote import (
     RemoteSkillRefused,
     RemoteSkillUnavailable,
     run_remote_skill_sync_loop,
+)
+from harness.skill_registry.platform_listing import (
+    PlatformSkillNotFound,
+    get_platform_skill,
+    list_platform_skills,
 )
 from harness.skill_registry.store import SkillStore
 from harness.skill_registry.user_registry import (
@@ -39,6 +48,7 @@ from harness.skill_registry.user_registry import (
 )
 
 __all__ = [
+    "PlatformSkillNotFound",
     "RemoteSkillRefused",
     "RemoteSkillUnavailable",
     "RemoteSkillsDisabled",
@@ -48,7 +58,9 @@ __all__ = [
     "add_custom_to_user",
     "add_remote_to_user",
     "assign_user_skill_to_agent",
+    "get_platform_skill",
     "get_user_skill_detail",
+    "list_platform_skills",
     "list_remote_sources",
     "list_user_agent_skills",
     "list_user_skill_names",

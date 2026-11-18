@@ -214,7 +214,7 @@ The agent's own definition folder is additionally mounted read-only at `/referen
 
 Approval gates are **never set per sub-agent**, so each one — at every depth — inherits the agent's resolved `interrupt_on` (re-resolved for its own tools, locked gates last) — giving a sub-agent a tool cannot route around that tool's gate.
 
-> Until plan 20 (2026-09-27) a sub-agent always received an explicit list: an empty one meant *no* tools, and MCP refs were ignored with `yaml_subagent_mcp_tools_ignored`. Existing sub-agents that declared none — `omni-yaml-v1`'s `researcher` and `writer` — now inherit their parent's tools.
+> Until plan 20 (2026-09-27) a sub-agent always received an explicit list: an empty one meant *no* tools, and MCP refs were ignored with `yaml_subagent_mcp_tools_ignored`. Existing sub-agents that declared none now inherit their parent's tools.
 
 ---
 

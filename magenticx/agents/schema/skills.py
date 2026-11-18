@@ -1,5 +1,6 @@
 """Skill-registry DTOs: a user's pool rows, skill folder files, the
-create/detail payloads for custom skills, and the remote catalogue search (plan 30)."""
+create/detail payloads for custom skills, the remote catalogue search (plan 30)
+and the platform skills (plan 44)."""
 from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
@@ -144,6 +145,33 @@ class RemoteSourceStatus(BaseModel):
     last_error: Optional[str] = None
     skill_count: int = 0
     admitted_count: int = 0
+
+
+class PlatformSkill(BaseModel):
+    """One platform skill (plan 44): shipped with the image, always on for every
+    deep agent at ``/platform_skills/``, never added, assigned or removed.
+
+    ``description`` comes from the SKILL.md front matter; ``licence`` from the
+    skill's own ``LICENSE.txt`` (``None`` when its wording is not recognised).
+    ``source_repo`` / ``source_commit`` are what ``platform_skills/SOURCE``
+    pins; ``source_label`` is the repo as ``owner/repo``; ``upstream_url`` links
+    the skill's folder at that commit. ``file_count`` counts the files shipped.
+    """
+
+    name: str
+    description: str = ""
+    licence: Optional[str] = None
+    source_label: str = ""
+    source_repo: str = ""
+    source_commit: str = ""
+    upstream_url: Optional[str] = None
+    file_count: int = 0
+
+
+class PlatformSkillDetail(PlatformSkill):
+    """A platform skill with its full ``SKILL.md`` text, for a read-only view."""
+
+    content: str = ""
 
 
 SkillManifestEntry.model_rebuild()

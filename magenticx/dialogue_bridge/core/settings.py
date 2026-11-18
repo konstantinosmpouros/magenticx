@@ -1235,6 +1235,11 @@ class RateLimitSettings(BaseSettings):
     # page load is real database work — a per-user ceiling, generous for browsing.
     usage_analytics_max_attempts: int = Field(60, validation_alias="USAGE_ANALYTICS_RATE_LIMIT_MAX_ATTEMPTS")
     usage_analytics_window_seconds: int = Field(60, validation_alias="USAGE_ANALYTICS_RATE_LIMIT_WINDOW_SECONDS")
+    # The Artifacts page's file listing (plan 44): metadata only, but each page
+    # (search, filters, "load more") is a join across all of the user's files —
+    # a per-user ceiling, generous for typing in the search box.
+    files_list_max_attempts: int = Field(120, validation_alias="FILES_LIST_RATE_LIMIT_MAX_ATTEMPTS")
+    files_list_window_seconds: int = Field(60, validation_alias="FILES_LIST_RATE_LIMIT_WINDOW_SECONDS")
     # Compacting a conversation (plan 34) costs a summary call over most of it;
     # undo shares the budget. Per user — a person compacts a few times a day.
     compaction_max_attempts: int = Field(10, validation_alias="COMPACTION_RATE_LIMIT_MAX_ATTEMPTS")

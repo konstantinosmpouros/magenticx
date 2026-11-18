@@ -1,5 +1,5 @@
-"""Skill routes: the remote catalogue search, a user's pool and its per-agent
-assignments. Every route is internal (the bridge is the caller) and thin — the
+"""Skill routes: the remote catalogue search, the platform skills, a user's pool
+and its per-agent assignments. Every route is internal (the bridge is the caller) and thin — the
 rules live in ``harness.skill_registry``."""
 from typing import List, Optional
 
@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from core.security.internal_trust import require_internal_caller
 from core.logging import get_logger
 from harness.skill_registry import (
+    PlatformSkillNotFound,
     RemoteSkillRefused,
     RemoteSkillUnavailable,
     RemoteSkillsDisabled,
@@ -15,7 +16,9 @@ from harness.skill_registry import (
     add_custom_to_user,
     add_remote_to_user,
     assign_user_skill_to_agent,
+    get_platform_skill,
     get_user_skill_detail,
+    list_platform_skills,
     list_remote_sources,
     list_user_skills,
     list_user_agent_skills,
@@ -26,6 +29,8 @@ from harness.skill_registry import (
 from schema import (
     CatalogueSearchPage,
     CustomSkillCreate,
+    PlatformSkill,
+    PlatformSkillDetail,
     RemoteSourceStatus,
     SkillManifestEntry,
     UserSkillDetail,
@@ -78,6 +83,40 @@ async def search_skill_catalogue(
 async def get_remote_skill_sources() -> List[RemoteSourceStatus]:
     """Every allowlisted source and its last sync outcome — for an ops glance."""
     return await list_remote_sources()
+
+
+# ------------------------------------------------------------------
+# Platform skills (plan 44) — read-only
+# ------------------------------------------------------------------
+# Shipped with the image and mounted for every deep agent; there is nothing to
+# add, assign or remove, so these two reads are the whole surface. Plain ``def``
+# on purpose: the first read touches disk, so FastAPI runs them in its
+# threadpool rather than on the event loop.
+@router.get(
+    "/skills/platform",
+    response_model=List[PlatformSkill],
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_internal_caller)],
+)
+def get_platform_skills() -> List[PlatformSkill]:
+    """Every platform skill with its source and licence; empty when the tier is off."""
+    return list_platform_skills()
+
+
+@router.get(
+    "/skills/platform/{skill_name}",
+    response_model=PlatformSkillDetail,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_internal_caller)],
+)
+def get_platform_skill_detail(
+    skill_name: str = Path(..., pattern=_ID_PATTERN),
+) -> PlatformSkillDetail:
+    """One platform skill with its SKILL.md text, for the read-only viewer."""
+    try:
+        return get_platform_skill(skill_name)
+    except PlatformSkillNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
 
 
 @router.post(

@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from fastapi_pagination import Page, Params
 from core.logging import get_logger, set_context
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from core.auth.session import AuthUser
+from core.security.rate_limit import files_list_rate_limit
 from core.settings import settings
-from schema import DocxPreviewTokenOut, ImageOut
+from schema import DocxPreviewTokenOut, ImageOut, UserFilesPage
 from utils import validate_userId
 from utils.attachments import (
     _get_attachment_blob_row,
@@ -19,6 +22,7 @@ from utils.attachments import (
     stream_blob_response,
     validate_docx_preview_token,
 )
+from utils.user_files import list_user_files
 
 
 router = APIRouter()
@@ -178,3 +182,47 @@ async def getImagesBatch(
     return page
 
 
+@router.get(
+    "/files/{user_id}",
+    response_model=UserFilesPage,
+    status_code=status.HTTP_200_OK,
+    summary="List all of the user's files across conversations (metadata only)",
+)
+async def listUserFiles(
+    user_id: str,
+    kind: Optional[Literal["input", "output"]] = Query(None),
+    file_type: Optional[Literal["pdf", "doc", "sheet", "slides", "image", "text", "other"]] = Query(
+        None, alias="type"
+    ),
+    q: Optional[str] = Query(None, max_length=200),
+    cursor: Optional[str] = Query(None, max_length=512),
+    limit: int = Query(30, ge=1, le=100),
+    _current_user: AuthUser = Depends(validate_userId),
+    # After auth on purpose: the bucket is keyed on the path's {user_id}, so it
+    # must only ever count requests that user actually made.
+    __: None = Depends(files_list_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """The Artifacts page (plan 44): one keyset page of the caller's uploads and
+    presented outputs, newest first. Never returns content — the bytes stay
+    behind /download and /preview, which re-check ownership per file."""
+    set_context(user_id=user_id)
+    page = await list_user_files(
+        db,
+        user_id,
+        kind=kind,
+        file_type=file_type,
+        query=(q or "").strip() or None,
+        cursor=cursor,
+        limit=limit,
+    )
+    logger.info(
+        "user_files_listed",
+        "Listed the user's files",
+        kind=kind,
+        file_type=file_type,
+        searched=bool(q),
+        items=len(page.items),
+        has_more=page.nextCursor is not None,
+    )
+    return page

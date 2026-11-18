@@ -1,6 +1,8 @@
 """Skills router — the remote catalogue, a user's pool, and per-agent selection.
 
 - ``GET /v1/skills/catalogue`` searches the remote skill catalogue (plan 30).
+- ``GET /v1/skills/platform[/{name}]`` reads the platform skills (plan 44):
+  shipped with the agents image, on for every deep agent, read-only.
 - ``GET / POST / DELETE /v1/skills/users/{user_id}[/...]`` manage the user's
   pool: add a remote skill, create a custom one, remove (cascades to every
   per-agent assignment).
@@ -28,6 +30,8 @@ from core.security.rate_limit import (
 from schema import (
     CatalogueSearchPage,
     CustomSkillCreateRequest,
+    PlatformSkill,
+    PlatformSkillDetail,
     UserSkill,
     UserSkillDetail,
 )
@@ -37,8 +41,10 @@ from utils.skills import (
     create_custom_skill_in_pool,
     disable_user_agent_skill,
     enable_user_agent_skill,
+    get_platform_skill_detail,
     get_user_agent_skills,
     get_user_skill_detail,
+    list_platform_skills,
     list_user_skills,
     remove_skill_from_user_pool,
     search_catalogue,
@@ -69,6 +75,36 @@ async def search_skill_catalogue(
     """Search the remote skill catalogue. Requires a valid session."""
     payload = await search_catalogue(query=q, source=source, limit=limit, offset=offset)
     return CatalogueSearchPage.model_validate(payload)
+
+
+# ---------------------------------------------------------------------------
+# Platform skills (plan 44) — read-only, the same for every user
+# ---------------------------------------------------------------------------
+@router.get(
+    "/platform",
+    response_model=List[PlatformSkill],
+    status_code=status.HTTP_200_OK,
+)
+async def get_platform_skills(
+    _: AuthUser = Depends(require_current_user),
+) -> List[PlatformSkill]:
+    """List the platform skills every deep agent gets. Requires a valid session."""
+    payload = await list_platform_skills()
+    return [PlatformSkill.model_validate(item) for item in payload]
+
+
+@router.get(
+    "/platform/{skill_name}",
+    response_model=PlatformSkillDetail,
+    status_code=status.HTTP_200_OK,
+)
+async def get_platform_skill(
+    skill_name: str = Path(..., pattern=_ID_PATTERN),
+    _: AuthUser = Depends(require_current_user),
+) -> PlatformSkillDetail:
+    """One platform skill with its SKILL.md text. Requires a valid session."""
+    payload = await get_platform_skill_detail(skill_name=skill_name)
+    return PlatformSkillDetail.model_validate(payload)
 
 
 # ---------------------------------------------------------------------------

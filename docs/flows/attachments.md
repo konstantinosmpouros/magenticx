@@ -161,6 +161,21 @@ No session authentication required — token validation only. Validates the HMAC
 
 Returns a paginated list of all image attachments for a user across all conversations. Each item includes `dataB64` (base64-encoded image data) for inline embedding. Used by the image gallery feature in the UI.
 
+### `GET /v1/attachments/files/{userId}` — the Artifacts page (plan 44)
+
+Every file of the user's across conversations, **metadata only** (never a byte of content): uploads (`kind=input`, `origin = "upload"`) and the files agents presented (`kind=output`, `origin = "generated"`). The page opens a file through the routes above with the ids each row carries, so every read still goes through their per-file ownership check.
+
+| Query param | Meaning |
+| --- | --- |
+| `kind` | `input` \| `output`; absent = both |
+| `type` | `pdf` \| `doc` \| `sheet` \| `slides` \| `image` \| `text` \| `other` — derived from the MIME type, else the extension, first matching rule wins (`text/csv` is a sheet); the SQL filter applies the same ordered rules, so a filter never disagrees with a row's label |
+| `q` | case-insensitive filename substring (≤ 200 chars; `%` / `_` are literal) |
+| `cursor` / `limit` | opaque keyset cursor on (`created_at`, `id`), newest first; `limit` 1–100, default 30. A malformed cursor is a `400` |
+
+Response `UserFilesPage{items, nextCursor}`; each `UserFileOut` carries `attachmentId`, `blobId`, `fileName`, `mime`, `size`, `kind`, `type`, `conversationId`, `conversationTitle`, `messageId`, `createdAt`, `presented`, `title`, `summary`.
+
+Left out on purpose: other users' files, **private (incognito) chats and "Try it" trials** (every list in the app hides them), and rows without a blob. Deleted conversations and messages drop out by themselves — deletes are hard, and attachments cascade. Archived chats are included. Auth: `validate_userId`, then `files_list_rate_limit` (120/60 per user). The query walks `conversations.user_id` → `messages.conversation_id` → `attachments.message_id`, all indexed; no new index or migration.
+
 ---
 
 ## Phase 4 — Client-Side Preview
@@ -196,6 +211,14 @@ Files that don't match any known type are shown as an unsupported preview with a
 6. For Word / Excel / PowerPoint (`.docx`, `.xlsx`/`.xlsm`, `.ppt`/`.pptx`): calls `fetchDocxPreviewToken()` → `/preview-token/...` to get a 60-second signed token, constructs a `/api/v1/attachments/public/{token}` URL, then embeds it in `https://view.officeapps.live.com/op/embed.aspx?src=...` as an `<iframe>`
 
 `PreviewChrome.tsx` wraps every renderer with consistent controls: close button, download button, and filename display.
+
+### The Artifacts page (`/artifacts`, plan 44)
+
+`features/artifacts/` lists the user's files from `GET /v1/attachments/files/{userId}` (`listUserFiles()`, `UserFilesPageSchema` — field-whitelisted; a row without attachment / blob / conversation / message id is dropped). Kind chips (All / Inputs / Outputs), type chips and a debounced (250 ms) search all go to the bridge, so they cover every file, not just the loaded pages; "Load more" (and scrolling near the end) follows `nextCursor`. A row's actions:
+
+- **Preview** reuses the chat's surfaces, pointed at the file's **own** conversation: non-images open `AttachmentPreviewPanel` (its target's `message` is just `{ id }`); images are fetched through `/download` (the inline `/preview` route refuses images) into an object URL typed with the image's MIME and shown in `ImageLightbox` — an `<img>`, which never runs script.
+- **Download** — `downloadAttachment()` with the row's ids.
+- **Open conversation** — navigates to `/c/:conversationId`.
 
 ---
 
@@ -358,7 +381,9 @@ sequenceDiagram
 | Concept | File | What to look for |
 | --- | --- | --- |
 | DB tables | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) | `AttachmentTable`, `BlobTable`, FK cascade definitions |
-| Attachments router | [magenticx/dialogue_bridge/router/attachments.py](../../magenticx/dialogue_bridge/router/attachments.py) | download, preview, preview-token, public, images endpoints |
+| Attachments router | [magenticx/dialogue_bridge/router/attachments.py](../../magenticx/dialogue_bridge/router/attachments.py) | download, preview, preview-token, public, images, files endpoints |
+| Artifacts listing (bridge) | [magenticx/dialogue_bridge/utils/user_files.py](../../magenticx/dialogue_bridge/utils/user_files.py) | `list_user_files()`, `classify_file_type()` + its SQL twin `_type_filter()`, keyset cursor |
+| Artifacts page (frontend) | [magenticx/agentic_ui/src/features/artifacts/](../../magenticx/agentic_ui/src/features/artifacts/) | `ArtifactsPage`, `useUserFiles`, `useArtifactActions`, `lib/fileFilters.ts`, `lib/routes.ts` |
 | Upload persistence | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `init_attachments()`, `clone_branch_to_conversation()` |
 | Stable upload names | [magenticx/dialogue_bridge/utils/workspace_names.py](../../magenticx/dialogue_bridge/utils/workspace_names.py) | `WorkspaceNames.assign()` (used by `init_attachments()` and the share import), migration `0042_conversation_files` |
 | Uploads for the agent (bridge, internal) | [magenticx/dialogue_bridge/router/internal_conversations.py](../../magenticx/dialogue_bridge/router/internal_conversations.py) | `GET /v1/internal/conversations/{cid}/input-files[/{attachment_id}]` over `utils/conversation_inputs.py` |
@@ -370,9 +395,9 @@ sequenceDiagram
 | Presented-file snapshot (bridge) | [magenticx/dialogue_bridge/utils/output_capture.py](../../magenticx/dialogue_bridge/utils/output_capture.py) | `capture_presented_files()` (in `_finish_run`'s transaction); metadata from `InferenceRunRuntime.presented_artifacts` |
 | Generated-artifact rendering (frontend) | [magenticx/agentic_ui/src/features/chat/components/message_parts/MessageAttachments.tsx](../../magenticx/agentic_ui/src/features/chat/components/message_parts/MessageAttachments.tsx) | `origin === "generated"` branch — left-aligned card, Sparkles icon, agent title/summary |
 | Share snapshot builder | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `_attachment_to_share_snapshot()`, `build_share_snapshot()` |
-| Pydantic schemas | [magenticx/dialogue_bridge/schema/attachments.py](../../magenticx/dialogue_bridge/schema/attachments.py) | `AttachmentIn`, `AttachmentOut`, `ImageOut`, `DocxPreviewTokenOut` |
+| Pydantic schemas | [magenticx/dialogue_bridge/schema/attachments.py](../../magenticx/dialogue_bridge/schema/attachments.py) | `AttachmentIn`, `AttachmentOut`, `ImageOut`, `DocxPreviewTokenOut`, `UserFileOut`, `UserFilesPage` |
 | HMAC token helpers | [magenticx/dialogue_bridge/utils/attachments.py](../../magenticx/dialogue_bridge/utils/attachments.py) | `generate_docx_preview_token()`, `validate_docx_preview_token()` |
-| Frontend API calls | [magenticx/agentic_ui/src/shared/lib/api/](../../magenticx/agentic_ui/src/shared/lib/api/) | `downloadAttachment()`, `fetchAttachmentBlob()`, `fetchAttachmentPreviewBlob()`, `getAttachmentPreviewUrl()`, `fetchDocxPreviewToken()` |
+| Frontend API calls | [magenticx/agentic_ui/src/shared/lib/api/](../../magenticx/agentic_ui/src/shared/lib/api/) | `downloadAttachment()`, `fetchAttachmentBlob()`, `fetchAttachmentPreviewBlob()`, `getAttachmentPreviewUrl()`, `fetchDocxPreviewToken()`, `listUserFiles()` |
 | Frontend types | [magenticx/agentic_ui/src/shared/lib/types/](../../magenticx/agentic_ui/src/shared/lib/types/) | `AttachmentIn`, `AttachmentOut` |
 | Upload validation | [magenticx/agentic_ui/src/shared/lib/uploadGuards.ts](../../magenticx/agentic_ui/src/shared/lib/uploadGuards.ts) | size limits, count limits, base64 inflation check |
 | Upload handlers | [magenticx/agentic_ui/src/features/attachments/handlers/attachments.ts](../../magenticx/agentic_ui/src/features/attachments/handlers/attachments.ts) | `handleFileUpload()`, `handlePaste()`, `fileToAttachmentIn()` |

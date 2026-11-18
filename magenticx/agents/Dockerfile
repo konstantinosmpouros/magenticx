@@ -22,11 +22,6 @@ COPY . .
 COPY load-secrets-and-exec.sh /usr/local/bin/load-secrets-and-exec.sh
 RUN chmod +x /usr/local/bin/load-secrets-and-exec.sh
 
-# Stash the in-repo built-in declarative agents as the seed for the global
-# volume. At boot, harness.abstractions.agent_seed.seed_global_agents copies these into
-# $MAGENTICX_GLOBAL_ROOT/agents/ with `cp -rn` semantics.
-RUN cp -r /app/harness/agents_seed /opt/agents_seed
-
 # Pre-create every persistent mount point with UID 1000 ownership so fresh
 # Docker named volumes inherit permissions the non-root container user can
 # write to. Without this, Docker creates the directory as root and the

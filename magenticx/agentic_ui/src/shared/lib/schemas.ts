@@ -213,6 +213,36 @@ export const CatalogueSearchPageSchema = z.record(z.unknown()).transform((raw) =
 }));
 export type CatalogueSearchPage = z.infer<typeof CatalogueSearchPageSchema>;
 
+// A platform skill (plan 44): shipped with the agents image and always on for
+// every deep agent — nothing to add, assign or remove. `licence` is what the
+// skill's own LICENSE.txt carries (null when unrecognised); `sourceCommit` is
+// the upstream commit it was taken from. Rows without a name are dropped.
+const toPlatformSkill = (raw: Record<string, unknown>) => ({
+  name: typeof raw.name === "string" ? raw.name : "",
+  description: typeof raw.description === "string" ? raw.description : "",
+  licence: optionalString(raw.licence),
+  sourceLabel: typeof raw.source_label === "string" ? raw.source_label : "",
+  sourceCommit: optionalString(raw.source_commit),
+  upstreamUrl: safeHttpsUrl(raw.upstream_url),
+  fileCount: typeof raw.file_count === "number" ? raw.file_count : 0,
+});
+export type PlatformSkill = ReturnType<typeof toPlatformSkill>;
+export const PlatformSkillListSchema = z
+  .array(z.unknown())
+  .catch([])
+  .transform((rows) =>
+    rows
+      .map((row) => toPlatformSkill((row ?? {}) as Record<string, unknown>))
+      .filter((row) => row.name),
+  );
+
+// One platform skill with its full SKILL.md text, for the read-only viewer.
+export const PlatformSkillDetailSchema = z.record(z.unknown()).transform((raw) => ({
+  ...toPlatformSkill(raw),
+  content: typeof raw.content === "string" ? raw.content : "",
+}));
+export type PlatformSkillDetail = z.infer<typeof PlatformSkillDetailSchema>;
+
 // ---------------------------------------------------------------------------
 // User-authored agents (the agent builder) — /v1/agents/{user}/custom
 // ---------------------------------------------------------------------------
@@ -616,6 +646,51 @@ export const DocxPreviewTokenSchema = z.record(z.unknown()).transform((raw) => (
       : 0,
 }));
 export type DocxPreviewTokenResponse = z.infer<typeof DocxPreviewTokenSchema>;
+
+// ---------------------------------------------------------------------------
+// The Artifacts page (plan 44): the user's files across conversations, one
+// keyset page at a time. Metadata only — the bytes go through the existing
+// download / preview routes. Field-whitelisted like every transform here: a new
+// wire field is dropped until it is added below. A row without the ids those
+// routes need (attachment, blob, conversation, message) is dropped, not shown
+// broken.
+// ---------------------------------------------------------------------------
+export const USER_FILE_KINDS = ["input", "output"] as const;
+export const USER_FILE_TYPES = ["pdf", "doc", "sheet", "slides", "image", "text", "other"] as const;
+export type UserFileKind = (typeof USER_FILE_KINDS)[number];
+export type UserFileType = (typeof USER_FILE_TYPES)[number];
+
+const toFileText = (value: unknown): string | null =>
+  typeof value === "string" && value ? value : null;
+
+const toUserFile = (raw: Record<string, unknown>) => ({
+  attachmentId: toFileText(raw.attachmentId) ?? "",
+  blobId: toFileText(raw.blobId) ?? "",
+  fileName: toFileText(raw.fileName) ?? "file",
+  mime: toFileText(raw.mime) ?? "",
+  size: Number.isFinite(raw.size) ? Math.max(0, Number(raw.size)) : null,
+  kind: (raw.kind === "output" ? "output" : "input") as UserFileKind,
+  type: ((USER_FILE_TYPES as readonly unknown[]).includes(raw.type)
+    ? raw.type
+    : "other") as UserFileType,
+  conversationId: toFileText(raw.conversationId) ?? "",
+  conversationTitle: toFileText(raw.conversationTitle),
+  messageId: toFileText(raw.messageId) ?? "",
+  createdAt: toFileText(raw.createdAt) ?? "",
+  presented: raw.presented === true,
+  title: toFileText(raw.title),
+  summary: toFileText(raw.summary),
+});
+
+export const UserFilesPageSchema = z.record(z.unknown()).transform((raw) => ({
+  items: (Array.isArray(raw.items) ? raw.items : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map(toUserFile)
+    .filter((file) => file.attachmentId && file.blobId && file.conversationId && file.messageId),
+  nextCursor: toFileText(raw.nextCursor),
+}));
+export type UserFilesPage = z.infer<typeof UserFilesPageSchema>;
+export type UserFile = UserFilesPage["items"][number];
 
 // ---------------------------------------------------------------------------
 // Realtime voice session (WebRTC SDP answer)
