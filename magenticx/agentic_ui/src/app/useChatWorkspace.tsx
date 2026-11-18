@@ -1071,7 +1071,7 @@ export function useChatWorkspace({
   });
 
   // Inference handler
-  const { handleSendMessage, handleStopStreaming } = createInferenceHandlers({
+  const { handleSendMessage, handleSendCanvasEdit, handleStopStreaming } = createInferenceHandlers({
     userId,
     selectedAgent,
     isPrivateMode,
@@ -1642,6 +1642,7 @@ export function useChatWorkspace({
     exportConversationPdf,
     handleToggleShowMessageTokenUsage,
     handleSendMessage,
+    handleSendCanvasEdit,
     handleStopStreaming,
     handleImageClick,
     handleStarterSuggestionSelect,

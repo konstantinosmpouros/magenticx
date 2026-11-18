@@ -112,6 +112,13 @@ async def queue_if_busy(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unknown or inactive agent.")
     if message.command is not None:
         await check_invocation(db, user.id, agent, message.command)
+    if message.canvasEdit is not None:
+        # A canvas edit is about one version of a document the active run may
+        # be changing right now; it is sent once the run ends, like files.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Conversation already has an active inference run. A canvas edit can be sent once it finishes.",
+        )
 
     queued = QueuedMessageOut(
         content=message.content,

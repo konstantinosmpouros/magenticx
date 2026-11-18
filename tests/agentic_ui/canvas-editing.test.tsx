@@ -320,7 +320,12 @@ describe("editing hook: a newer version from outside", () => {
     const hook = mount();
     expect(hook.result.current.source).toEqual({ key: 0, markdown: "# Brief\n\nOld.\n" });
     hook.rerender({ latest: version(5, "# Brief\n\nNew.\n") });
-    expect(hook.result.current.source).toEqual({ key: 1, markdown: "# Brief\n\nNew.\n" });
+    // The agent's version: the previous text comes along, so what changed shines.
+    expect(hook.result.current.source).toEqual({
+      key: 1,
+      markdown: "# Brief\n\nNew.\n",
+      previous: "# Brief\n\nOld.\n",
+    });
     expect(hook.result.current.incoming).toBeNull();
     expect(hook.result.current.save?.head.version).toBe(5);
   });

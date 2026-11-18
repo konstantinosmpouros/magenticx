@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from core.settings import settings
 from schema.attachments import AttachmentIn, AttachmentOut
 from schema.base import EffortLevel, Senders, UTCDateTime
+from schema.canvas_edit import CanvasEditIn, CanvasEditOut
 from schema.commands import CommandInvocation
 
 
@@ -102,6 +103,10 @@ class MessageOut(BaseModel):
     # null when they left the model's default. User messages only. A plain str,
     # not the literal: a stored value must never fail a conversation load.
     effort: str | None = None
+    # The canvas passage this user message asks the agent to change (plan 44
+    # 4.3), null on every other message. An unreadable stored value is null,
+    # never a failed conversation load (``_canvas_edit_or_none``).
+    canvasEdit: Optional[CanvasEditOut] = Field(None, validation_alias="canvas_edit")
     # A background-task notification row (plan 41): ``kind`` is
     # "task_notification" (sender stays "user" — it is the orchestrator's
     # input), rendered as a compact notice, never as the user's words. Both
@@ -119,6 +124,20 @@ class MessageOut(BaseModel):
             return None
         try:
             return TaskNoticeOut.model_validate(v)
+        except ValidationError:
+            return None
+
+    @field_validator("canvasEdit", mode="before")
+    @classmethod
+    def _canvas_edit_or_none(cls, v):
+        # Same stance as the task notice: a stored value that no longer fits
+        # the shape is dropped, not allowed to fail the whole conversation.
+        if isinstance(v, CanvasEditOut):
+            return v
+        if not isinstance(v, dict) or not v:
+            return None
+        try:
+            return CanvasEditOut.model_validate(v)
         except ValidationError:
             return None
 
@@ -143,6 +162,11 @@ class MessageIn(BaseModel):
     # How hard a reasoning model thinks on this turn. User messages only; None
     # leaves the model's default. Rides the run context (utils/effort.py).
     effort: EffortLevel | None = None
+    # Ask agent on a canvas selection (plan 44 4.3): the passage, its document
+    # and the instruction. User messages only; ``content`` is the instruction
+    # as the bubble shows it. Checked against the conversation's documents
+    # before anything commits (utils/canvas_edit.py).
+    canvasEdit: Optional[CanvasEditIn] = None
 
     # Optional metadata (your schema already supports on MessageTable)
     thinking: Optional[List[str]] = None
@@ -158,6 +182,10 @@ class MessageIn(BaseModel):
             raise ValueError("Only a user message can run a command.")
         if self.effort is not None and self.sender != "user":
             raise ValueError("Only a user message can set a reasoning effort.")
+        if self.canvasEdit is not None and self.sender != "user":
+            raise ValueError("Only a user message can ask for a canvas edit.")
+        if self.canvasEdit is not None and self.command is not None:
+            raise ValueError("A canvas edit cannot also run a command.")
         if self.sender == "ai" and not self.content and not self.attachments:
             return self
         if not self.content and not self.attachments and self.command is None:

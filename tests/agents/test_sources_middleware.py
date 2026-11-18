@@ -243,7 +243,8 @@ def test_the_section_is_present_only_with_a_source_tool(pe):
 def test_the_section_sits_after_the_capabilities_and_tasks_get_it(pe):
     context = pe.PromptContext(has_source_tools=True, has_conversation=True, narrate_progress=True)
     names = pe.describe_sections(context)
-    assert names.index("citations") == names.index("capabilities") + 1
+    # The platform verbs, then the document rule (plan 44), then citations.
+    assert names.index("citations") == names.index("documents") + 1 == names.index("capabilities") + 2
     task = pe.PromptContext(has_source_tools=True, has_conversation=True, narrate_progress=True,
                             narrate_as_subagent=True)
     assert [name for name, _ in pe.task_sections(task)] == ["citations", "efficiency", "progress"]

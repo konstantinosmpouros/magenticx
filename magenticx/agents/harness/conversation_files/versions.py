@@ -12,7 +12,8 @@ Two ways a version is written, both serialised per (conversation, path) by a
 transaction-scoped advisory lock, so a check-then-insert can never race:
 
 * **the agent's** — at run end the bridge asks for a :meth:`capture` of the
-  documents the run presented; a file whose bytes differ from the latest
+  documents the run presented, and (Phase 4.3) every document the
+  conversation already has; a file whose bytes differ from the latest
   version becomes the next ``agent`` version (same bytes: nothing, so a retry
   is harmless);
 * **the user's** — :meth:`save_user_version`, which must name the latest
@@ -168,6 +169,22 @@ class DocumentVersionStore(ConversationFileStore):
                 {"user_id": user_id, "conversation_id": conversation_id, "limit": limit},
             )
             return [_version(row) for row in await cur.fetchall()]
+
+    async def document_paths(self, user_id: str, conversation_id: str, *, limit: int) -> list[str]:
+        """Every path of the conversation that has versions, in path order, at most ``limit``.
+
+        What a run-end capture checks besides the presented paths (plan 44
+        4.3): an Ask agent edit changes the file with ``edit_file`` and need
+        not present it again, yet must become the agent's next version.
+        """
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT path FROM conversation_file_versions "
+                "WHERE conversation_id = %(conversation_id)s AND user_id = %(user_id)s "
+                "ORDER BY path LIMIT %(limit)s",
+                {"user_id": user_id, "conversation_id": conversation_id, "limit": limit},
+            )
+            return [row["path"] for row in await cur.fetchall()]
 
     async def list_versions(
         self, user_id: str, conversation_id: str, path: str, *, limit: int

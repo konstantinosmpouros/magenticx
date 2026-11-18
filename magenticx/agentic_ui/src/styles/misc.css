@@ -34,3 +34,136 @@
     animation: none;
   }
 }
+
+/* The canvas passage Ask agent is about (plan 44, Phase 4.3), drawn with the
+   CSS Custom Highlight API by features/canvas/lib/askHighlight.ts: a quiet
+   primary tint, the same in both themes through the token. */
+::highlight(canvas-ask) {
+  background-color: hsl(var(--primary) / 0.18);
+}
+
+/* Plan 44, Phase 4.3: what the agent just changed in the canvas shines once
+   (lib/changeShine.ts sets the data attribute and a per-block stagger,
+   --canvas-shine-delay). Three layers over ~2 s:
+   - a bar at the left grows top to bottom, then fades ("changed here");
+   - the new text comes in from a slight blur, as if just written;
+   - a soft band of light sweeps across over a fading tint.
+   Reduced motion: the bar and the fading tint only. */
+[data-canvas-shine] {
+  position: relative;
+  border-radius: 0.5rem;
+  animation:
+    canvas-shine-tint 2.2s ease-out var(--canvas-shine-delay, 0ms) both,
+    canvas-shine-reveal 0.45s cubic-bezier(0.22, 1, 0.36, 1) var(--canvas-shine-delay, 0ms) both;
+}
+
+[data-canvas-shine]::before {
+  content: "";
+  position: absolute;
+  top: 0.15em;
+  bottom: 0.15em;
+  left: -0.85rem;
+  width: 3px;
+  border-radius: 9999px;
+  background: hsl(var(--primary));
+  transform-origin: top;
+  pointer-events: none;
+  animation: canvas-shine-bar 2.2s cubic-bezier(0.22, 1, 0.36, 1) var(--canvas-shine-delay, 0ms)
+    both;
+}
+
+[data-canvas-shine]::after {
+  content: "";
+  position: absolute;
+  inset: -0.15rem -0.35rem;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: linear-gradient(
+    105deg,
+    transparent 30%,
+    hsl(var(--primary) / 0.1) 42%,
+    hsl(var(--primary) / 0.32) 50%,
+    hsl(var(--primary) / 0.1) 58%,
+    transparent 70%
+  );
+  background-size: 300% 100%;
+  background-repeat: no-repeat;
+  animation: canvas-shine-sweep 1.2s cubic-bezier(0.4, 0, 0.2, 1)
+    calc(var(--canvas-shine-delay, 0ms) + 150ms) both;
+}
+
+@keyframes canvas-shine-tint {
+  0% {
+    background-color: hsl(var(--primary) / 0.16);
+  }
+  35% {
+    background-color: hsl(var(--primary) / 0.1);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes canvas-shine-reveal {
+  from {
+    opacity: 0.35;
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes canvas-shine-bar {
+  0% {
+    transform: scaleY(0);
+    opacity: 1;
+  }
+  25% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: scaleY(1);
+    opacity: 0;
+  }
+}
+
+@keyframes canvas-shine-sweep {
+  from {
+    background-position: 100% 0;
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  to {
+    background-position: 0% 0;
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-canvas-shine] {
+    animation: canvas-shine-tint 2.2s linear both;
+  }
+  [data-canvas-shine]::before {
+    animation: canvas-shine-bar-still 2.2s linear both;
+  }
+  [data-canvas-shine]::after {
+    content: none;
+  }
+  @keyframes canvas-shine-bar-still {
+    0%,
+    70% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+}

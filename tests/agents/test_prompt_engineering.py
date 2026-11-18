@@ -167,6 +167,59 @@ def test_the_platform_verbs_need_a_conversation(pe):
 
 
 # ---------------------------------------------------------------------------
+# Documents, files and the chat (plan 44 §3, Phase 4.3)
+# ---------------------------------------------------------------------------
+def test_the_document_rule_needs_a_conversation(pe):
+    assert "## Documents, Files and the Chat" not in pe.compose_system_prompt("x", pe.PromptContext())
+    assert pe.describe_sections(pe.PromptContext(has_conversation=True))[:3] == [
+        "filesystem", "capabilities", "documents",
+    ]
+
+
+def test_the_format_the_user_names_decides(pe):
+    out = pe.compose_system_prompt("x", pe.PromptContext(
+        has_conversation=True, sandbox_enabled=True, has_platform_skills=True,
+    ))
+    section = out[out.index("## Documents, Files and the Chat"):]
+    # Named format: the real file via the platform skill, checked, no canvas.
+    assert "Word / `.docx`, Excel / `.xlsx`, PowerPoint / `.pptx`" in section
+    assert "`SKILL.md` under `/platform_skills/`" in section
+    assert "No canvas\n  document." in section
+    # "A document", no format: a canvas document, presented.
+    assert '"A document", "a doc", "a draft", "in a canvas"' in section
+    assert "markdown file (`.md`)\n  in `/conversation/output/`, and present it with `present_artifact`" in section
+    # Anything else: the chat, never a file on the agent's own initiative.
+    assert "answer in the chat. No file and no document." in section
+    assert "never on your own initiative" in section
+    # Editing: targeted edit_file, the user's edits kept.
+    assert "use `edit_file` on the\n  exact text of that part" in section
+    assert "keep every change the user made since your last turn" in section
+
+
+def test_there_is_one_file_rule_not_two(pe):
+    # The old capabilities bullet moved into the documents section.
+    out = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True, sandbox_enabled=True))
+    assert "Make a file only when the user asks" not in out
+    assert out.count("only when the user asks for one") == 1
+    capabilities = out[out.index("## What You Can Do Beyond Text"):out.index("## Documents, Files and the Chat")]
+    assert "When they name a format" not in capabilities
+
+
+def test_without_a_sandbox_a_named_format_is_not_promised(pe):
+    out = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True))
+    section = out[out.index("## Documents, Files and the Chat"):]
+    assert "this run has no sandbox to build one in" in section
+    assert "/platform_skills/" not in section
+
+
+def test_the_platform_skill_is_named_only_when_mounted(pe):
+    out = pe.compose_system_prompt("x", pe.PromptContext(has_conversation=True, sandbox_enabled=True))
+    section = out[out.index("## Documents, Files and the Chat"):]
+    assert "make that real file straight away in the sandbox" in section
+    assert "/platform_skills/" not in section
+
+
+# ---------------------------------------------------------------------------
 # Order
 # ---------------------------------------------------------------------------
 def test_the_sections_are_ordered_stable_first_volatile_last(pe, full):
@@ -177,6 +230,7 @@ def test_the_sections_are_ordered_stable_first_volatile_last(pe, full):
         "personalization",
         "filesystem",
         "capabilities",
+        "documents",
         "citations",
         "efficiency",
         "progress",

@@ -10,10 +10,14 @@ export type {
   CanvasDocumentSummary,
   CanvasDocumentVersion,
   CanvasDocumentVersionMeta,
+  CanvasEditPreset,
+  CanvasEditRef,
   CanvasStaleBase,
 } from "../schemas";
 
-import type { CanvasDocumentSaved, CanvasStaleBase } from "../schemas";
+import type { TRange } from "platejs";
+
+import type { CanvasDocumentSaved, CanvasEditPreset, CanvasStaleBase } from "../schemas";
 
 /**
  * What a save from the canvas came to: the new version, or — when the
@@ -21,8 +25,7 @@ import type { CanvasDocumentSaved, CanvasStaleBase } from "../schemas";
  * its text, for the conflict dialog. Any other failure is thrown.
  */
 export type CanvasSaveResult =
-  | ({ kind: "saved" } & CanvasDocumentSaved)
-  | ({ kind: "conflict" } & CanvasStaleBase);
+  ({ kind: "saved" } & CanvasDocumentSaved) | ({ kind: "conflict" } & CanvasStaleBase);
 
 import type { CanvasDocumentAuthor, CanvasDocumentVersionMeta } from "../schemas";
 
@@ -112,7 +115,8 @@ export interface CanvasDiffRow {
 }
 
 /** A row to show, or a fold of unchanged rows. */
-export type CanvasDiffItem = { type: "row"; row: CanvasDiffRow } | { type: "fold"; rows: CanvasDiffRow[] };
+export type CanvasDiffItem =
+  { type: "row"; row: CanvasDiffRow } | { type: "fold"; rows: CanvasDiffRow[] };
 
 export interface CanvasDocumentDiff {
   items: CanvasDiffItem[];
@@ -121,7 +125,43 @@ export interface CanvasDocumentDiff {
 }
 
 /** The text the canvas editor (re)mounts with; a new `key` remounts it. */
+/** What the open editor should shine, by block text (an Ask agent card's change); a new id shines again. */
+export interface CanvasShineTexts {
+  id: number;
+  texts: string[];
+}
+
 export interface CanvasEditorSource {
   key: number;
   markdown: string;
+  /** The text before an agent's version was loaded: what changed shines once. */
+  previous?: string;
+}
+
+/** Ask agent (Phase 4.3): the passage the user picked — its text, where it sits, its range (the highlight). */
+export interface CanvasAskPassage {
+  text: string;
+  /** The headings above it, outermost first. */
+  headingPath: string[];
+  range: TRange;
+}
+
+/** What the canvas asks with: the passage and the instruction (the path and version are the canvas's). */
+export interface CanvasAskDraft {
+  passage: CanvasAskPassage;
+  instruction: string;
+  preset?: CanvasEditPreset;
+}
+
+/** Ask agent's state in the open document: sending the request, or the agent's run going. */
+export interface CanvasAgentEdit {
+  phase: "sending" | "running";
+  range: TRange;
+}
+
+/** What the editor needs to offer Ask agent: whether it can now, and where a request goes. */
+export interface CanvasAskControl {
+  /** Why Ask agent can't be used now (a reply is streaming), or null. */
+  disabledReason: string | null;
+  onAsk: (draft: CanvasAskDraft) => void;
 }

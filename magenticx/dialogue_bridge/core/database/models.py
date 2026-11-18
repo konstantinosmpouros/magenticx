@@ -477,6 +477,11 @@ class MessageTable(Base):
     # schema.base.EffortLevel. NULL = the model's default. Retry re-reads it from
     # here, so a retried turn thinks as hard as the original.
     effort = Column(String(16), nullable=True)
+    # The canvas passage a USER message asks the agent to change (plan 44 4.3,
+    # migration 0050): {"path", "version", "selection", "headingPath",
+    # "instruction", "preset"} as schema.canvas_edit.CanvasEditIn wrote it.
+    # NULL on every other message. Retry re-reads it, so the same change is asked.
+    canvas_edit = Column(JSON, nullable=True)
     # A background-task notification row (plan 41, migration 0046). ``kind`` is
     # NULL on every ordinary message; ``task_notice`` is set only with it:
     # {"task_id", "name", "status", "duration_ms"} for the UI, plus

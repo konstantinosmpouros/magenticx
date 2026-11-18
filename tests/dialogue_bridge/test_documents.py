@@ -11,7 +11,9 @@ Pinned:
 * the save's 409 passes through with the latest version and its text; an
   upstream 404 / 422 stays a 404 / 422; the save needs the CSRF token;
 * at finalize the capture is called for presented ``.md`` files under
-  output/ only, and its failure never fails the run;
+  output/ only — and, once the conversation has a document, after every run
+  (4.3: an unpresented edit is captured too) — and its failure never fails
+  the run;
 * a presented file's attachment records ``source_path`` (and a fork keeps it).
 """
 from __future__ import annotations
@@ -258,6 +260,27 @@ async def test_no_markdown_presented_means_no_capture_call(finalize, session_fac
     await ir._mark_run_completed(run_id, _presented("/conversation/output/chart.png"))
 
     assert finalize.calls == []
+
+
+async def test_a_conversation_with_a_document_is_captured_after_every_run(
+    finalize, session_factory, seeded_user, conv
+):
+    # Plan 44 4.3: an Ask agent edit is an edit_file, not a new presentation,
+    # so a run that presents nothing still asks the agents service to record
+    # the documents it changed and to mark them seen.
+    first = await _run(session_factory, conv)
+    capture = _upstream(seeded_user.id, conv, "/capture")
+    finalize.on("POST", capture, httpx.Response(200, json={"captured": []}))
+    await ir._mark_run_completed(first, _presented(BRIEF))
+
+    second = await _run(session_factory, conv)
+    await ir._mark_run_completed(second, _presented())
+
+    calls = finalize.called("POST", capture)
+    assert [json.loads(c.content) for c in calls] == [
+        {"paths": [BRIEF], "source_run_id": first},
+        {"paths": [], "source_run_id": second},
+    ]
 
 
 @pytest.mark.parametrize("reply", [httpx.Response(503), httpx.Response(200, content=b"not json")])

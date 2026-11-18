@@ -103,6 +103,8 @@ _AGENT_COUNT_KEYS = (
     "conversation_files", "conversation_file_blobs",
     # Canvas document versions (plan 44), deleted with the files.
     "conversation_file_versions",
+    # Which document version the agent last saw (plan 44 4.3).
+    "conversation_file_seen",
     # Citation sources (plan 42), stored per conversation like its files.
     "conversation_sources",
     # Workflow definitions (plan 38), when the agents service reports them.

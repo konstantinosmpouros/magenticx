@@ -16,6 +16,10 @@ canvas documents' history (plan 44) that names the same blobs:
   blob's lifetime is decided here: a version keeps its blob alive exactly like
   a file does, and a fork, a reap and a purge treat versions as rows of the
   conversation, in the same transaction as its files.
+* ``conversation_file_seen`` — per canvas document, the version the agent
+  last saw (plan 44 Phase 4.3), so the next turn's note carries only the
+  user's edits since. No bytes; the logic lives in :mod:`.seen`. A row of the
+  conversation like the versions: copied on fork, deleted by a reap and a purge.
 
 A blob lives while any row (a file or a version) names it. The foreign key from rows to blobs is the
 guard: a blob still referenced cannot be deleted, so garbage collection can be
@@ -107,6 +111,22 @@ _DDL = (
     # The GC probe, the purge and the foreign key's check, as for the files.
     "CREATE INDEX IF NOT EXISTS conversation_file_versions_blob_idx "
     "ON conversation_file_versions (user_id, sha256)",
+    # Which version of each canvas document the agent last saw (plan 44 4.3).
+    # Keyed like the files; user_id is on every row so every statement can
+    # filter on it and the account purge finds the rows.
+    """
+    CREATE TABLE IF NOT EXISTS conversation_file_seen (
+        conversation_id    text NOT NULL,
+        path               text COLLATE "C" NOT NULL,
+        user_id            text NOT NULL,
+        agent_seen_version integer NOT NULL,
+        updated_at         timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (conversation_id, path),
+        CONSTRAINT conversation_file_seen_version_ck CHECK (agent_seen_version >= 1),
+        CONSTRAINT conversation_file_seen_path_ck CHECK (path ~ '^/conversation/output/.+[.]md$')
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS conversation_file_seen_user_idx ON conversation_file_seen (user_id)",
 )
 
 _COMMENTS = (
@@ -120,6 +140,8 @@ _COMMENTS = (
     "'Append-only versions of a canvas document (plan 44). Bytes live in conversation_file_blobs.'",
     "COMMENT ON COLUMN conversation_file_versions.base_version IS "
     "'The version a save was based on (a user save must name the latest); NULL for a first version.'",
+    "COMMENT ON TABLE conversation_file_seen IS "
+    "'The version of each canvas document the agent last saw (plan 44 4.3); the next turn diffs from it.'",
 )
 
 _ENTRY_COLUMNS = "path, size_bytes, sha256, agent_slug, updated_at"
@@ -338,15 +360,25 @@ class ConversationFileStore:
                 params,
             )
             copied_versions = versions.rowcount or 0
+            # What the agent had seen comes too: the fork's agent has the same
+            # history, so the user's edits it already saw are not repeated.
+            await conn.execute(
+                "INSERT INTO conversation_file_seen "
+                "(conversation_id, path, user_id, agent_seen_version, updated_at) "
+                "SELECT %(target)s, path, user_id, agent_seen_version, updated_at FROM conversation_file_seen "
+                "WHERE conversation_id = %(source)s AND user_id = %(user_id)s "
+                "ON CONFLICT (conversation_id, path) DO NOTHING",
+                params,
+            )
         logger.info("conversation_files_copied", "Copied a conversation's files to its fork",
                     files=copied, versions=copied_versions)
         return copied
 
     async def delete_conversation(self, user_id: str, conversation_id: str) -> tuple[int, int]:
-        """Delete every file and document version of one conversation.
+        """Delete every file, document version and seen marker of one conversation.
 
-        Returns ``(files, bytes)`` for the files. The versions go in the same
-        transaction, and the blobs either named go with them.
+        Returns ``(files, bytes)`` for the files. The versions and the seen
+        markers go in the same transaction, and the blobs either named go with them.
         """
         async with self._pool.connection() as conn, conn.transaction():
             cur = await conn.execute(
@@ -359,6 +391,7 @@ class ConversationFileStore:
                 _scope(user_id, conversation_id),
             )
             version_rows = await versions.fetchall()
+            await conn.execute(f"DELETE FROM conversation_file_seen WHERE {_SCOPE}", _scope(user_id, conversation_id))
             named = {row["sha256"] for row in rows} | {row["sha256"] for row in version_rows}
             await self._collect_garbage(conn, user_id, sorted(named))
         removed = sum(int(row["size_bytes"]) for row in rows)
@@ -367,14 +400,16 @@ class ConversationFileStore:
         return len(rows), removed
 
     async def purge_user(self, user_id: str) -> dict[str, int]:
-        """Account deletion: every file, version and blob the user has, in one transaction."""
+        """Account deletion: every file, version, seen marker and blob the user has, in one transaction."""
         async with self._pool.connection() as conn, conn.transaction():
             files = await conn.execute("DELETE FROM conversation_files WHERE user_id = %s", (user_id,))
             versions = await conn.execute("DELETE FROM conversation_file_versions WHERE user_id = %s", (user_id,))
+            seen = await conn.execute("DELETE FROM conversation_file_seen WHERE user_id = %s", (user_id,))
             blobs = await conn.execute("DELETE FROM conversation_file_blobs WHERE user_id = %s", (user_id,))
         counts = {
             "conversation_files": files.rowcount or 0,
             "conversation_file_versions": versions.rowcount or 0,
+            "conversation_file_seen": seen.rowcount or 0,
             "conversation_file_blobs": blobs.rowcount or 0,
         }
         logger.info("conversation_files_purged", "Deleted a user's conversation files", **counts)

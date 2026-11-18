@@ -139,6 +139,7 @@ from schema.search import (
     WorkspaceSearchResult,
 )
 from schema.account import AccountDeletionRequest, AccountDeletionStatus, ProfileUpdate
+from schema.canvas_edit import CanvasEditIn, CanvasEditOut, CanvasEditPreset
 from schema.commands import CommandInvocation, CommandListResponse, CommandOut
 from schema.export import (
     ExportStatus,
@@ -252,6 +253,9 @@ __all__ = [
     "TaskUsage",
     "queued_message_from_column",
     "SCHEDULE_TRIGGER_KIND",
+    "CanvasEditIn",
+    "CanvasEditOut",
+    "CanvasEditPreset",
     "CommandInvocation",
     "CommandListResponse",
     "CommandOut",

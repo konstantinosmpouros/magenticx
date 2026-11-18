@@ -34,6 +34,7 @@ from utils.agents import (
     build_agent_stream_url,
     get_agent_by_id,
 )
+from utils.canvas_edit import canvas_edit_context
 from utils.commands import command_context
 from utils.compaction_lock import compaction_locks
 from utils.effort import effort_context
@@ -1099,6 +1100,11 @@ class InferenceRunManager:
                         # absent and the config is what it was before. Same
                         # shared block, so retry and resume legs keep it.
                         **effort_context(parent_user_message),
+                        # Ask agent on a canvas selection (plan 44 4.3): the
+                        # passage and the instruction, only on the turn whose
+                        # user message carries one. Same shared block, so the
+                        # resume legs and a retry keep it.
+                        **canvas_edit_context(parent_user_message),
                     },
                 }
                 if fork_from is not None:
@@ -1722,8 +1728,9 @@ async def _finish_run(run_id: str, runtime: InferenceRunRuntime, status_value: s
         # The files the agent presented this run, in this transaction: their
         # cards must find them when the terminal frame reaches the UI.
         await capture_presented_files(db, run, conversation, runtime.presented_artifacts)
-        # The presented canvas documents (plan 44) as the agent's versions; fail-open.
-        await capture_canvas_documents(run, conversation, runtime.presented_artifacts)
+        # The canvas documents (plan 44) the run presented or changed, as the
+        # agent's versions, and what the agent has now seen (4.3); fail-open.
+        await capture_canvas_documents(db, run, conversation, runtime.presented_artifacts)
 
         await db.commit()
 

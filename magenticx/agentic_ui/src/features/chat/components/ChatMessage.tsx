@@ -10,6 +10,7 @@ import { citationsToPlainText } from "@/features/chat/lib/citationText";
 import { useCitationSources } from "@/shared/lib/citations-context";
 import { MessageAttachments } from "./message_parts/MessageAttachments";
 import { MessageContent } from "./message_parts/Content";
+import { CanvasEditChip } from "./message_parts/CanvasEditChip";
 import { PlanSidePanel, SubagentsSidePanel } from "./message_parts/RunSidePanels";
 import { AnswerSourcesPanel } from "./message_parts/AnswerSourcesPanel";
 import { useAnswerSources } from "@/features/chat/hooks/useAnswerSources";
@@ -122,9 +123,7 @@ export function ChatMessage({
   const isUser = message.sender === "user";
   const isAi = message.sender === "ai";
   const isTempUserMessage = isUser && String(message.id ?? "").startsWith("temp-");
-  const [openRunPanel, setOpenRunPanel] = useState<"plan" | "subagents" | "sources" | null>(
-    null,
-  );
+  const [openRunPanel, setOpenRunPanel] = useState<"plan" | "subagents" | "sources" | null>(null);
   // Per-message agent for the AI action bar. With a resolver (main chat) we get
   // catalog name + icon; without one (e.g. shared view) we fall back to the
   // denormalized per-message agentName and the conversation's icon.
@@ -226,18 +225,26 @@ export function ChatMessage({
         />
       )}
 
+      {/* Ask agent from the canvas (plan 44, Phase 4.3): the document and the
+          passage it was about, as a card above the bubble. */}
+      {isUser && message.canvasEdit && !isEditing ? (
+        <CanvasEditChip edit={message.canvasEdit} />
+      ) : null}
+
       <Card className={bubbleClass}>
         <div className="space-y-3 min-w-0">
           {isUser ? (
-            <MessageContent
-              message={message}
-              isEditing={isEditing}
-              editingDraft={editingDraft}
-              editingBusy={editingBusy}
-              onChangeEditDraft={onChangeEditDraft}
-              onCancelEdit={onCancelEdit}
-              onSubmitEdit={onSubmitEdit}
-            />
+            <>
+              <MessageContent
+                message={message}
+                isEditing={isEditing}
+                editingDraft={editingDraft}
+                editingBusy={editingBusy}
+                onChangeEditDraft={onChangeEditDraft}
+                onCancelEdit={onCancelEdit}
+                onSubmitEdit={onSubmitEdit}
+              />
+            </>
           ) : timeline && !(isStreamingThisMessage && timeline.blocks.length === 0) ? (
             // While the run's reply is live but the agent hasn't emitted its
             // first block yet (transition phase), render nothing — the thinking

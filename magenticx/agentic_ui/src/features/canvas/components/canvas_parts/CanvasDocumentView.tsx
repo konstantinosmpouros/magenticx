@@ -17,18 +17,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Value } from "platejs";
 import { Plate, usePlateEditor } from "platejs/react";
-import { PencilLine } from "lucide-react";
+import { Loader2, PencilLine } from "lucide-react";
 
-import type { CanvasBylineValue, CanvasMode } from "@/shared/lib/types";
+import type {
+  CanvasAgentEdit,
+  CanvasAskControl,
+  CanvasBylineValue,
+  CanvasMode,
+  CanvasShineTexts,
+} from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import { Editor, EditorContainer } from "@/shared/ui/plate/editor";
 
 import { CanvasBylineContext } from "../../lib/bylineContext";
 import { canvasViewPlugin, refreshFolds, setFolds } from "../../lib/canvasView";
 import { CANVAS_NODE_ID, canvasEditorPlugins, findPlugin } from "../../lib/editorKit";
+import { showAskHighlight } from "../../lib/askHighlight";
 import { countMatches } from "../../lib/find";
 import { markdownToValue, valueToMarkdown } from "../../lib/markdown";
+import { shineChanges, shineTexts as shineTextsIn } from "../../lib/changeShine";
 import { getHiddenBlocks, getOutline } from "../../lib/outline";
+import { CanvasAskMenu } from "./CanvasAskMenu";
 import { CanvasByline } from "./CanvasByline";
 import { CanvasDocBar } from "./CanvasDocBar";
 import { CanvasFindBar } from "./CanvasFindBar";
@@ -54,6 +63,10 @@ export function CanvasDocumentView({
   onAttach,
   onEdited,
   onBlur,
+  ask = null,
+  agentEdit = null,
+  shineFrom = null,
+  shineTexts = null,
 }: {
   markdown: string;
   /** The document's title, for the editor's accessible name. */
@@ -74,17 +87,32 @@ export function CanvasDocumentView({
   onAttach?: (serialize: (() => string) | null) => void;
   onEdited?: () => void;
   onBlur?: () => void;
+  /** Ask agent on a selection (Phase 4.3), where the canvas can send one. */
+  ask?: CanvasAskControl | null;
+  /** The agent is changing a passage: the editor is read-only and the passage tinted. */
+  agentEdit?: CanvasAgentEdit | null;
+  /** The text before the agent's version loaded: its changed blocks shine once on mount. */
+  shineFrom?: string | null;
+  /** Blocks to shine by their text (opened from an Ask agent card); a new id shines again. */
+  shineTexts?: CanvasShineTexts | null;
 }) {
   // Parsed once per mount: the parent remounts the view for new text.
   const [initial] = useState(() => {
     const parsed = markdownToValue(markdown);
     return parsed.length > 0 ? parsed : EMPTY_DOCUMENT;
   });
-  const editor = usePlateEditor({ plugins: canvasEditorPlugins, value: initial, nodeId: CANVAS_NODE_ID });
+  const editor = usePlateEditor({
+    plugins: canvasEditorPlugins,
+    value: initial,
+    nodeId: CANVAS_NODE_ID,
+  });
   const [value, setValue] = useState<Value>(initial);
   const [query, setQuery] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const editing = canEdit && mode === "editing";
+  // While the agent changes a passage nobody else writes: no conflict mid-run.
+  const writable = editing && agentEdit === null;
+  const agentRange = agentEdit?.range ?? null;
 
   const outline = useMemo(() => (outlineOpen ? getOutline(value) : []), [value, outlineOpen]);
   const titleFirst = value[0]?.type === "h1";
@@ -95,6 +123,40 @@ export function CanvasDocumentView({
     onAttach(() => valueToMarkdown(editor.children as Value));
     return () => onAttach(null);
   }, [editor, canEdit, onAttach]);
+
+  useEffect(
+    () => (agentRange ? showAskHighlight(editor, agentRange) : undefined),
+    [editor, agentRange],
+  );
+
+  // Once, after the first paint of an agent's version: shine what changed.
+  // The text is read from a ref: the view remounts for each new version.
+  const shineFromRef = useRef(shineFrom);
+  useEffect(() => {
+    const previous = shineFromRef.current;
+    if (!previous) return;
+    let stop: () => void = () => undefined;
+    const frame = window.requestAnimationFrame(() => {
+      stop = shineChanges(editor, previous);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      stop();
+    };
+  }, [editor]);
+
+  // Asked from the chat (an Ask agent card): shine that request's change.
+  useEffect(() => {
+    if (!shineTexts || shineTexts.texts.length === 0) return;
+    let stop: () => void = () => undefined;
+    const frame = window.requestAnimationFrame(() => {
+      stop = shineTextsIn(editor, shineTexts.texts);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      stop();
+    };
+  }, [editor, shineTexts]);
 
   useEffect(() => {
     editor.setOption(findPlugin, "search", findOpen ? query : "");
@@ -120,7 +182,7 @@ export function CanvasDocumentView({
     <CanvasBylineContext.Provider value={byline}>
       <Plate
         editor={editor}
-        readOnly={!editing}
+        readOnly={!writable}
         onValueChange={({ value: next }) => {
           setValue(next);
           // A section grew or shrank: the folds hide by index.
@@ -146,7 +208,7 @@ export function CanvasDocumentView({
               mode={canEdit ? mode : "viewing"}
               canEdit={canEdit}
               onModeChange={onModeChange}
-              showUndoRedo={editing}
+              showUndoRedo={writable}
             />
             <div
               className={cn(
@@ -163,8 +225,16 @@ export function CanvasDocumentView({
                     on its text), and the ⋮⋮ handles sit in the left one. */}
                 <EditorContainer className={editing ? undefined : "cursor-default"}>
                   <Editor
-                    aria-label={editing ? `${title}, editing` : `${title}, read-only`}
-                    className={editing ? "sm:-mx-10 sm:w-[calc(100%+5rem)] sm:px-10" : "cursor-default"}
+                    aria-label={
+                      writable
+                        ? `${title}, editing`
+                        : editing
+                          ? `${title}, read-only while the agent edits`
+                          : `${title}, read-only`
+                    }
+                    className={
+                      editing ? "sm:-mx-10 sm:w-[calc(100%+5rem)] sm:px-10" : "cursor-default"
+                    }
                     onBlur={onBlur}
                   />
                 </EditorContainer>
@@ -176,7 +246,23 @@ export function CanvasDocumentView({
             <CanvasOutline items={outline} onPick={pickHeading} onClose={onCloseOutline} />
           ) : null}
 
-          {editing ? <CanvasToolbar /> : null}
+          {writable ? <CanvasToolbar ask={ask} /> : null}
+          {writable && ask && !compact ? <CanvasAskMenu ask={ask} /> : null}
+          {editing && agentEdit ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-3 sm:bottom-6">
+              <p
+                aria-hidden="true"
+                className="flex items-center gap-2 rounded-full border border-border/70 bg-background/95 px-4 py-2.5 text-[13px] text-muted-foreground shadow-lg shadow-foreground/5 backdrop-blur-md animate-in fade-in-0 duration-200 motion-reduce:animate-none"
+              >
+                <Loader2
+                  className="size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+                  aria-hidden="true"
+                />
+                Agent is editing…
+                <span className="hidden sm:inline">· it unlocks when the reply ends</span>
+              </p>
+            </div>
+          ) : null}
 
           {/* Phone: the document opens for reading; ✎ switches to editing. */}
           {compact && canEdit && !editing ? (

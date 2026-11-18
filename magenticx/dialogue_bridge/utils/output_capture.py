@@ -15,7 +15,12 @@ received, and ``source_path`` set to the virtual path it was presented from.
 A presented ``.md`` under ``/conversation/output/`` is also a canvas document
 (plan 44): after the snapshot, :func:`capture_canvas_documents` asks the
 agents service to record its current file as the agent's next version, so the
-canvas history has every version the agent handed over.
+canvas history has every version the agent handed over. Since Phase 4.3 the
+same call also records the conversation's *existing* documents the run changed
+without presenting them again (an Ask agent edit is an ``edit_file``, not a new
+presentation) and marks what the agent has now seen, so the next turn's note
+only carries the user's own edits. It is made whenever the conversation has a
+document at all, not only when this run presented one.
 
 Fail-open throughout: the answer is already persisted, so an unreachable
 agents service, a file gone or bad base64 is logged and skipped — never a
@@ -28,6 +33,7 @@ import hashlib
 from typing import Any
 
 import httpx
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
@@ -151,21 +157,51 @@ async def capture_presented_files(
                 run_id=run.id, captured=stored, skipped=skipped)
 
 
+async def _has_canvas_documents(db: AsyncSession, conversation_id: str) -> bool:
+    """Whether any answer of the conversation presented a ``.md`` (a canvas document).
+
+    ``source_path`` names it since migration 0049; an older presented row has
+    only its file name, so a presented ``*.md`` counts too. One indexed probe,
+    so a conversation that never had a document costs the agents service no call.
+    """
+    found = await db.scalar(
+        select(AttachmentTable.id)
+        .join(MessageTable, MessageTable.id == AttachmentTable.message_id)
+        .where(
+            MessageTable.conversation_id == conversation_id,
+            AttachmentTable.presented.is_(True),
+            or_(
+                AttachmentTable.source_path.like(f"{OUTPUT_PREFIX}%{DOCUMENT_SUFFIX}"),
+                AttachmentTable.file_name.like(f"%{DOCUMENT_SUFFIX}"),
+            ),
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 async def capture_canvas_documents(
+    db: AsyncSession,
     run: MessageTable,
     conversation: ConversationTable | None,
     presented: list[dict[str, Any]],
 ) -> None:
-    """At finalize, after the snapshot: record the presented canvas documents as versions.
+    """At finalize, after the snapshot: record the canvas documents' new versions.
 
     One call to the agents service's ``POST …/documents/capture`` with the
-    presented ``.md`` paths under output/. It is idempotent upstream (the same
-    bytes add no version), so a retried finalize is harmless. Fail-open: a
-    failure is logged and the run finalizes anyway — the canvas then records
-    the file as v1 the first time it is opened.
+    presented ``.md`` paths under output/; the agents service also checks the
+    conversation's existing documents for changes the run made without
+    presenting them, then marks every document seen by the agent (plan 44
+    4.3). Made when this run presented a document or the conversation already
+    has one. Idempotent upstream (the same bytes add no version), so a retried
+    finalize is harmless. Fail-open: a failure is logged and the run finalizes
+    anyway — the canvas then records the file as v1 the first time it is
+    opened, and the next turn's note may repeat an edit the agent already saw.
     """
+    if conversation is None:
+        return
     document_paths = canvas_document_paths(presented)
-    if conversation is None or not document_paths:
+    if not document_paths and not await _has_canvas_documents(db, str(run.conversation_id)):
         return
     url = f"{build_conversation_documents_url(str(conversation.user_id), str(run.conversation_id))}/capture"
     try:

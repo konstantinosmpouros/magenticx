@@ -145,6 +145,8 @@ _MESSAGES = (
     MessageTable.reasoning_tokens, MessageTable.model_latency_ms, MessageTable.context_tokens,
     MessageTable.context_window, MessageTable.model_name, MessageTable.model_calls,
     MessageTable.tool_calls, MessageTable.compaction, MessageTable.command, MessageTable.effort,
+    # Plan 44 4.3: the canvas passage a user message asked the agent to change.
+    MessageTable.canvas_edit,
     MessageTable.is_error, MessageTable.error_message, MessageTable.scheduled_task_id,
     MessageTable.created_at,
     # Plan 41: cost, truncation and speed of the answer.

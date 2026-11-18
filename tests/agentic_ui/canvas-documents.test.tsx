@@ -266,7 +266,10 @@ describe("artifact card — Open in canvas", () => {
     );
     expect(screen.getByText("Open in canvas")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Open The brief in canvas" }));
-    expect(open).toHaveBeenLastCalledWith("/conversation/output/x/brief.md");
+    expect(open).toHaveBeenLastCalledWith(
+      "/conversation/output/x/brief.md",
+      expect.any(HTMLElement),
+    );
     fireEvent.click(screen.getByText("A plan."));
     expect(open).toHaveBeenCalledTimes(2);
   });

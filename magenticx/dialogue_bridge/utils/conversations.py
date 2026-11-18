@@ -32,6 +32,13 @@ async def init_conv(
     title: Optional[str],
     first_message: MessageIn,
 ) -> ConversationTable:
+    if first_message.canvasEdit is not None:
+        # A canvas edit (plan 44 4.3) names a document of an existing
+        # conversation; a conversation being created holds none yet.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="A canvas edit is sent in the conversation that holds the document.",
+        )
     # Pre-populate the conversation shell so we have ids for downstream inserts.
     conv = ConversationTable(
         user_id=user.id,
@@ -73,6 +80,7 @@ async def init_message(
         raw_events=payload.rawEvents,
         command=payload.command.model_dump() if payload.command else None,
         effort=payload.effort,
+        canvas_edit=payload.canvasEdit.model_dump() if payload.canvasEdit else None,
     )
     db.add(msg)
     await db.flush()  # Assign msg.id for attachment inserts.
@@ -335,6 +343,7 @@ async def clone_branch_to_conversation(
             raw_events=deepcopy(source_message.raw_events),
             command=deepcopy(source_message.command),
             effort=source_message.effort,
+            canvas_edit=deepcopy(source_message.canvas_edit),
             # A background-task notice row forks as a notice (plan 41).
             kind=source_message.kind,
             task_notice=deepcopy(source_message.task_notice),

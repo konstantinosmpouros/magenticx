@@ -45,3 +45,18 @@ export function canvasDocumentHref(conversationId: string, path: string): string
   const query = new URLSearchParams({ [CANVAS_DOC_PARAM]: path });
   return `/c/${encodeURIComponent(conversationId)}?${query}`;
 }
+
+/**
+ * A document's title from its path, as the canvas shows it: the file name
+ * without `.md` (`/conversation/output/brief.md` reads "brief").
+ */
+export function canvasDocumentTitle(path: string): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return name.replace(/\.md$/i, "") || name;
+}
+
+/** The first ~60 characters of a passage, on one line, for a chip (plan 44, Phase 4.3). */
+export function canvasPassageExcerpt(text: string, max = 60): string {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max).trimEnd()}…` : line;
+}

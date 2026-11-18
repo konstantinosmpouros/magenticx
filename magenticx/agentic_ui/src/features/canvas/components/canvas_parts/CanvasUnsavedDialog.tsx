@@ -9,6 +9,12 @@
  *
  * A save that fails or meets a newer version keeps the user here: the header
  * shows Retry or Resolve, and nothing is left behind.
+ *
+ * Ask agent (Phase 4.3) asks the same question before sending, as
+ * **Save and send** / **Cancel**: the agent works on the saved text, so a
+ * request is never sent against edits it cannot see — and never saved
+ * silently. There is no Discard there: dropping edits to ask is not a
+ * choice anyone makes on purpose.
  */
 import { useState } from "react";
 import { CircleDot, Loader2 } from "lucide-react";
@@ -26,6 +32,7 @@ import {
 export function CanvasUnsavedDialog({
   open,
   title,
+  purpose = "leave",
   onCancel,
   onSave,
   onDiscard,
@@ -33,11 +40,14 @@ export function CanvasUnsavedDialog({
   open: boolean;
   /** The document's title, for the question. */
   title: string;
+  /** Leaving the document (Save / Discard / Cancel), or sending Ask agent (Save and send / Cancel). */
+  purpose?: "leave" | "send";
   onCancel: () => void;
-  /** Saves; resolves when the save has landed (or failed). */
+  /** Saves (then goes on); resolves when the save has landed (or failed). */
   onSave: () => Promise<void>;
-  onDiscard: () => void;
+  onDiscard?: () => void;
 }) {
+  const sending = purpose === "send";
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
@@ -57,9 +67,13 @@ export function CanvasUnsavedDialog({
           <span className="mb-1 flex h-9 w-9 items-center justify-center rounded-xl bg-warning/15 text-warning">
             <CircleDot className="size-[18px]" aria-hidden="true" />
           </span>
-          <DialogTitle className="text-base">Save your changes?</DialogTitle>
+          <DialogTitle className="text-base">
+            {sending ? "Save before asking the agent?" : "Save your changes?"}
+          </DialogTitle>
           <DialogDescription className="text-sm leading-relaxed">
-            Your edits to “{title}” are not saved yet. Save them as a new version, or discard them.
+            {sending
+              ? `Your edits to “${title}” are not saved yet. The agent works on the saved document, so save them as a new version first.`
+              : `Your edits to “${title}” are not saved yet. Save them as a new version, or discard them.`}
           </DialogDescription>
         </DialogHeader>
         <DialogFooter className="gap-2 sm:justify-between sm:space-x-0">
@@ -67,9 +81,11 @@ export function CanvasUnsavedDialog({
             Cancel
           </Button>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button variant="outline" onClick={onDiscard} disabled={saving}>
-              Discard
-            </Button>
+            {sending || !onDiscard ? null : (
+              <Button variant="outline" onClick={onDiscard} disabled={saving}>
+                Discard
+              </Button>
+            )}
             <Button onClick={() => void save()} disabled={saving} className="gap-1.5">
               {saving ? (
                 <Loader2
@@ -77,7 +93,7 @@ export function CanvasUnsavedDialog({
                   aria-hidden="true"
                 />
               ) : null}
-              Save
+              {sending ? "Save and send" : "Save"}
             </Button>
           </div>
         </DialogFooter>

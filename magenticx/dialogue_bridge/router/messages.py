@@ -14,6 +14,7 @@ from schema import (
 )
 from core.auth.session import require_csrf_protection, AuthUser
 from core.security.rate_limit import message_post_rate_limit
+from utils.canvas_edit import refuse_canvas_edit
 from utils import (
     _preview,
     apply_ai_message_update,
@@ -53,6 +54,8 @@ async def addMessageToConversation(
     Returns only the appended message (with attachments) and the updated sidebar summary.
     """
     set_context(user_id=user_id, conversation_id=conversation_id, message_id=None)
+    # A canvas edit (plan 44 4.3) only means something with a run to act on it.
+    refuse_canvas_edit(payload)
     parent_message_id = payload.parentMessageId
 
     async with logged_db_operation(

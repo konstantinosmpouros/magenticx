@@ -5,6 +5,7 @@ import { validateAttachmentsForUpload } from "@/shared/lib/uploadGuards";
 import type {
   Agent,
   AgentEffortChoice,
+  CanvasEditRef,
   CommandRef,
   ConversationDetail,
   MessageIn,
@@ -419,6 +420,84 @@ export function createInferenceHandlers(ctx: InferenceCtx) {
     }
   };
 
+  /**
+   * Ask agent on a canvas selection (plan 44, Phase 4.3): a user message in
+   * the open conversation whose text is the instruction and whose
+   * `canvasEdit` names the passage. It goes through the same start as a send
+   * (optimistic bubble, run status, Stop), but leaves the composer alone: its
+   * draft, slash command and attachments are not this message's. Resolves
+   * true once the run has started; false when it could not (the canvas then
+   * lets the user try again). Never queued: the canvas offers it only while
+   * no run is going.
+   */
+  const handleSendCanvasEdit = async (canvasEdit: CanvasEditRef): Promise<boolean> => {
+    if (ctx.isSendingMessage) return false;
+    if (!userId) {
+      toast({
+        title: "Authentication required",
+        description: "Please sign in again to continue.",
+        variant: "destructive",
+      });
+      return false;
+    }
+    const lastPersistedMessageId = resolveLastPersistedMessageId();
+    if (!currentConversation?.id || !lastPersistedMessageId || messages.length === 0) return false;
+
+    setIsSendingMessage(true);
+    const content = canvasEdit.instruction;
+    const now = new Date();
+    const tempId = `temp-${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: tempId,
+        parentMessageId: lastPersistedMessageId,
+        sender: "user",
+        content,
+        canvasEdit,
+        created_at: now,
+        updated_at: now,
+        attachments: [],
+      },
+    ]);
+    if (setShowAiTransition) setShowAiTransition(true);
+
+    try {
+      const agentId = agents.find((a) => a.id === selectedAgent)?.id ?? currentConversation.agent.id;
+      await beginInferenceRun({
+        mode: "send",
+        agentId,
+        conversationId: currentConversation.id,
+        parentMessageId: lastPersistedMessageId,
+        messagePath: buildPathToMessage(
+          currentConversation.messages ?? messages,
+          lastPersistedMessageId,
+        ),
+        message: buildUserMessage({
+          parentMessageId: lastPersistedMessageId,
+          content,
+          attachments: [],
+          canvasEdit,
+          effort: effortForAgent(ctx.effort, agentId),
+        }),
+      });
+      persistUIState?.();
+      return true;
+    } catch (error) {
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      if (setShowAiTransition) setShowAiTransition(false);
+      const copy = getInferenceStartErrorCopy(error, {
+        title: "Error",
+        description: "Failed to ask the agent. Please try again.",
+      });
+      toastError(toast, copy.title, error, { description: copy.description });
+      return false;
+    } finally {
+      streamAbortRef.current = null;
+      setIsSendingMessage(false);
+    }
+  };
+
   // Handler to abort ongoing streaming
   const handleStopStreaming = () => {
     void stopActiveInferenceRun?.();
@@ -429,7 +508,7 @@ export function createInferenceHandlers(ctx: InferenceCtx) {
     if (setShowAiTransition) setShowAiTransition(false);
   };
 
-  return { handleSendMessage, handleStopStreaming };
+  return { handleSendMessage, handleSendCanvasEdit, handleStopStreaming };
 }
 
 // Editing a user message creates a new user branch and immediately starts a fresh AI run beneath it.

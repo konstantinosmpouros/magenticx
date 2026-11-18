@@ -8,6 +8,13 @@
  * failed load with Retry, or (when the document is gone) a way to the file's
  * normal preview.
  *
+ * Ask agent (Phase 4.3): a selection's menu (or the pill's Ask agent) asks
+ * the agent to change only that passage — sent as a user message of the
+ * conversation (`onAskAgent`), on the saved latest version (unsaved edits ask
+ * Save and send / Cancel first). Until that run ends the editor is read-only
+ * and the passage tinted; then the agent's version is loaded before it
+ * unlocks.
+ *
  * Edits are saved as the user's versions by `useCanvasEditing`, only when
  * the user saves (Save, Ctrl+S); closing, switching documents or restoring
  * with unsaved edits asks Save / Discard / Cancel first; a save refused with
@@ -19,19 +26,25 @@
  * pipeline and the diff stay out of the app's main chunk until a document
  * opens.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
+  CanvasAgentEdit,
+  CanvasAskControl,
+  CanvasAskDraft,
   CanvasBylineValue,
   CanvasCompareState,
   CanvasDocumentAuthor,
+  CanvasEditRef,
   CanvasMode,
 } from "@/shared/lib/types";
 import { Button } from "@/shared/ui/button";
 
 import { useCanvasDocument } from "../hooks/useCanvasDocument";
 import { useCanvasEditing } from "../hooks/useCanvasEditing";
+import { useRequestedShine } from "../hooks/useRequestedShine";
 import { useCanvasVersionText, useFetchCanvasVersionText } from "../hooks/useCanvasVersionText";
+import { buildCanvasEdit } from "../lib/askAgent";
 import { documentTitle } from "../lib/documentTitle";
 import { isApplePlatform, isSaveShortcut } from "../lib/shortcuts";
 import { CanvasCompareView } from "./canvas_parts/CanvasCompareView";
@@ -39,7 +52,7 @@ import { CanvasConflictDialog } from "./canvas_parts/CanvasConflictDialog";
 import { CanvasDocumentView } from "./canvas_parts/CanvasDocumentView";
 import { CanvasHeader } from "./canvas_parts/CanvasHeader";
 import { CanvasHistory } from "./canvas_parts/CanvasHistory";
-import { CanvasSaveStatus } from "./canvas_parts/CanvasSaveStatus";
+import { CanvasAgentEditingStatus, CanvasSaveStatus } from "./canvas_parts/CanvasSaveStatus";
 import { CanvasUnsavedDialog } from "./canvas_parts/CanvasUnsavedDialog";
 import {
   CanvasError,
@@ -66,6 +79,14 @@ export interface DocumentCanvasProps {
   onClose: () => void;
   /** Opens the file in the normal preview; null when the conversation has no such file. */
   onPreviewFile: (() => void) | null;
+  /**
+   * Sends Ask agent's request as a user message of this conversation;
+   * resolves true once the run has started. Absent where the canvas has no
+   * conversation to send into (Ask agent is then not offered).
+   */
+  onAskAgent?: ((edit: CanvasEditRef) => Promise<boolean>) | null;
+  /** A run of this conversation is going (Ask agent waits for it). */
+  runActive?: boolean;
 }
 
 export default function DocumentCanvas(props: DocumentCanvasProps) {
@@ -84,6 +105,8 @@ function DocumentSession({
   onSelectPath,
   onClose,
   onPreviewFile,
+  onAskAgent = null,
+  runActive = false,
 }: DocumentCanvasProps) {
   const data = useCanvasDocument(userId, conversationId, path, revision);
   const [findOpen, setFindOpen] = useState(false);
@@ -110,6 +133,8 @@ function DocumentSession({
   const save = editing.save;
   const conflict = save?.conflict ?? null;
   const fetchVersionText = useFetchCanvasVersionText(userId, conversationId, path);
+  // Opened from an Ask agent card: what that request changed shines once.
+  const requestedShine = useRequestedShine(userId, conversationId, path, fetchVersionText);
 
   const shown = data.document;
   const name =
@@ -161,6 +186,73 @@ function DocumentSession({
   };
 
   const leave = (then: () => void) => guard(then);
+
+  // Ask agent (Phase 4.3). `agentEdit` is set from the send until the run it
+  // started has ended and the agent's version is loaded.
+  const [agentEdit, setAgentEdit] = useState<CanvasAgentEdit | null>(null);
+  const [pendingAsk, setPendingAsk] = useState<CanvasAskDraft | null>(null);
+  const sawRun = useRef(false);
+  const { refreshLatest } = data;
+
+  const sendAsk = async (draft: CanvasAskDraft) => {
+    const version = editing.headVersion();
+    if (!onAskAgent || version === null) return;
+    sawRun.current = false;
+    setAgentEdit({ phase: "sending", range: draft.passage.range });
+    // The path as the documents API returned it: the bridge checks it is canonical.
+    const documentPath = data.latest?.path ?? path;
+    const started = await onAskAgent(buildCanvasEdit({ path: documentPath, version, draft }));
+    setAgentEdit(started ? { phase: "running", range: draft.passage.range } : null);
+  };
+
+  const busy = runActive || agentEdit !== null;
+  const ask: CanvasAskControl | null = onAskAgent
+    ? {
+        disabledReason: busy ? "Wait for the current reply" : null,
+        onAsk: (draft) => {
+          if (busy) return;
+          // The agent reads the saved document: unsaved edits are saved first, on request.
+          if (editing.hasUnsavedWork()) setPendingAsk(draft);
+          else void sendAsk(draft);
+        },
+      }
+    : null;
+
+  const saveAndSend = async () => {
+    const draft = pendingAsk;
+    await flush();
+    setPendingAsk(null);
+    // A failed or refused save sends nothing; the header shows Retry / Resolve.
+    if (draft && !editing.hasUnsavedWork()) void sendAsk(draft);
+  };
+
+  // The run ends: load what the agent saved, then unlock. A run never seen
+  // going (it ended before this canvas re-rendered) ends the wait anyway.
+  useEffect(() => {
+    if (!agentEdit) return;
+    if (runActive) {
+      sawRun.current = true;
+      return;
+    }
+    if (agentEdit.phase !== "running") return;
+    let cancelled = false;
+    const finish = () => {
+      void refreshLatest().finally(() => {
+        if (!cancelled) setAgentEdit(null);
+      });
+    };
+    if (sawRun.current) {
+      finish();
+      return () => {
+        cancelled = true;
+      };
+    }
+    const timer = window.setTimeout(finish, 5000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [agentEdit, runActive, refreshLatest]);
 
   const selectDocument = (next: string) => {
     if (next === path) return;
@@ -283,10 +375,14 @@ function DocumentSession({
           key={`edit-${editing.source.key}`}
           {...view}
           markdown={editing.source.markdown}
+          shineFrom={editing.source.previous ?? null}
+          shineTexts={requestedShine}
           byline={byline}
           canEdit
           onAttach={editing.attach}
           onEdited={editing.edited}
+          ask={ask}
+          agentEdit={agentEdit}
         />
       ) : (
         <CanvasDocumentView
@@ -322,7 +418,9 @@ function DocumentSession({
         canFind={Boolean(shown)}
         historyOpen={historyOpen}
         status={
-          save && (mode === "editing" || save.status !== "saved") ? (
+          agentEdit ? (
+            <CanvasAgentEditingStatus compact={compact} />
+          ) : save && (mode === "editing" || save.status !== "saved") ? (
             <CanvasSaveStatus
               status={save.status}
               errorMessage={save.errorMessage}
@@ -372,6 +470,14 @@ function DocumentSession({
         onCancel={() => setPendingAction(null)}
         onSave={saveAndContinue}
         onDiscard={discardAndContinue}
+      />
+
+      <CanvasUnsavedDialog
+        open={pendingAsk !== null}
+        title={title}
+        purpose="send"
+        onCancel={() => setPendingAsk(null)}
+        onSave={saveAndSend}
       />
 
       {conflict ? (

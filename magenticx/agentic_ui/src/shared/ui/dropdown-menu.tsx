@@ -46,15 +46,20 @@ const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
 >(({ className, ...props }, ref) => (
-  <DropdownMenuPrimitive.SubContent
-    ref={ref}
-    className={cn(
-      "z-50 min-w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-popover p-1 text-popover-foreground shadow-lg origin-[--radix-dropdown-menu-content-transform-origin]",
-      RADIX_MOTION.popover,
-      className,
-    )}
-    {...props}
-  />
+  // In its own portal, as shadcn's current version does: inside the parent
+  // menu's content it was clipped by that content's `overflow-hidden`, so
+  // the submenu opened but could not be seen.
+  <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.SubContent
+      ref={ref}
+      className={cn(
+        "z-50 min-w-[8rem] overflow-hidden rounded-xl border border-border/60 bg-popover p-1 text-popover-foreground shadow-lg origin-[--radix-dropdown-menu-content-transform-origin]",
+        RADIX_MOTION.popover,
+        className,
+      )}
+      {...props}
+    />
+  </DropdownMenuPrimitive.Portal>
 ));
 DropdownMenuSubContent.displayName = DropdownMenuPrimitive.SubContent.displayName;
 

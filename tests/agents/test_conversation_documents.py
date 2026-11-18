@@ -72,6 +72,8 @@ async def docs(pg_pool, agents_service, monkeypatch):
     await store.setup()
     await store.setup()  # idempotent: every boot runs it
     monkeypatch.setattr(importlib.import_module("utils.documents"), "_store", lambda: store)
+    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, cipher)
+    monkeypatch.setattr(importlib.import_module("utils.documents"), "_seen_store", lambda: seen)
     return store
 
 
@@ -258,7 +260,8 @@ async def test_a_purge_takes_every_version_of_that_user_only(docs):
 
     counts = await docs.purge_user("u1")
 
-    assert counts == {"conversation_files": 1, "conversation_file_versions": 1, "conversation_file_blobs": 1}
+    assert counts == {"conversation_files": 1, "conversation_file_versions": 1, "conversation_file_seen": 0,
+                      "conversation_file_blobs": 1}
     assert (await docs.latest("u2", "c2", BRIEF)).content == "theirs"
 
 

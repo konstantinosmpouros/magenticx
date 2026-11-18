@@ -71,8 +71,8 @@ export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: 
   // Tapping the card is the fallback affordance (esp. mobile, where the hover
   // actions don't exist): preview on desktop when possible, else download.
   // A canvas document opens in the canvas, on a phone too (it fills the screen).
-  const activate = () =>
-    openCanvas && canvasPath ? openCanvas(canvasPath) : canPreview ? preview() : download();
+  const activate = (anchor?: HTMLElement | null) =>
+    openCanvas && canvasPath ? openCanvas(canvasPath, anchor) : canPreview ? preview() : download();
 
   if (imageUrl) {
     return (
@@ -122,13 +122,13 @@ export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: 
       <div
         role={ready ? "button" : undefined}
         tabIndex={ready ? 0 : undefined}
-        onClick={ready ? activate : undefined}
+        onClick={ready ? (e) => activate(e.currentTarget) : undefined}
         onKeyDown={
           ready
             ? (e) => {
                 if (e.key === "Enter" || e.key === " ") {
                   e.preventDefault();
-                  activate();
+                  activate(e.currentTarget);
                 }
               }
             : undefined
@@ -175,7 +175,7 @@ export function ArtifactCard({ block, message, onDownload, onPreview, onLoad }: 
                 className="flex h-7 w-7 items-center justify-center rounded-full border border-border/50 bg-background/90 text-foreground shadow-sm backdrop-blur-sm transition hover:scale-105 hover:text-primary"
                 onClick={(e) => {
                   e.stopPropagation();
-                  openCanvas(canvasPath);
+                  openCanvas(canvasPath, e.currentTarget);
                 }}
               >
                 <PanelRight size={14} />

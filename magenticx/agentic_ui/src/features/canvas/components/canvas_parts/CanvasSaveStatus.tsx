@@ -121,3 +121,24 @@ export function CanvasSaveStatus({
     </div>
   );
 }
+
+/**
+ * Ask agent's run in the header (Phase 4.3), in place of the save status:
+ * the editor is read-only until the reply ends, then reloads with the
+ * agent's version. A spinner and a word, like the save states.
+ */
+export function CanvasAgentEditingStatus({ compact }: { compact: boolean }) {
+  return (
+    <span
+      role="status"
+      aria-live="polite"
+      className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-1.5 text-[13px] text-muted-foreground"
+    >
+      <Loader2
+        className="size-4 shrink-0 animate-spin text-primary motion-reduce:animate-none"
+        aria-hidden="true"
+      />
+      <span className={cn(compact && "sr-only")}>Agent is editing…</span>
+    </span>
+  );
+}

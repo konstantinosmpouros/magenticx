@@ -1,6 +1,7 @@
 /**
  * The floating pill toolbar at the bottom of the document while editing
- * (plan 44 §3, the Claude Docs bar): text style, bold / italic /
+ * (plan 44 §3, the Claude Docs bar): Ask agent (Phase 4.3; on touch only, first and
+ * distinct: it acts on the selection), text style, bold / italic /
  * strikethrough / code, bulleted / numbered / checklist, link, table, quote,
  * block actions. Undo / redo sit at the top, beside the outline button
  * (`CanvasDocBar`). No fixed toolbar in the header: the document owns the
@@ -23,7 +24,7 @@
  * compact, wrapping to a second row in a narrow canvas (never a scrollbar);
  * on touch the pill scrolls sideways, and rises above the on-screen keyboard.
  */
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Bold,
   Check,
@@ -35,8 +36,10 @@ import {
   List,
   ListChecks,
   ListOrdered,
+  Sparkles,
   Strikethrough,
   TextQuote,
+  Type,
   Unlink,
 } from "lucide-react";
 import { KEYS, type SlateEditor } from "platejs";
@@ -54,6 +57,7 @@ import {
 } from "@platejs/list/react";
 import { BlockSelectionPlugin } from "@platejs/selection/react";
 
+import type { CanvasAskControl, CanvasAskPassage, CanvasEditPreset } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import {
@@ -66,7 +70,12 @@ import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
+import { useCoarsePointer } from "../../hooks/useCoarsePointer";
+import { useNarrowWidth } from "../../hooks/useNarrowWidth";
 import { useKeyboardInset } from "../../hooks/useKeyboardInset";
+import { useSelectedPassage } from "../../hooks/useSelectedPassage";
+import { passageProblem, selectedPassage } from "../../lib/askAgent";
+import { showAskHighlight } from "../../lib/askHighlight";
 import {
   blocksById,
   CANVAS_BLOCK_KINDS,
@@ -87,6 +96,7 @@ import {
 } from "../../lib/editorCommands";
 import { rememberSelection, restoreSelection } from "../../lib/selectionMemory";
 import { modKeyLabel } from "../../lib/shortcuts";
+import { CanvasAskForm, CanvasAskPresets } from "./CanvasAskPanel";
 import { CanvasBlockMenuContent } from "./CanvasBlockMenu";
 import { CanvasTablePicker } from "./CanvasTablePicker";
 
@@ -230,7 +240,8 @@ function TodoButton() {
   );
 }
 
-function TextStyleMenu() {
+/** Narrow canvas: the style menu shows an icon, not its label, so the pill stays one row. */
+function TextStyleMenu({ compact = false }: { compact?: boolean }) {
   const editor = useEditorRef();
   const style = useEditorSelector((ed) => currentBlockKind(ed), []);
   const label = CANVAS_BLOCK_KINDS.find((item) => item.kind === style)?.label ?? "Text";
@@ -257,9 +268,13 @@ function TextStyleMenu() {
         aria-label={`Text style: ${label}`}
         className="flex h-9 shrink-0 items-center gap-1 rounded-full pl-3 pr-2 text-[13px] [@media(pointer:fine)]:h-8 [@media(pointer:fine)]:pl-2.5 font-medium text-foreground transition-colors duration-150 [touch-action:manipulation] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted [@media(pointer:coarse)]:h-11"
       >
-        <span className="w-[5.5rem] truncate text-left [@media(pointer:fine)]:w-[4.75rem]">
-          {label}
-        </span>
+        {compact ? (
+          <Type className="size-4 text-muted-foreground" aria-hidden="true" />
+        ) : (
+          <span className="w-[5.5rem] truncate text-left [@media(pointer:fine)]:w-[4.75rem]">
+            {label}
+          </span>
+        )}
         <ChevronDown className="size-3.5 text-muted-foreground" aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent
@@ -418,6 +433,111 @@ function BlockMenuButton() {
   );
 }
 
+/**
+ * Ask agent in the pill (plan 44 §3): the way in on a touch screen, where
+ * there is no floating selection menu, shown only while text is selected (a
+ * mouse uses the floating menu over the selection instead). It acts on the
+ * selection (or the selected blocks) as it was when the button was pressed —
+ * a tap may collapse it — and opens the input with the presets under it.
+ * Unusable (nothing selected, too much, a reply streaming) it stays
+ * focusable, says why in its tooltip, and a tap shows the reason.
+ */
+function AskAgentButton({
+  ask,
+  onHold,
+}: {
+  ask: CanvasAskControl;
+  /** Keeps the button shown from the tap until its popover closes (a tap may collapse the selection). */
+  onHold: (held: boolean) => void;
+}) {
+  const editor = useEditorRef();
+  const live = useSelectedPassage();
+  const [open, setOpen] = useState(false);
+  const [passage, setPassage] = useState<CanvasAskPassage | null>(null);
+  const pressed = useRef<CanvasAskPassage | null>(null);
+  const reason = ask.disabledReason ?? passageProblem(live);
+  const shownReason = ask.disabledReason ?? passageProblem(passage);
+  const tinted = open && !shownReason ? passage : null;
+  useEffect(() => (tinted ? showAskHighlight(editor, tinted.range) : undefined), [editor, tinted]);
+
+  // Sent once the popover has closed, not while it closes: the request may
+  // open the Save and send dialog, and a dialog opening while the popover
+  // hands its focus back would see that as a click outside and close again.
+  const pending = useRef<(() => void) | null>(null);
+  const send = (instruction: string, preset?: CanvasEditPreset) => {
+    const picked = passage;
+    pending.current = picked ? () => ask.onAsk({ passage: picked, instruction, preset }) : null;
+    setOpen(false);
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(next) => {
+        if (next) {
+          restoreSelection(editor);
+          setPassage(pressed.current ?? selectedPassage(editor));
+        }
+        onHold(next);
+        setOpen(next);
+      }}
+    >
+      <Hint label={reason ?? "Ask the agent to change the selection"}>
+        <PopoverTrigger
+          aria-label="Ask agent"
+          aria-disabled={reason ? true : undefined}
+          onPointerDown={() => {
+            onHold(true);
+            rememberSelection(editor);
+            pressed.current = selectedPassage(editor);
+          }}
+          onMouseDown={keepSelection}
+          className="flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-primary/10 pl-2.5 pr-3 text-[13px] font-semibold text-primary transition-colors duration-150 [touch-action:manipulation] hover:bg-primary/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:bg-transparent aria-disabled:text-muted-foreground data-[state=open]:bg-primary/15 [@media(pointer:coarse)]:h-11 [@media(pointer:fine)]:h-8 [&_svg]:size-4"
+        >
+          <Sparkles aria-hidden="true" />
+          Ask agent
+        </PopoverTrigger>
+      </Hint>
+      <PopoverContent
+        side="top"
+        align="start"
+        className="w-[min(24rem,calc(100vw-1.5rem))] space-y-2 p-2"
+        onOpenAutoFocus={(event) => {
+          // The input focuses itself; with nothing to send, keep the focus put.
+          if (shownReason) event.preventDefault();
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          const run = pending.current;
+          pending.current = null;
+          run?.();
+        }}
+      >
+        {shownReason ? (
+          <p role="status" className="px-1.5 py-1 text-sm text-muted-foreground">
+            {shownReason}
+          </p>
+        ) : (
+          <>
+            <CanvasAskForm
+              onSubmit={(instruction) => send(instruction)}
+              onClose={() => setOpen(false)}
+            />
+            <CanvasAskPresets
+              className="flex-wrap gap-1"
+              buttonClassName="border border-border/70"
+              onPick={(preset, instruction) => send(instruction, preset)}
+            />
+          </>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+/** The canvas width under which the full pill no longer fits on one row. */
+const NARROW_PILL_PX = 600;
+
 const Divider = () => (
   <span
     aria-hidden="true"
@@ -425,12 +545,20 @@ const Divider = () => (
   />
 );
 
-export function CanvasToolbar() {
+export function CanvasToolbar({ ask }: { ask?: CanvasAskControl | null }) {
   const editor = useEditorRef();
   const quoted = useEditorSelector((ed) => inQuote(ed), []);
   const mod = modKeyLabel();
   const anchorRef = useRef<HTMLDivElement>(null);
   const keyboard = useKeyboardInset(anchorRef);
+  // Ask agent in the pill: touch only, and only while something is selected
+  // (or its popover is open). A mouse gets the floating menu over the selection.
+  const coarse = useCoarsePointer();
+  const selection = useSelectedPassage();
+  const [askHeld, setAskHeld] = useState(false);
+  // Below this width the full pill would wrap: the style menu turns to an icon.
+  const narrow = useNarrowWidth(anchorRef, NARROW_PILL_PX);
+  const showAsk = Boolean(ask) && coarse && (selection !== null || askHeld);
 
   return (
     <div
@@ -446,7 +574,13 @@ export function CanvasToolbar() {
         aria-orientation="horizontal"
         className="pointer-events-auto flex max-w-full items-center gap-0.5 rounded-[22px] border [@media(pointer:coarse)]:overflow-x-auto [@media(pointer:fine)]:flex-wrap [@media(pointer:fine)]:justify-center border-border/70 bg-background/95 p-1 shadow-lg shadow-foreground/5 backdrop-blur-md [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [@media(pointer:coarse)]:pr-8 [@media(pointer:coarse)]:[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)] animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"
       >
-        <TextStyleMenu />
+        {ask && showAsk ? (
+          <>
+            <AskAgentButton ask={ask} onHold={setAskHeld} />
+            <Divider />
+          </>
+        ) : null}
+        <TextStyleMenu compact={narrow} />
         <Divider />
         <MarkButton nodeType={KEYS.bold} label="Bold" keys={`${mod}B`}>
           <Bold />

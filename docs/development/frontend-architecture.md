@@ -59,7 +59,8 @@ src/
                    #   plan 42), citationText (markers → [1] + "Sources:" for Copy),
                    #   answerSources (an answer's sources: pointed-at first, then More),
                    #   canvasOpener (the context ChatView provides so ArtifactCard can open a
-                   #   presented `.md` in the canvas; absent on a share, so no button there)
+                   #   presented `.md` in the canvas; absent on a share, so no button there —
+                   #   the user bubble's CanvasEditChip, plan 44 Phase 4.3, opens through it too)
       hooks/       #   useChatEffects, useActiveRunBranchSnap, useConversationRail,
                    #   useKeyboardShortcuts, useTaskClock, useConversationSources,
                    #   useAnswerSources
@@ -92,7 +93,7 @@ src/
                    #   features/attachments' panel + ImageLightbox; useDebouncedValue,
                    #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters); a generated
                    #   `.md` row opens in the canvas of its conversation (`/c/:id?doc=`)
-    canvas/        # the document canvas (plan 44, Phases 4.1–4.2): CanvasDock (docks the
+    canvas/        # the document canvas (plan 44, Phases 4.1–4.3): CanvasDock (docks the
                    #   canvas beside the chat at ~55%, resizable; covers the chat full screen, on a
                    #   phone and below a 760px card), DocumentCanvas (the panel, lazy-loaded so
                    #   Plate and the diff stay out of the main chunk; one session per document,
@@ -101,10 +102,16 @@ src/
                    #   editor — editable at the latest version, read-only at an earlier one;
                    #   CanvasDocBar with the Editing / Viewing menu; CanvasToolbar, the floating pill
                    #   toolbar adapted from Plate's registry (keeps the selection on touch, rises
-                   #   above a phone's keyboard); CanvasTablePicker (the size grid); CanvasBlockMenu
+                   #   above a phone's keyboard; its first button is Ask agent); CanvasAskMenu (the
+                   #   desktop's floating selection menu, `@platejs/floating` like Plate's registry
+                   #   floating-toolbar: Ask agent + the presets), CanvasAskPanel (the presets and
+                   #   the compact "Ask the agent to change this…" input, shared by the menu and
+                   #   the pill's popover); CanvasTablePicker (the size grid); CanvasBlockMenu
                    #   (the ⋮⋮ handle + block menu: Delete / Duplicate / Move / Turn into);
                    #   CanvasTableElement (a table + its floating row / column / delete toolbar);
-                   #   CanvasSaveStatus; CanvasHistory (side
+                   #   CanvasSaveStatus (+ CanvasAgentEditingStatus while Ask agent's run goes);
+                   #   CanvasUnsavedDialog (Save / Discard / Cancel, or Save and send / Cancel
+                   #   before Ask agent); CanvasHistory (side
                    #   panel, a sheet on a phone: read / compare / restore); CanvasCompareView (the
                    #   word-level diff); CanvasConflictDialog (the 409); CanvasOutline, CanvasFindBar,
                    #   CanvasBlockFrame (heading folds, the block handle, the selected-block tint),
@@ -114,7 +121,8 @@ src/
                    #   Query; useCanvasEditing — the save controller of the open document, the
                    #   editor's source text, the reload-or-banner rule for a newer version;
                    #   useCanvasVersionText; useCanvasRoute — `?doc=<path>` in the URL;
-                   #   useKeyboardInset — the on-screen keyboard's overlap, from visualViewport), lib/
+                   #   useKeyboardInset — the on-screen keyboard's overlap, from visualViewport;
+                   #   useSelectedPassage — the passage Ask agent would act on), lib/
                    #   (saveController — saved only on the user's Save, single flight, base version, 409 → conflict;
                    #   markdown — the markdown ⇄ Plate value pipeline, no MDX, plus normalizeMarkdown;
                    #   documentDiff — jsdiff lines refined to words; editorCommands — quote, link
@@ -123,7 +131,9 @@ src/
                    #   and the table toolbar's actions; editorDelete — Backspace / Delete across
                    #   tables, rules, images, code; pasteCleanup — Word / web HTML cleaned before
                    #   Plate reads it; selectionMemory — the selection a toolbar tap remembers and
-                   #   puts back; shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
+                   #   puts back; askAgent — the passage (text, heading path), the presets and the
+                   #   `canvasEdit` request; askHighlight — the passage's tint (CSS Custom
+                   #   Highlight API); shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
                    #   canvasView, outline, find, documentTitle, dates, bylineContext, canvasFile)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)
@@ -142,7 +152,8 @@ src/
                              #   citation markers, the remark plugin, the sources context),
                              #   siteIcons (favicon host + failed-host memo), canvasDocuments
                              #   (which files are canvas documents: `sourcePath ?? "/conversation/
-                             #   output/" + name`, `.md` only; the `?doc=` URL)
+                             #   output/" + name`, `.md` only; the `?doc=` URL; a document's
+                             #   title and a passage's chip excerpt)
     stores/                  # workspaceStore (Zustand)
     hooks/                   # use-mobile, use-toast (framework-generic), useSessionUserId,
                              #   useResizablePanel (a dockable right-hand panel's width: the agent

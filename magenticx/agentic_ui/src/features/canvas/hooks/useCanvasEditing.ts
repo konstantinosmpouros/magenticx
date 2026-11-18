@@ -103,10 +103,11 @@ export function useCanvasEditing({
   const save = savedState ?? controllerRef.current?.snapshot ?? null;
   const source = sourceState ?? initialSource.current;
 
-  const remount = useCallback((markdown: string) => {
+  const remount = useCallback((markdown: string, previous?: string) => {
     setSource((current) => ({
       key: ((current ?? initialSource.current)?.key ?? 0) + 1,
       markdown,
+      ...(previous !== undefined ? { previous } : {}),
     }));
   }, []);
 
@@ -121,6 +122,8 @@ export function useCanvasEditing({
       setIncoming(latest);
       return;
     }
+    // The agent's version: what it changed shines once (`changeShine`).
+    const previous = latest.author === "agent" ? existing.currentText() : undefined;
     existing.reset({
       version: latest.version,
       author: latest.author,
@@ -128,7 +131,7 @@ export function useCanvasEditing({
       markdown: latest.content,
     });
     setIncoming(null);
-    remount(latest.content);
+    remount(latest.content, previous);
   }, [latest, remount]);
 
   // An unmount the canvas could not ask about (leaving the conversation)
@@ -173,7 +176,8 @@ export function useCanvasEditing({
         const markdown = ctl.currentText();
         setSource((current) => {
           const base = current ?? initialSource.current;
-          return base ? { ...base, markdown } : base;
+          // No shine on coming back: only an agent version loading shines.
+          return base ? { key: base.key, markdown } : base;
         });
       }
     }, []),
@@ -187,6 +191,11 @@ export function useCanvasEditing({
       if (markdown !== null) remount(markdown);
     }, [remount]),
     currentText: useCallback(() => controller()?.currentText() ?? "", []),
+    /**
+     * The saved version the editor's text is based on, read now (not from the
+     * last render): Ask agent sends it right after a Save may have moved it.
+     */
+    headVersion: useCallback(() => controller()?.snapshot.head.version ?? null, []),
     /** Keep theirs: load the version that won into the editor. */
     keepTheirs: useCallback(() => {
       const ctl = controller();

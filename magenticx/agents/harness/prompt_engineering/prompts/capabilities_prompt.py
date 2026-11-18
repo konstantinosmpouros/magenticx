@@ -6,6 +6,9 @@ exists* changes what the agent does, and its own description cannot convey that.
 told will write a report into `output/` and then paste it into the chat, and the
 user never gets a file.
 
+When to make a file or a document at all is not here: that rule lives in
+``documents_prompt``, so there is one rule in one place.
+
 Everything here is gated on a conversation, because these tools point into
 the conversation mounts (or, for `ask_user`, pause it) and are not attached
 without one.
@@ -22,13 +25,9 @@ _BODY = """\
   is too small to read, call it again on the same path with a `region` to zoom
   in — the result tells you the pixel dimensions to aim at, and each call is a
   fresh look.
-- **Make a file only when the user asks for one.** When they name a format
-  (Word, Excel, PowerPoint, PDF), make that file. Otherwise answer in the chat,
-  however long the answer — never write and present a file on your own
-  initiative.
 - **Hand over a document** with `present_artifact`, after writing the file to
-  `/conversation/output/`. A file left in `output/` is invisible to the user;
-  presenting it drops a downloadable card into the conversation at that point,
+  `/conversation/output/` (whether to make one at all: the next section). A
+  file left in `output/` is invisible to the user; presenting it drops a downloadable card into the conversation at that point,
   so do it as each document becomes ready and keep writing around it. Never
   paste a document's full contents into the chat instead. Present only finished
   work — never scratch notes or intermediate drafts — and present a given file

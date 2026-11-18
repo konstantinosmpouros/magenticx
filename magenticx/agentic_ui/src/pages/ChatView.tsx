@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import type { Variants } from "framer-motion";
@@ -20,8 +20,10 @@ import { useSlashCommands } from "@/features/chat/hooks/useSlashCommands";
 import { Loader } from "@/shared/ui/shadcn-io/loader";
 import { CanvasDock } from "@/features/canvas/components/CanvasDock";
 import { useCanvasRoute } from "@/features/canvas/hooks/useCanvasRoute";
+import { requestCanvasShine } from "@/features/canvas/lib/pendingShine";
 import { findCanvasFile } from "@/features/canvas/lib/canvasFile";
-import { CanvasOpenerContext } from "@/features/chat/lib/canvasOpener";
+import { CanvasOpenerContext, type CanvasOpener } from "@/features/chat/lib/canvasOpener";
+import { keepInView } from "@/features/chat/lib/keepInView";
 
 import { AGENTS_PATH, agentPath } from "@/features/agents/lib/routes";
 import { useChatWorkspaceContext } from "@/app/workspaceContext";
@@ -85,6 +87,7 @@ export default function ChatView() {
     thinkingState,
     composer,
     handleSendMessage,
+    handleSendCanvasEdit,
     handleStopStreaming,
     handleImageClick,
     triggerVoiceMode,
@@ -161,6 +164,16 @@ export default function ChatView() {
   // conversation's: a reload opens the document while the chat still loads.
   const { conversationId: routeConversationId } = useParams();
   const canvas = useCanvasRoute();
+  // Opening the canvas narrows the chat: keep what the user clicked in place.
+  const { open: openCanvasPath } = canvas;
+  const openCanvas = useCallback<CanvasOpener>(
+    (path, anchor, options) => {
+      if (options?.shineAfterVersion !== undefined)
+        requestCanvasShine({ path, afterVersion: options.shineAfterVersion });
+      keepInView(anchor, () => openCanvasPath(path));
+    },
+    [openCanvasPath],
+  );
   // The documents routes are per user, like the conversation's other reads.
   const canvasConversationId = (userId && routeConversationId) || null;
   const canvasPath = canvasConversationId ? canvas.path : null;
@@ -187,7 +200,7 @@ export default function ChatView() {
   });
 
   return (
-    <CanvasOpenerContext.Provider value={canvasConversationId ? canvas.open : null}>
+    <CanvasOpenerContext.Provider value={canvasConversationId ? openCanvas : null}>
       <CanvasDock
         document={
           userId && canvasConversationId && canvasPath
@@ -197,6 +210,12 @@ export default function ChatView() {
                 path: canvasPath,
                 // A run that ends may have written a new version: re-read then.
                 revision: `${conversationMessages.length}:${isCurrentConversationBusy ? 1 : 0}`,
+                // Ask agent on a selection (plan 44, Phase 4.3): a user message
+                // of this conversation, through the same start as a send — so
+                // only once the conversation in the route is the one loaded.
+                onAskAgent:
+                  currentConversation?.id === canvasConversationId ? handleSendCanvasEdit : null,
+                runActive: isCurrentConversationBusy,
                 onSelectPath: canvas.switchTo,
                 onClose: canvas.close,
                 onPreviewFile: canvasFile

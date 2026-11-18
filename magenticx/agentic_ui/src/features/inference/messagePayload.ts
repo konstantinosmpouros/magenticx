@@ -1,6 +1,7 @@
 import type {
   AgentEffortChoice,
   AttachmentIn,
+  CanvasEditRef,
   CommandRef,
   EffortLevel,
   MessageIn,
@@ -19,12 +20,15 @@ export function buildUserMessage({
   attachments,
   command,
   effort,
+  canvasEdit,
 }: {
   parentMessageId: string | null;
   content?: string;
   attachments?: AttachmentIn[];
   command?: CommandRef;
   effort?: EffortLevel | null;
+  /** Ask agent on a canvas selection (plan 44, Phase 4.3). */
+  canvasEdit?: CanvasEditRef;
 }): MessageIn {
   return {
     sender: "user",
@@ -33,6 +37,7 @@ export function buildUserMessage({
     ...(attachments !== undefined ? { attachments } : {}),
     ...(command ? { command } : {}),
     ...(effort ? { effort } : {}),
+    ...(canvasEdit ? { canvasEdit } : {}),
   };
 }
 

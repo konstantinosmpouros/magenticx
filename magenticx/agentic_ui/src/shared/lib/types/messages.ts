@@ -3,7 +3,7 @@
 // ------------------------------------------------------
 import type { AttachmentIn, AttachmentOut } from "./attachments";
 import type { CommandRef } from "./commands";
-import type { EffortLevel, TaskNotice } from "../schemas";
+import type { CanvasEditRef, EffortLevel, TaskNotice } from "../schemas";
 
 // A manual compaction recorded on the answer it follows (plan 34). Token
 // figures are estimates until the next model call reports the real prompt;
@@ -90,6 +90,12 @@ export type MessageOut = {
   kind?: "task_notification" | null;
   /** What the notice row says (which task, how it ended, how long it took). */
   taskNotice?: TaskNotice | null;
+  /**
+   * Ask agent on a canvas selection (plan 44, Phase 4.3): the passage this
+   * user message asked the agent to change. Shown as a chip that opens the
+   * document; null on every other message.
+   */
+  canvasEdit?: CanvasEditRef | null;
 };
 
 // Message input for API requests
@@ -107,6 +113,8 @@ export type MessageIn = {
   command?: CommandRef;
   /** How hard the agent's model reasons; sent only for an agent that lists the level. */
   effort?: EffortLevel;
+  /** Ask agent on a canvas selection (plan 44, Phase 4.3); `content` is its instruction. */
+  canvasEdit?: CanvasEditRef;
 };
 
 // Message update payload (used to finalise AI placeholders)

@@ -9,7 +9,9 @@ or a byte of content — both can hold the user's words.
 """
 from __future__ import annotations
 
+from core.logging import get_logger
 from harness.conversation_files import DocumentVersionStore
+from harness.conversation_files.seen import MAX_TURN_DOCUMENTS, DocumentSeenStore
 from harness.conversation_files.versions import (
     DocumentVersion,
     InvalidDocumentPath,
@@ -27,9 +29,15 @@ from schema import (
     SaveDocumentVersionResponse,
 )
 
+logger = get_logger(__name__)
+
 
 def _store() -> DocumentVersionStore:
     return DocumentVersionStore(get_memory_pool())
+
+
+def _seen_store() -> DocumentSeenStore:
+    return DocumentSeenStore(get_memory_pool())
 
 
 def _content(version: DocumentVersion) -> DocumentVersionContent:
@@ -97,21 +105,44 @@ async def save_document_version(
 async def capture_documents(
     user_id: str, conversation_id: str, paths: list[str], source_run_id: str | None
 ) -> CaptureDocumentsResponse:
-    """Record the presented documents as agent versions where they changed.
+    """Run end: record the documents the run changed as agent versions, then mark them seen.
 
-    Ineligible paths (not a ``.md`` under output/, or malformed) are skipped
-    silently, like missing files: the bridge sends what the run presented and
-    must not fail on a path the agent got wrong.
+    Two sets of paths, one capture:
+
+    * the presented ones the bridge sends — ineligible paths (not a ``.md``
+      under output/, or malformed) are skipped silently, like missing files:
+      the bridge sends what the run presented and must not fail on a path the
+      agent got wrong;
+    * every document the conversation already has (plan 44 4.3), since an
+      Ask agent edit is an ``edit_file`` that need not be presented again.
+
+    The response lists every presented path, and an existing document only
+    when the run changed it. Afterwards the seen markers move over the
+    agent's own versions (:meth:`DocumentSeenStore.advance_after_run`); that
+    step is fail-open — the versions are recorded either way, and a missed
+    marker only means the next turn's note may repeat an edit.
     """
-    eligible: list[str] = []
+    presented: list[str] = []
     for path in paths:
         try:
             canonical = document_path(path)
         except InvalidDocumentPath:
             continue
-        if canonical not in eligible:
-            eligible.append(canonical)
-    results = await _store().capture(user_id, conversation_id, eligible, run_id=source_run_id)
+        if canonical not in presented:
+            presented.append(canonical)
+    store = _seen_store()
+    existing = [p for p in await store.document_paths(user_id, conversation_id, limit=MAX_TURN_DOCUMENTS)
+                if p not in presented]
+    results = await store.capture(user_id, conversation_id, presented + existing, run_id=source_run_id)
+    try:
+        advanced = await store.advance_after_run(user_id, conversation_id)
+    except Exception:  # fail-open by design, see the docstring
+        logger.warning("documents_seen_advance_failed", "Could not mark the documents seen after a run",
+                       exc_info=True)
+    else:
+        logger.info("documents_seen_advanced", "Marked the run's documents seen by the agent", documents=advanced)
+    shown = set(presented)
     return CaptureDocumentsResponse(captured=[
-        CapturedDocument(path=r.path, version=r.version, created=r.created) for r in results
+        CapturedDocument(path=r.path, version=r.version, created=r.created)
+        for r in results if r.path in shown or r.created
     ])

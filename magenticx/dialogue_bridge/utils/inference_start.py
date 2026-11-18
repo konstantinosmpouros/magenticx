@@ -18,6 +18,7 @@ from schema import (
     MessageOut,
 )
 from utils.agents import get_agent_by_id, insert_conversation_sources
+from utils.canvas_edit import check_canvas_edit, refuse_without_conversation
 from utils.commands import check_invocation
 from utils.conversations import _preview, init_conv, init_message
 from utils.inference import resolve_inference_message_path
@@ -81,6 +82,10 @@ async def start_inference_flow(
     mode = payload.mode
     # A continued share's frozen citation sources, kept for the new conversation below.
     shared_sources: list[ConversationSource] = []
+    if mode in ("new", "shared_continue"):
+        # A canvas edit (plan 44 4.3) needs the conversation holding its
+        # document; these modes create theirs. Refused before any row exists.
+        refuse_without_conversation(payload.message)
     if mode == "new":
         conversation, parent_message_id, agent = await _create_new_conversation_start(db, user, payload)
     elif mode == "send":
@@ -101,6 +106,12 @@ async def start_inference_flow(
     # holds, which was checked when it was sent. The agents service checks again.
     if mode != "retry" and payload.message is not None and payload.message.command is not None:
         await check_invocation(db, user_id, agent, payload.message.command)
+    # A canvas edit (plan 44 4.3) must name a version of one of THIS
+    # conversation's documents — checked with the agents service now, the
+    # conversation's ownership already established above. Retry re-runs the
+    # stored one, which was checked when it was sent.
+    if mode != "retry" and payload.message is not None and payload.message.canvasEdit is not None:
+        await check_canvas_edit(user_id, conversation.id, payload.message.canvasEdit)
 
     # For new/send/edit/shared_continue the backend creates the run parent inside this request,
     # so any client path necessarily ends before the real parent. Retry is the

@@ -12,14 +12,16 @@ one answer to "what does the prompt look like":
 3. the workspace — which mounts exist, which refuse writes
 4. the platform verbs — ``view_image`` / ``present_artifact`` / ``render_chart`` / ``ask_user``,
    and background delegation (``start_async_task``) when async sub-agents are on
-5. citations — how to cite the ``[src:ID]`` sources a search tool returns
-6. efficient file work
-7. working out loud — short updates to the user between tool calls
-8. long-term memory
-9. the current date and time
+5. documents — when to make a canvas document, a file, or just answer, and
+   how to edit a document the user edits too (plan 44)
+6. citations — how to cite the ``[src:ID]`` sources a search tool returns
+7. efficient file work
+8. working out loud — short updates to the user between tool calls
+9. long-term memory
+10. the current date and time
 
-Stable sections first, volatile last: 1-8 are fixed for a given agent and run,
-so a provider can cache that prefix, while 9 changes every minute. Reversing
+Stable sections first, volatile last: 1-9 are fixed for a given agent and run,
+so a provider can cache that prefix, while 10 changes every minute. Reversing
 those two would cost the cache on every request — see ``temporal_prompt``.
 
 Every section returns "" when its feature is off, so an agent with nothing
@@ -30,6 +32,7 @@ from __future__ import annotations
 from harness.prompt_engineering.context import PromptContext
 from harness.prompt_engineering.prompts.capabilities_prompt import capabilities_prompt
 from harness.prompt_engineering.prompts.citations_prompt import citations_prompt
+from harness.prompt_engineering.prompts.documents_prompt import documents_prompt
 from harness.prompt_engineering.prompts.efficiency_prompt import efficiency_prompt
 from harness.prompt_engineering.prompts.filesystem_prompt import filesystem_prompt
 from harness.prompt_engineering.prompts.memory_prompt import memory_prompt
@@ -42,6 +45,7 @@ from harness.prompt_engineering.prompts.temporal_prompt import temporal_prompt
 _SECTIONS = (
     ("filesystem", filesystem_prompt),
     ("capabilities", capabilities_prompt),
+    ("documents", documents_prompt),
     ("citations", citations_prompt),
     ("efficiency", efficiency_prompt),
     ("progress", progress_prompt),

@@ -106,6 +106,16 @@ export function useCanvasDocument(
     });
   }, [docKey, queryClient, userId, conversationId, path]);
 
+  /**
+   * Re-read the conversation's documents now, resolving once they are in
+   * (Ask agent's run ended: its new version must be loaded before the editor
+   * unlocks, or an early keystroke would turn the reload into a banner).
+   */
+  const refreshLatest = useCallback(
+    () => queryClient.invalidateQueries({ queryKey: canvasKey(userId, conversationId) }),
+    [queryClient, userId, conversationId],
+  );
+
   return {
     documents: documents.data ?? [],
     /** The latest version with its text: what the editor is based on. */
@@ -128,6 +138,7 @@ export function useCanvasDocument(
     versionsLoading: versions.isFetching,
     loadVersions,
     refreshVersions,
+    refreshLatest,
     pickVersion,
   };
 }

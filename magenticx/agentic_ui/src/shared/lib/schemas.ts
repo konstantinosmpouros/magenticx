@@ -34,6 +34,7 @@
 import { z } from "zod";
 
 import { avatarPathFor } from "./api/paths";
+import { isCanvasDocumentPath } from "./canvasDocuments";
 
 // ---------------------------------------------------------------------------
 // Loose gates — assert the container shape only. The camel-mapping for these
@@ -1718,6 +1719,61 @@ export const InferenceStartOrQueueSchema = z.record(z.unknown()).transform((raw)
       }
     : { queued: false as const, body: raw },
 );
+
+/**
+ * Ask agent on a selection in the canvas (plan 44, Phase 4.3): the passage a
+ * user message asks the agent to change, in the canvas document `path` at
+ * `version`, under `headingPath` (outermost first). The message's `content`
+ * is the instruction too. The bounds are the bridge's (`MessageIn.canvasEdit`).
+ */
+export const CANVAS_EDIT_PRESETS = ["shorter", "longer", "formal", "simpler", "polish"] as const;
+export type CanvasEditPreset = (typeof CANVAS_EDIT_PRESETS)[number];
+export const CANVAS_EDIT_LIMITS = {
+  selection: 8000,
+  instruction: 2000,
+  headings: 6,
+  heading: 200,
+} as const;
+
+/**
+ * `messages.canvas_edit` on a read: only a well-formed request survives,
+ * anything else is null — it becomes a chip that opens the document, so a
+ * junk path must never reach the canvas route.
+ */
+export const toCanvasEdit = (raw: unknown) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  const path = record.path;
+  const version = record.version;
+  const selection = record.selection;
+  const instruction = record.instruction;
+  if (typeof path !== "string" || !isCanvasDocumentPath(path)) return null;
+  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) return null;
+  if (typeof selection !== "string" || !selection || selection.length > CANVAS_EDIT_LIMITS.selection)
+    return null;
+  if (
+    typeof instruction !== "string" ||
+    !instruction ||
+    instruction.length > CANVAS_EDIT_LIMITS.instruction
+  )
+    return null;
+  const headings = atField(record, "headingPath", "heading_path");
+  const preset = record.preset;
+  return {
+    path,
+    version,
+    selection,
+    headingPath: (Array.isArray(headings) ? headings : [])
+      .filter((heading): heading is string => typeof heading === "string" && heading.length > 0)
+      .slice(0, CANVAS_EDIT_LIMITS.headings)
+      .map((heading) => heading.slice(0, CANVAS_EDIT_LIMITS.heading)),
+    instruction,
+    ...(typeof preset === "string" && (CANVAS_EDIT_PRESETS as readonly string[]).includes(preset)
+      ? { preset: preset as CanvasEditPreset }
+      : {}),
+  };
+};
+export type CanvasEditRef = NonNullable<ReturnType<typeof toCanvasEdit>>;
 
 /**
  * `messages.task_notice` (plan 41 §14.4): what the notice row of a wake-up

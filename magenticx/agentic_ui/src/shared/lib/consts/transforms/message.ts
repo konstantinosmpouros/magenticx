@@ -1,7 +1,7 @@
 import type { AttachmentOut } from "../../types/attachments";
 import type { CommandRef } from "../../types/commands";
 import type { MessageCompaction, MessageOut } from "../../types/messages";
-import { toEffortLevel, toTaskNotice } from "../../schemas";
+import { toCanvasEdit, toEffortLevel, toTaskNotice } from "../../schemas";
 import { toDate, toOptionalNumber, toOptionalString } from "./base";
 
 // A manual compaction on an answer (plan 34), or null for anything that is not
@@ -106,4 +106,8 @@ export const transformMessage = (message: Record<string, any>): MessageOut => ({
   // out, the row would render as the user's own words.
   kind: message.kind === "task_notification" ? "task_notification" : null,
   taskNotice: toTaskNotice(message.taskNotice ?? message.task_notice),
+  // Plan 44, Phase 4.3: the canvas passage a user message asked about. Left
+  // out, the chip would never show; junk becomes null, never a chip.
+  canvasEdit:
+    message.sender === "user" ? toCanvasEdit(message.canvasEdit ?? message.canvas_edit) : null,
 });

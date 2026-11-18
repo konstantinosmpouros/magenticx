@@ -25,6 +25,7 @@ from schema import (
 from router.user_agents import invalid_definition_response, validate_agent_payload
 from utils import emit_checkpoint_committed, optional_mcp_session, release_checkpoint_unless_paused
 from utils.agents import build_trial_definition, resolve_agent_definition
+from utils.canvas_turn import CanvasEditRefused, prepare_canvas_turn
 from utils.compaction import compact_agent_thread, undo_agent_compaction
 from utils.hitl_resume import build_resume_command
 
@@ -111,6 +112,16 @@ async def stream_agent(agent_slug: str, req: Request):
         except CommandRefused as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         messages = apply_command(req.messages, invocation) if invocation else req.messages
+        # The canvas (plan 44 4.3): the user's edits since the last turn as a
+        # note, and an Ask agent request as this turn's scoped instruction —
+        # both into the turn's message only, never the chat. The bridge checked
+        # the request; it is validated again here, fail-closed.
+        try:
+            messages = await prepare_canvas_turn(
+                messages, context_data, deep_agent=definition.manifest.get("type") == "deep agent"
+            )
+        except CanvasEditRefused as exc:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         # A persisted task-notification row (plan 41) replays as the notification
         # HumanMessage it was, metadata included, so the async sub-agent
         # middleware recognises it and never reports that result twice.
