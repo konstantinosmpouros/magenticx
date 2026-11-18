@@ -121,7 +121,6 @@ magenticx/agents/
 │   │   ├── scratch_store.py    BranchScratchStore — the default route as rows per (conversation, branch thread) (plan 41)
 │   │   ├── scratch_backend.py  BranchScratchBackend (the default route) + resolve_branch_thread_id
 │   │   ├── scratch_migration.py  one-shot import of legacy in-state `files` (delete in the next release)
-│   │   ├── retired_agents.py   one-shot boot prune of retired platform agents (`omni-yaml-v1`) off the volume (delete in the next release)
 │   │   ├── memory.py           AGENTS.md index helpers (remember tool backing)
 │   │   └── agent_md_template.py  AGENTS_MD_TEMPLATE seed string
 │   └── skill_registry/
@@ -173,11 +172,10 @@ magenticx/agents/
 
 **Lifespan** — `_lifespan` (`main.py:185-209`), in strict order:
 1. Install the loop exception handler.
-2. `prune_retired_platform_agents()` then `refresh_registry()` — **one-shot** (`harness/filesystem/retired_agents.py`, delete in the next release): remove the retired `omni-yaml-v1` folder from `<global_root>/agents/` and re-scan so it also leaves `AGENT_REGISTRY`, which discovered it at import. Logs `retired_platform_agents_pruned` once, then is a silent no-op. No platform agent ships as YAML any more (the image's `agents_seed/` and its boot-time copy are gone); the scan stays for a folder placed on the volume out of band.
-3. `await init_durable_checkpointer(app)` (`harness/checkpointer/bootstrap.py`) — **fail fast/loud** if `agent_runtime` is unreachable.
-4. Spawn the **remote-skill sync task** (`run_remote_skill_sync_loop`, `harness/skill_registry/remote/sync.py`) — indexes the allowlisted skill sources into `agent_runtime` ~2 min after boot, then daily, under an advisory lock. Returns at once when `REMOTE_SKILLS_ENABLED=false`. See [remote-skills](../flows/remote-skills.md).
-5. `yield`.
-6. Shutdown: cancel the remote-skill sync task → `pool.close()` → restore loop handler → `shutdown_logging()`.
+2. `await init_durable_checkpointer(app)` (`harness/checkpointer/bootstrap.py`) — **fail fast/loud** if `agent_runtime` is unreachable.
+3. Spawn the **remote-skill sync task** (`run_remote_skill_sync_loop`, `harness/skill_registry/remote/sync.py`) — indexes the allowlisted skill sources into `agent_runtime` ~2 min after boot, then daily, under an advisory lock. Returns at once when `REMOTE_SKILLS_ENABLED=false`. See [remote-skills](../flows/remote-skills.md).
+4. `yield`.
+5. Shutdown: cancel the remote-skill sync task → `pool.close()` → restore loop handler → `shutdown_logging()`.
 
 > **There is no workspace-sync task any more.** A 900-second pass used to
 > reconcile this volume against `chat_db` in both directions, because custom

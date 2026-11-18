@@ -55,7 +55,7 @@ def global_root() -> Path:
 
 def global_agents_root() -> Path:
     """Where platform agent definition folders are discovered (none ship in
-    the image any more; see ``harness.filesystem.retired_agents``)."""
+    the image any more)."""
     return global_root() / "agents"
 
 
