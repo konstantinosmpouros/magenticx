@@ -23,10 +23,10 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-import utils.agent_trials as agent_trials
-import utils.data_export as data_export
-import utils.inference_runs as ir
-import utils.runtime_reaps as runtime_reaps
+import engine.agents.trials as agent_trials
+import engine.account.data_export as data_export
+import engine.inference.runs as ir
+import engine.conversations.runtime_reaps as runtime_reaps
 from core.database import (
     AgentTable,
     ConversationTable,
@@ -36,9 +36,9 @@ from core.database import (
     UserAgentToolPrefTable,
     UserTable,
 )
-from utils.inference_runs import inference_run_manager
-from utils.trial_drafts import TrialDraft, overlay_approvals, trial_drafts
-from utils.usage import compute_usage_summary, list_usage_conversations
+from engine.inference.runs import inference_run_manager
+from engine.agents.trial_drafts import TrialDraft, overlay_approvals, trial_drafts
+from engine.account.usage import compute_usage_summary, list_usage_conversations
 
 VERSIONS = (
     Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"

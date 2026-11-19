@@ -165,7 +165,7 @@ inspector wants the columns, including the provenance the yml omits.
 
 ```mermaid
 flowchart LR
-    UI[Agent page → Memory section<br/>useMemories] -->|/api/v1/memories| BR[dialogue_bridge<br/>router/memories.py]
+    UI[Agent page → Memory section<br/>useMemories] -->|/api/v1/memories| BR[dialogue_bridge<br/>router/agents/memories.py]
     BR -->|mTLS + trusted-proxy<br/>resolve agentId→slug| AG[agents<br/>router/memories.py]
     AG --> ST[(agent_memories<br/>agent_runtime)]
 ```
@@ -221,7 +221,7 @@ flowchart LR
 | Memory system-prompt block | [magenticx/agents/harness/prompt_engineering/prompts/memory_prompt.py](../../magenticx/agents/harness/prompt_engineering/prompts/memory_prompt.py) |
 | Cap setting (`MEMORY_MAX_ENTRIES`) | [magenticx/agents/core/settings.py](../../magenticx/agents/core/settings.py) (`FilesystemSettings`) |
 | Agents inspector endpoints | [magenticx/agents/router/memories.py](../../magenticx/agents/router/memories.py) |
-| Bridge proxy + router | [magenticx/dialogue_bridge/utils/memories.py](../../magenticx/dialogue_bridge/utils/memories.py) · [magenticx/dialogue_bridge/router/memories.py](../../magenticx/dialogue_bridge/router/memories.py) |
+| Bridge proxy + router | [magenticx/dialogue_bridge/engine/agents/memories.py](../../magenticx/dialogue_bridge/engine/agents/memories.py) · [magenticx/dialogue_bridge/router/agents/memories.py](../../magenticx/dialogue_bridge/router/agents/memories.py) |
 | Frontend API + hook + tab | [magenticx/agentic_ui/src/shared/lib/api/](../../magenticx/agentic_ui/src/shared/lib/api/) · [magenticx/agentic_ui/src/features/agents/hooks/useMemories.ts](../../magenticx/agentic_ui/src/features/agents/hooks/useMemories.ts) · [magenticx/agentic_ui/src/features/agents/components/detail/AgentMemory.tsx](../../magenticx/agentic_ui/src/features/agents/components/detail/AgentMemory.tsx) |
 
 See also: [user-preferences](user-preferences.md#agent-memory) (the `use_memory` gate), [conversation-embeddings](conversation-embeddings.md) (the separate `search_past_conversations` recall tool), [agent-development](../development/agent-development.md#per-user-agent-long-term-memory).

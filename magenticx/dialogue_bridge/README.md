@@ -305,7 +305,7 @@ flowchart TD
 
 ### 8.4 Custom agents (the agent builder)
 
-Routes under `/v1/agents/{user_id}/custom` (`router/user_agents.py`, logic in `utils/user_agents.py`). The catalog row (`agents`, with `owner_user_id`) lives in `chat_db`; the definition (spec and files) is stored by the agents service.
+Routes under `/v1/agents/{user_id}/custom` (`router/agents/user_agents.py`, logic in `engine/agents/user_agents.py`). The catalog row (`agents`, with `owner_user_id`) lives in `chat_db`; the definition (spec and files) is stored by the agents service.
 
 - **List** reads the rows only. `?include=summary` adds `model`, `toolCount`, `skillCount` and `subagentCount` from one upstream list call, merged by slug; if that call fails the rows come back without counts.
 - **Create / update** call the agents service first, then write the row. If the row cannot be committed after a create, the upstream definition is deleted again (compensation) and the error re-raised.
@@ -314,7 +314,7 @@ Routes under `/v1/agents/{user_id}/custom` (`router/user_agents.py`, logic in `u
 - **Export** (`GET …/custom/{agent_id}/export`) checks ownership, then returns the agents service's `.zip` with its `Content-Type` and `Content-Disposition`.
 - **Approvals in one batch** (`PUT /v1/agents/{user_id}/{agent_id}/tools/approvals`, body `{"approvals": {"<toolKey>": true | false | null}}`) writes every choice to `user_agent_tool_prefs` in one transaction. `null` drops the choice. An unknown key is a 404 and a change to a locked gate a 409, as on the single-row route; any refusal writes nothing.
 
-Every user-facing path that takes an agent id (conversations, scheduled tasks, suggestions, skills, memories, agent tools) resolves it through `utils.agents.get_usable_agent`: a platform agent or the caller's own, otherwise 404.
+Every user-facing path that takes an agent id (conversations, scheduled tasks, suggestions, skills, memories, agent tools) resolves it through `engine.agents.catalog.get_usable_agent`: a platform agent or the caller's own, otherwise 404.
 
 ## 9. Conversation and Message Lifecycle
 
@@ -456,7 +456,7 @@ Detached runs are the primary inference path. The run lifecycle is fully owned b
 
 ### 11.1 Run creation
 
-`start_inference_flow(...)` (in `utils/inference_start.py`) orchestrates persistence, then calls `create_inference_run_record(...)` (in `utils/inference_runs.py`) in the same transaction:
+`start_inference_flow(...)` (in `engine/inference/start.py`) orchestrates persistence, then calls `create_inference_run_record(...)` (in `engine/inference/runs.py`) in the same transaction:
 
 1. persists the user-side action for `new`, `send`, `edit`, `retry`, or `shared_continue`
 2. creates an AI placeholder `MessageTable` row with `streaming_status='queued'`, `streaming_started_at=now()`, and snapshots of the message path and tool preferences in the `streaming_*` columns
@@ -851,37 +851,54 @@ magenticx/dialogue_bridge/
 │   │                              (signing.py), cookies/CSRF/deps (session.py)
 │   ├── proxy.py                   Trusted proxy IP resolution
 │   └── rate_limit.py              SlowAPI setup
-├── router/
-│   ├── auth.py                    Login/session/logout
-│   ├── catalog.py                 Agents and tools catalog
-│   ├── preferences.py             User preferences
-│   ├── conversations.py           Conversation CRUD
-│   ├── messages.py                Message create/update/reactions
-│   ├── inference.py               Backend-owned inference start, observe, cancel, list endpoints
-│   ├── voice.py                   Realtime voice session persistence/proxy endpoints
-│   ├── shared_conv.py             Public shared conversation snapshot endpoint
-│   ├── search.py                  Workspace conversation search
-│   ├── speech.py                  Speech and dictation endpoints
-│   └── attachments.py             Blob streaming and image pagination
-├── schemas/                       Pydantic request/response models
-├── utils/
-│   ├── agents.py                  Agent sync and upstream catalog helpers
-│   ├── conversations.py           Conversation/message/blob persistence helpers
-│   ├── inference.py               Branch resolution and agent payload serialization
-│   ├── inference_start.py         Backend-owned inference start orchestration
-│   ├── inference_runs.py          Detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/stream/cleanup
-│   ├── event_log.py               Redis-Streams-backed per-run AG-UI event log (RedisEventLog: append / read_since / mark_terminal)
-│   ├── shared_conv.py             Shared conversation clone/snapshot helpers
-│   ├── search.py                  Workspace search helper
-│   ├── speech.py                  Speech proxy helpers
-│   ├── voice.py                   Realtime voice helper logic
-│   ├── titles.py                  Upstream title generation helper and random candidate selector
+├── router/                        Thin HTTP layer, one folder per domain; calls engine/
+│   ├── account/                   auth (login/session/logout), account, preferences, usage, export
+│   ├── agents/                    catalog (agents and tools), user_agents, tools, skills, memories, commands
+│   ├── conversations/             conversations (CRUD), messages, attachments (blob streaming, image
+│   │                              pagination), search, sharing (public shared snapshot), favicons
+│   ├── documents/                 documents, comments, suggestions (canvas)
+│   ├── inference/                 runs (inference start, observe, cancel, list), tasks, voice, speech
+│   ├── automation/                scheduled_tasks, workflows
+│   └── internal/                  conversations, memory (service-to-service)
+├── schema/                        Pydantic request/response models, same domain folders as router/ + base.py
+├── engine/                        The logic: DB queries, flows, agents-service calls, background loops
+│   ├── account/                   auth, profile, status, deletion, data_export, usage, usage_rollups
+│   ├── agents/
+│   │   ├── catalog.py             Agent cache and sync with the agents service, get_usable_agent
+│   │   ├── tools.py               One agent's tools and model for one user
+│   │   ├── service_urls.py        URLs of the agents-service endpoints the bridge calls
+│   │   └── …                      user_agents, agent_import, trials, trial_drafts, tool_prefs, skills, memories, commands
+│   ├── conversations/
+│   │   ├── conversations.py       Conversation/message/blob persistence helpers
+│   │   ├── sharing.py             Shared conversation clone/snapshot helpers
+│   │   ├── share_pdf.py           Shared conversation PDF renderer
+│   │   ├── search.py              Workspace search helper
+│   │   ├── titles.py              Upstream title generation helper and random candidate selector
+│   │   ├── suggestions.py         Starter suggestion helper
+│   │   └── …                      messages, attachments, inputs, user_files, workspace_names, sources, embeddings,
+│   │                              favicons, compaction, compaction_lock, runtime_reaps
+│   ├── documents/                 documents, comments, suggestions, export, canvas_edit (canvas)
+│   ├── inference/
+│   │   ├── history.py             Branch resolution and agent payload serialization
+│   │   ├── start.py               Backend-owned inference start orchestration
+│   │   ├── runs.py                Detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/stream/cleanup
+│   │   ├── event_log.py           Redis-Streams-backed per-run AG-UI event log (RedisEventLog: append / read_since / mark_terminal)
+│   │   ├── speech.py              Speech proxy helpers
+│   │   ├── voice.py               Realtime voice helper logic
+│   │   ├── tasks/                 Background sub-agent tasks: tasks, consumers, streams, sockets, wakeups
+│   │   └── …                      channel, composer_queue, hitl, effort, activity, output_capture
+│   └── automation/                scheduled_tasks, workflows, workflow_runs, workflow_schedules
+├── utils/                         Generic helpers only, no feature knowledge
 │   ├── validators.py              Ownership validators
-│   └── suggestions.py             Starter suggestion helper
+│   ├── citations.py               Citation markers → numbered references
+│   ├── zip_stream.py              Streamed zip archives
+│   └── pricing.py                 Model price table, call_cost_micros
 ├── observability/                 Logging, metrics, middleware, redaction
 ├── requirements.txt
 └── Dockerfile
 ```
+
+**Layering:** `router → engine → utils → core`. Routers stay thin and call `engine/`; `engine/` holds the logic (DB queries, flows, agents-service calls, background loops); `utils/` holds only generic helpers with no knowledge of a feature. `utils/` never imports `engine/`, and `engine/` never imports `router/`.
 
 ## 19. Local Development
 
@@ -960,8 +977,8 @@ Configured environment there includes:
 - `core/auth/oidc.py`: Microsoft Entra sign-in
 - `core/auth/signing.py`: session signing keys (OCI KMS / dev file key)
 - `core/database/models.py`: ORM schema
-- `router/inference.py`: backend-owned inference start, WebSocket observation (`inference_run_websocket`), deprecated SSE fallback, cancellation, and active-run listing
-- `router/speech.py`: speech and dictation endpoints
-- `utils/inference.py`: branch resolution and multimodal serialization
-- `utils/inference_runs.py`: detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/observe/cleanup
-- `utils/agents.py`: agent cache and tools proxy helpers
+- `router/inference/runs.py`: backend-owned inference start, WebSocket observation (`inference_run_websocket`), deprecated SSE fallback, cancellation, and active-run listing
+- `router/inference/speech.py`: speech and dictation endpoints
+- `engine/inference/history.py`: branch resolution and multimodal serialization
+- `engine/inference/runs.py`: detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/observe/cleanup
+- `engine/agents/catalog.py`: agent cache and catalog sync; `engine/agents/tools.py`: per-agent tools proxy helpers

@@ -29,15 +29,15 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import utils.composer_queue as composer_queue
-import utils.inference_runs as ir
-import utils.inference_start as inference_start_module
+import engine.inference.composer_queue as composer_queue
+import engine.inference.runs as ir
+import engine.inference.start as inference_start_module
 from core.database import AgentTable, ConversationTable, MessageTable, UserTable
 from schema import InferenceStartPayload, MessageIn, MessageOut, queued_message_from_column
-from utils.conversations import clone_branch_to_conversation
-from utils.effort import EFFORT_LEVELS, effort_context
-from utils.inference_runs import inference_run_manager
-from utils.inference_start import start_inference_flow
+from engine.conversations.conversations import clone_branch_to_conversation
+from engine.inference.effort import EFFORT_LEVELS, effort_context
+from engine.inference.runs import inference_run_manager
+from engine.inference.start import start_inference_flow
 
 LEVELS = ["minimal", "low", "medium", "high", "xhigh"]
 VERSIONS = (

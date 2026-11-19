@@ -35,15 +35,15 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import utils.composer_queue as composer_queue
-import utils.inference_runs as ir
-import utils.inference_start as inference_start_module
+import engine.inference.composer_queue as composer_queue
+import engine.inference.runs as ir
+import engine.inference.start as inference_start_module
 from core.database import ConversationTable, MessageTable
 from schema import InferenceStartPayload, MessageIn, MessageOut
-from utils.canvas_edit import canvas_edit_context
-from utils.conversations import clone_branch_to_conversation
-from utils.inference_runs import inference_run_manager
-from utils.inference_start import start_inference_flow
+from engine.documents.canvas_edit import canvas_edit_context
+from engine.conversations.conversations import clone_branch_to_conversation
+from engine.inference.runs import inference_run_manager
+from engine.inference.start import start_inference_flow
 
 BRIEF = "/conversation/output/brief.md"
 WHEN = "2026-11-18T10:00:00+00:00"

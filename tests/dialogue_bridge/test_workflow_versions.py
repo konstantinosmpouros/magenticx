@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 import pytest
 
-import utils.workflow_schedules as workflow_schedules
+import engine.automation.workflow_schedules as workflow_schedules
 from core.auth.session import require_csrf_protection
 from core.database import WorkflowScheduleTable
 

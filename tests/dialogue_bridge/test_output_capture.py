@@ -24,12 +24,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import utils.inference_runs as ir
-import utils.output_capture as oc
+import engine.inference.runs as ir
+import engine.inference.output_capture as oc
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
 from core.settings import settings
-from utils.conversations import build_share_snapshot, clone_branch_to_conversation, is_shareable
-from utils.inference_runs import InferenceRunRuntime
+from engine.conversations.conversations import build_share_snapshot, clone_branch_to_conversation, is_shareable
+from engine.inference.runs import InferenceRunRuntime
 
 
 class FakeAgents:

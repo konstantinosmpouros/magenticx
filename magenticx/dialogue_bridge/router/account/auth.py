@@ -1,0 +1,702 @@
+import secrets
+from datetime import datetime, timezone
+from urllib.parse import urlencode
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
+from core.logging import get_logger, set_context
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.database import get_db, upsert_user_from_identity, IdentityConflictError
+from schema import (
+    AccountListResponse,
+    AuthResponse,
+    SwitchAccountRequest,
+)
+from core.security.rate_limit import auth_rate_limit, refresh_rate_limit
+from core.settings import settings
+from core.auth.session import (
+    AuthContext,
+    clear_device_cookie,
+    clear_oidc_binding_cookie,
+    get_device_id,
+    get_oidc_binding,
+    issue_device_cookie,
+    issue_oidc_binding_cookie,
+    resolve_parked_refresh,
+    access_ttl_for_session,
+    build_auth_response,
+    clear_session_cookies,
+    issue_session_cookies,
+    logout_denylist,
+    is_stale,
+    refresh_guard,
+    require_csrf_protection,
+    require_refresh_session,
+    require_session,
+    revoke_current_session,
+    rotate_session,
+)
+from core.auth.parked import (
+    ParkedSessionError,
+    parked_sessions,
+)
+from engine.account.status import open_deletion, pending_deletion_summary
+from engine.account.auth import (
+    revocation_watermark,
+    revoke_all_sessions,
+    account_summary,
+    finalize_login,
+    guard_add_account,
+    load_user,
+    oidc_redirect_uri,
+    require_multi_account,
+)
+from core.auth.oidc import (
+    OIDC_FLOW_TTL_SECONDS,
+    begin_login,
+    complete_login,
+    consume_login_binding,
+    consume_park_intent,
+    consume_reauth_intent,
+    EntraOIDCError,
+    EntraAccessDeniedError,
+)
+
+
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+@router.get("/session", response_model=AuthResponse, status_code=status.HTTP_200_OK)
+async def session_me(
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    user = await load_user(db, ctx.user_id)
+    if user is None or not user.is_active:
+        logger.warning("session_me_user_invalid", "Session belongs to a missing or inactive user")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+    set_context(user_id=ctx.user_id, session_id=ctx.id)
+    logger.debug("session_me", "Session introspection succeeded")
+    deletion = pending_deletion_summary(await open_deletion(db, user.id))
+    return AuthResponse(**build_auth_response(user, access_ttl_for_session(ctx), deletion))
+
+
+@router.post(
+    "/session/refresh",
+    response_model=AuthResponse,
+    status_code=status.HTTP_200_OK,
+    # Token mint calls OCI KMS — per-IP ceiling on the pre-auth path.
+    dependencies=[Depends(refresh_rate_limit)],
+)
+async def refresh_session(
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+    ctx: AuthContext = Depends(require_refresh_session),
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    # Refresh-token reuse detection FIRST — a replayed old refresh token must not
+    # even touch the DB. An old jti presented past the grace window means the
+    # token was stolen/replayed → revoke the whole session so neither the
+    # attacker's nor the victim's copy survives; both are forced to re-authenticate.
+    if await refresh_guard.status(ctx.id, ctx.jti) == "reuse":
+        await logout_denylist.revoke(ctx.id, settings.jwt.refresh_absolute_ttl_seconds)
+        clear_session_cookies(response)
+        logger.warning(
+            "refresh_token_reuse_detected",
+            "Refresh token reuse detected — session revoked",
+            failure_reason="refresh_token_reuse",
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+
+    user = await load_user(db, ctx.user_id)
+    if user is None or not user.is_active:
+        clear_session_cookies(response)
+        logger.warning("refresh_user_invalid", "Refresh belongs to a missing or inactive user")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+
+    # Revoke-all, read from the DURABLE column rather than the cache. The row is
+    # already loaded, so this costs nothing — and it is what makes a Redis outage
+    # bound a stolen token to its remaining access lifetime instead of letting it
+    # renew indefinitely. The access path is fail-open by necessity (no DB
+    # session on that hot path); this one is not.
+    if ctx.issued_at is not None and is_stale(
+        {"iat": ctx.issued_at}, revocation_watermark(user)
+    ):
+        clear_session_cookies(response)
+        logger.info(
+            "refresh_revoked_by_logout_all",
+            "Refresh rejected: the session predates a log-out-everywhere",
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+
+    # Re-read on every rotation: a deletion requested or cancelled since the
+    # last refresh adds or drops the session's pending-deletion marker here.
+    deletion = await open_deletion(db, user.id)
+    issued = await rotate_session(ctx, is_active=user.is_active, pending_deletion=deletion is not None)
+    # Advance the tracked jti to the freshly-minted one and grace the old jti, so a
+    # legitimate concurrent/retried refresh in flight isn't misread as reuse.
+    await refresh_guard.rotate(
+        ctx.id, ctx.jti, issued.refresh_jti,
+        settings.jwt.refresh_absolute_ttl_seconds,
+        settings.jwt.refresh_reuse_grace_seconds,
+    )
+    set_context(user_id=user.id, session_id=issued.session_id)
+    issue_session_cookies(response, issued)
+    logger.info("session_refresh_succeeded", "Session refresh succeeded")
+    return AuthResponse(**build_auth_response(user, issued.access_ttl, pending_deletion_summary(deletion)))
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(
+    request: Request,
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+) -> Response:
+    revoked = await revoke_current_session(request)
+    sid, revoked_user_id = revoked if revoked else (None, None)
+    clear_session_cookies(response)
+    # Logging out of the active account must also forget it as a *parked* one, or
+    # it would reappear in the switcher as something to switch back into. The id
+    # comes from the revoked token rather than a fresh require_session, so this
+    # still works when the access token has already expired.
+    device_id = get_device_id(request)
+    if device_id and revoked_user_id:
+        await parked_sessions.drop(device_id, revoked_user_id)
+    logger.info("logout_completed", "Logout completed", had_session=sid is not None)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.post("/sessions/revoke-all", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_all_sessions_endpoint(
+    request: Request,
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """End every session this user holds, on every device, including this one.
+
+    Not to be confused with ``/accounts/logout-all`` just below, which is the
+    orthogonal one: that ends every *account* on this *browser*, this ends every
+    *browser* for this *account*. The names are deliberately different shapes so
+    a caller cannot reach for the wrong one by autocomplete.
+
+    Sessions are stateless JWTs, so there is nothing to delete — a watermark on
+    the user makes every token issued before now unacceptable
+    (``engine.account.auth.revoke_all_sessions``).
+
+    **This device is included, deliberately.** "Everywhere" that quietly spared
+    the browser you pressed it in is a surprise, and the button is usually
+    pressed because the user believes they are compromised — which is exactly
+    when a surviving session is worst.
+
+    This user's parked entry on this device is dropped too — parked accounts are
+    the one other place a session survives, and leaving it would let the account
+    switcher restore what was just ended. Other users parked on the same device
+    are untouched; the watermark is keyed on the user, not the browser.
+    """
+    await revoke_all_sessions(db, ctx.user_id)
+
+    # This user's parked entry only. A device can hold several accounts parked,
+    # and revoking one user's sessions must not sign the others out — their
+    # tokens are untouched by a watermark keyed on somebody else.
+    device_id = get_device_id(request)
+    if device_id:
+        await parked_sessions.drop(device_id, ctx.user_id)
+    clear_session_cookies(response)
+
+    logger.info(
+        "logout_all_completed",
+        "All sessions revoked for the user",
+        had_device=device_id is not None,
+    )
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Multi-account: several signed-in accounts per browser, one active at a time.
+#
+# The active account always uses the normal session cookies; the others are
+# "parked" server-side (core/auth/parked.py). Every endpoint here requires a
+# valid ACTIVE session on top of the device cookie - the device cookie alone must
+# never be enough, or one stolen cookie would escalate to every parked account.
+# ---------------------------------------------------------------------------
+@router.get(
+    "/accounts",
+    response_model=AccountListResponse,
+    status_code=status.HTTP_200_OK,
+    # Deliberately NOT on auth_rate_limit: that is the per-IP *credential* bucket
+    # for login/refresh. An authenticated UI read sharing it means any chatty
+    # client burns the budget that protects sign-in — which is exactly what a
+    # render loop here did once. The global per-identity budget middleware still
+    # covers this route.
+)
+async def list_accounts(
+    request: Request,
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+) -> AccountListResponse:
+    """The accounts this browser can switch between, the active one first.
+
+    Identities are read from Postgres rather than stored beside the parked token,
+    so a Redis dump cannot also leak who is signed in on which browser.
+    """
+    require_multi_account()
+    set_context(user_id=ctx.user_id, session_id=ctx.id)
+
+    active = await load_user(db, ctx.user_id)
+    if active is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+
+    accounts = [account_summary(active, current=True)]
+    device_id = get_device_id(request)
+    if device_id:
+        for user_id in await parked_sessions.list_user_ids(device_id):
+            if user_id == ctx.user_id:
+                continue
+            parked_user = await load_user(db, user_id)
+            if parked_user is None:
+                # The account was deleted while parked - drop the dangling entry.
+                await parked_sessions.drop(device_id, user_id)
+                continue
+            accounts.append(account_summary(parked_user, current=False))
+
+    max_accounts = settings.session.max_parked_accounts
+    return AccountListResponse(
+        accounts=accounts,
+        canAddAccount=len(accounts) < max_accounts,
+        maxAccounts=max_accounts,
+    )
+
+
+@router.post(
+    "/accounts/switch",
+    response_model=AuthResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(refresh_rate_limit)],
+)
+async def switch_account(
+    payload: SwitchAccountRequest,
+    request: Request,
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+    ctx: AuthContext = Depends(require_session),
+    db: AsyncSession = Depends(get_db),
+) -> AuthResponse:
+    """Promote a parked account to active, parking the outgoing one.
+
+    Three factors are required - a valid active session, the device cookie and a
+    CSRF token - so neither a stolen device cookie nor a cross-site request can
+    move a browser between identities.
+
+    Every cookie is replaced in this single response, and both directions rotate
+    their refresh token, so a captured parked token is single-use and its replay
+    trips the refresh guard.
+    """
+    require_multi_account()
+    device_id = get_device_id(request)
+    if not device_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This browser has no other accounts signed in.",
+        )
+    if payload.user_id == ctx.user_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That account is already active.")
+
+    # Take the parked token first: if this fails nothing has changed yet, so the
+    # caller simply stays signed in as whoever they already were.
+    try:
+        parked_token = await parked_sessions.take(device_id, payload.user_id)
+    except ParkedSessionError as exc:
+        logger.warning(
+            "account_switch_unavailable",
+            "Could not take the parked session",
+            failure_reason="parked_session_unavailable",
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+    try:
+        parked_ctx = await resolve_parked_refresh(parked_token)
+    except Exception as exc:
+        logger.warning(
+            "account_switch_rejected",
+            "Parked refresh token did not verify",
+            failure_reason="parked_refresh_invalid",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="That session has expired. Please sign in again.",
+        ) from exc
+
+    if parked_ctx.user_id != payload.user_id:
+        # The stored blob is AAD-bound to (device, user), so this should be
+        # unreachable; treat a mismatch as tampering rather than a mistake.
+        logger.error(
+            "account_switch_identity_mismatch",
+            "Parked token subject does not match the requested account",
+            failure_reason="parked_identity_mismatch",
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required.")
+
+    target = await load_user(db, payload.user_id)
+    if target is None or not target.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User access has been disabled.")
+
+    # Mint the incoming session, preserving its sid so the denylist and the
+    # absolute refresh cap keep applying to the original login.
+    target_deletion = await open_deletion(db, target.id)
+    issued = await rotate_session(
+        parked_ctx,
+        is_active=target.is_active,
+        pending_deletion=target_deletion is not None,
+    )
+    await refresh_guard.rotate(
+        parked_ctx.id,
+        parked_ctx.jti,
+        issued.refresh_jti,
+        settings.jwt.refresh_absolute_ttl_seconds,
+        settings.jwt.refresh_reuse_grace_seconds,
+    )
+
+    # Park the outgoing account with a rotated token of its own.
+    outgoing = await load_user(db, ctx.user_id)
+    if outgoing is not None:
+        try:
+            outgoing_refresh = await require_refresh_session(request)
+            outgoing_issued = await rotate_session(
+                outgoing_refresh,
+                is_active=outgoing.is_active,
+                pending_deletion=await open_deletion(db, outgoing.id) is not None,
+            )
+            await refresh_guard.rotate(
+                outgoing_refresh.id,
+                outgoing_refresh.jti,
+                outgoing_issued.refresh_jti,
+                settings.jwt.refresh_absolute_ttl_seconds,
+                settings.jwt.refresh_reuse_grace_seconds,
+            )
+            await parked_sessions.park(
+                device_id,
+                outgoing.id,
+                outgoing_issued.refresh_token,
+                settings.jwt.refresh_idle_ttl_seconds,
+            )
+        except (HTTPException, ParkedSessionError):
+            # The switch already succeeded; failing to park the outgoing account
+            # only drops it out of the switcher, which is far better than
+            # refusing a switch whose new tokens have already been minted.
+            logger.warning(
+                "account_park_outgoing_failed",
+                "Switched accounts but could not park the previous one",
+                failure_reason="park_outgoing_failed",
+            )
+
+    set_context(user_id=target.id, session_id=issued.session_id)
+    issue_session_cookies(response, issued)
+    issue_device_cookie(response, device_id)
+    logger.info("account_switch_succeeded", "Switched the active account")
+    return AuthResponse(**build_auth_response(target, issued.access_ttl, pending_deletion_summary(target_deletion)))
+
+
+@router.post("/accounts/{target_user_id}/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_account(
+    target_user_id: str,
+    request: Request,
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+    ctx: AuthContext = Depends(require_session),
+) -> Response:
+    """Sign out of one specific account on this browser.
+
+    Two cases, both ending with that account gone from the switcher:
+
+    * **The active account** — identical to a plain logout: revoke its ``sid`` and
+      clear the session cookies. The client is expected to have already switched
+      away if it wants to stay signed in as someone else, because a switch needs a
+      live session to authorise it.
+    * **A parked account** — take its token, denylist the ``sid`` inside it, and
+      drop the entry. Denylisting matters: discarding the stored copy alone would
+      leave an exfiltrated copy usable until it expired.
+
+    Same three factors as the rest of this group (active session + device cookie +
+    CSRF), so one stolen cookie cannot sign a browser out of its other accounts.
+    """
+    require_multi_account()
+    device_id = get_device_id(request)
+
+    if target_user_id == ctx.user_id:
+        revoked = await revoke_current_session(request)
+        clear_session_cookies(response)
+        if device_id:
+            await parked_sessions.drop(device_id, target_user_id)
+        logger.info(
+            "account_logout_active",
+            "Signed out of the active account",
+            had_session=revoked is not None,
+        )
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
+
+    if not device_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="That account is not signed in on this browser.",
+        )
+
+    try:
+        parked_token = await parked_sessions.take(device_id, target_user_id)
+    except ParkedSessionError:
+        # Already gone: a logout of something absent is a success, not an error.
+        logger.info("account_logout_absent", "Parked account was already signed out")
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
+
+    try:
+        parked_ctx = await resolve_parked_refresh(parked_token)
+    except Exception:
+        # Unverifiable (expired, revoked, key rotated) — the entry is already
+        # deleted above, so the account is signed out either way.
+        logger.info("account_logout_unverifiable", "Dropped an unusable parked session")
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return response
+
+    await logout_denylist.revoke(parked_ctx.id, settings.jwt.refresh_absolute_ttl_seconds)
+    logger.info(
+        "account_logout_parked",
+        "Signed out of a parked account",
+        target_user_id=target_user_id,
+    )
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.post("/accounts/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_all_accounts(
+    request: Request,
+    response: Response,
+    _: None = Depends(require_csrf_protection),
+    ctx: AuthContext = Depends(require_session),
+) -> Response:
+    """Sign out of every account on this browser.
+
+    Exists so a shared machine is not left holding dormant logins: a plain logout
+    ends only the active session, leaving the others switchable.
+    """
+    require_multi_account()
+    device_id = get_device_id(request)
+    removed = 0
+    if device_id:
+        # Dropping the entries discards the parked tokens themselves, so those
+        # sessions become unusable even though their sids live inside the tokens.
+        removed = len(await parked_sessions.clear(device_id))
+    await revoke_current_session(request)
+    clear_session_cookies(response)
+    clear_device_cookie(response)
+    logger.info(
+        "logout_all_accounts_completed",
+        "Signed out of every account on this device",
+        parked_removed=removed,
+        user_id=ctx.user_id,
+    )
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Microsoft Entra ID (OIDC) — federated sign-in alongside username/password
+# ---------------------------------------------------------------------------
+@router.get("/config", status_code=status.HTTP_200_OK)
+async def auth_config() -> dict:
+    """Public: which login methods the SPA should offer. No secrets.
+
+    Microsoft is now the only method and settings refuse to boot without it, so
+    this is always ``true`` and the current SPA no longer asks. It stays for one
+    reason: a browser still running the previous SPA — a tab left open across the
+    deploy, or the window where the bridge has rolled and the UI has not — reads
+    it to decide whether to show the Microsoft button. Removing it would hide the
+    only way in from exactly those users.
+    """
+    return {"oidcEnabled": settings.entra.enabled}
+
+
+def _with_query(base: str, query: dict) -> str:
+    """Append a query string to a configured redirect, whether or not it has one."""
+    return f"{base}{'&' if '?' in base else '?'}{urlencode(query)}"
+
+
+@router.get("/oidc/login", dependencies=[Depends(auth_rate_limit)])
+async def oidc_login(request: Request, park: bool = False, reauth: bool = False) -> RedirectResponse:
+    """Begin the Entra auth-code flow — 302 the browser to Microsoft.
+
+    ``?park=true`` is the "add another account" path. The intent cannot ride along
+    with the redirect, so it is stored against the flow's single-use state and
+    read back in the callback.
+
+    ``?reauth=true`` asks the *signed-in* user to prove it is still them (plan 32:
+    deleting the account needs a recent sign-in). Microsoft is told to ask for the
+    credentials again, and the callback accepts only the same account.
+
+    Every sign-in is bound to this browser (login-CSRF defence): a random binding
+    goes in an httpOnly cookie, its hash with the flow. A browser that already
+    holds one (a second tab signing in) reuses it, so both tabs' callbacks match.
+    """
+    if not settings.entra.enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled.")
+    reauth_user_id: str | None = None
+    if reauth:
+        reauth_user_id = (await require_session(request)).user_id
+    elif park:
+        await guard_add_account(request)
+    binding = get_oidc_binding(request) or secrets.token_urlsafe(32)
+    try:
+        auth_uri = await begin_login(
+            oidc_redirect_uri(request),
+            binding=binding,
+            park=park and not reauth,
+            reauth_user_id=reauth_user_id,
+        )
+    except EntraOIDCError as exc:
+        logger.error(
+            "oidc_login_start_failed",
+            "Failed to start Microsoft sign-in",
+            failure_reason="oidc_login_start_failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not start Microsoft sign-in. Please try again.",
+        ) from exc
+    redirect = RedirectResponse(auth_uri, status_code=status.HTTP_302_FOUND)
+    issue_oidc_binding_cookie(redirect, binding, OIDC_FLOW_TTL_SECONDS)
+    return redirect
+
+
+@router.get("/oidc/callback")
+async def oidc_callback(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> RedirectResponse:
+    """Entra redirect target: validate the id_token, resolve the user by oid, mint
+    the session cookies, and land the browser in the SPA. The only sign-in path.
+
+    On any failure we redirect back to the login screen with an ``sso`` reason
+    query rather than leaking an error page — no session cookies are set. The
+    browser's sign-in binding is spent either way: its cookie is cleared."""
+    response = await _complete_oidc_callback(request, db)
+    clear_oidc_binding_cookie(response)
+    return response
+
+
+async def _complete_oidc_callback(request: Request, db: AsyncSession) -> RedirectResponse:
+    if not settings.entra.enabled:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO is not enabled.")
+
+    # Read "add another account" first, not just on success. A refusal during
+    # an add-account sign-in must land back on the add-account screen: without
+    # ?add=1 the login page sees the first account's still-valid session,
+    # restores it and reloads into the app — taking the error message with it,
+    # so the user sees nothing happen and never learns why. Single use: the
+    # intent is consumed here either way, and the flow's own state is validated
+    # (and consumed) by complete_login below.
+    park_previous = await consume_park_intent(request.query_params.get("state"))
+    reauth_user_id = await consume_reauth_intent(request.query_params.get("state"))
+
+    def _deny(reason: str) -> RedirectResponse:
+        if reauth_user_id is not None:
+            # A failed re-authentication leaves the existing session untouched, so
+            # the user is still signed in: land back in the app, not on login.
+            return RedirectResponse(
+                _with_query(settings.entra.post_login_redirect, {"reauth": "failed", "reason": reason}),
+                status_code=status.HTTP_302_FOUND,
+            )
+        query = {"sso": reason}
+        if park_previous:
+            query["add"] = "1"
+        base = settings.entra.login_error_redirect
+        separator = "&" if "?" in base else "?"
+        return RedirectResponse(f"{base}{separator}{urlencode(query)}", status_code=status.HTTP_302_FOUND)
+
+    # Login CSRF: the state must have been started by *this* browser (its binding
+    # cookie), checked before the code is redeemed. A link someone else started —
+    # say an attacker's own half-finished sign-in — is refused here.
+    if not await consume_login_binding(request.query_params.get("state"), get_oidc_binding(request)):
+        logger.warning(
+            "oidc_login_binding_mismatch",
+            "A sign-in callback came from a browser that did not start it",
+            failure_reason="login_binding_mismatch",
+        )
+        return _deny("failed")
+
+    try:
+        identity = await complete_login(dict(request.query_params))
+    except EntraAccessDeniedError:
+        # Authenticated fine, but not authorized (not in an allowed group) — a
+        # deliberate access decision, not a transient failure.
+        logger.warning("oidc_access_denied", "Microsoft user is not authorized to sign in", failure_reason="oidc_access_denied")
+        return _deny("denied")
+    except EntraOIDCError:
+        logger.warning("oidc_callback_rejected", "Microsoft sign-in was rejected", failure_reason="oidc_callback_rejected")
+        return _deny("failed")
+
+    if reauth_user_id is not None:
+        # Checked BEFORE the user table is touched: a re-authentication as some
+        # other Microsoft account must neither switch accounts nor create one.
+        expected = await load_user(db, reauth_user_id)
+        if expected is None or expected.oidc_subject != identity.subject:
+            logger.warning("oidc_reauth_mismatch", "Re-authentication used a different account", failure_reason="reauth_mismatch")
+            return _deny("mismatch")
+
+    login_time = datetime.now(timezone.utc).replace(tzinfo=None)
+    display_name = (identity.claims or {}).get("name")
+    try:
+        user = await upsert_user_from_identity(
+            db,
+            subject=identity.subject,
+            username=identity.username,
+            email=identity.email,
+            metadata={
+                "last_login_at": login_time,
+                "full_name": display_name,
+                "display_name": display_name,
+            },
+        )
+    except IdentityConflictError:
+        # A first-time sign-in whose username or email already belongs to another
+        # account. Refused rather than merged: resolving by oid only is what stops
+        # a matching email from ever handing over someone else's account.
+        logger.warning("oidc_identity_conflict", "A new Microsoft identity collides with an existing account", failure_reason="oidc_identity_conflict")
+        return _deny("conflict")
+
+    if not user.is_active:
+        logger.warning("oidc_user_inactive", "Authenticated Microsoft user is inactive", user_id=user.id, failure_reason="inactive_user")
+        return _deny("disabled")
+
+    user.last_login_at = login_time
+    await db.commit()
+    await db.refresh(user)
+
+    # Honour "add another account" (read above) so the session already in the
+    # browser is parked instead of replaced. The shared finaliser owns the
+    # cookies, the device cookie and the refresh-guard registration, so the
+    # account switcher sees the same thing either way.
+    target = settings.entra.post_login_redirect
+    if reauth_user_id is not None:
+        # The SPA reopens the action that asked for the re-authentication.
+        target = _with_query(target, {"reauth": "done"})
+    redirect = RedirectResponse(target, status_code=status.HTTP_302_FOUND)
+    await finalize_login(
+        request,
+        redirect,
+        user,
+        park_previous=park_previous and reauth_user_id is None,
+        pending_deletion=await open_deletion(db, user.id) is not None,
+    )
+    logger.info(
+        "oidc_login_succeeded",
+        "User authenticated via Microsoft Entra",
+        added_account=park_previous,
+    )
+    return redirect

@@ -8,7 +8,7 @@ on the shared building blocks in ``base``. Re-exported so callers keep the
 stable ``from schema import ...`` import surface regardless of which module
 a DTO lives in.
 """
-from schema.agent_tools import (
+from schema.agents.tools import (
     AgentModelResponse,
     AgentToolRow,
     AgentToolsResponse,
@@ -16,7 +16,7 @@ from schema.agent_tools import (
     ToolApprovalsRequest,
     ToolEnabledRequest,
 )
-from schema.attachments import (
+from schema.conversations.attachments import (
     AttachmentIn,
     AttachmentOut,
     BlobOut,
@@ -25,7 +25,7 @@ from schema.attachments import (
     UserFileOut,
     UserFilesPage,
 )
-from schema.auth import (
+from schema.account.auth import (
     AccountListResponse,
     AccountSummary,
     AuthResponse,
@@ -37,14 +37,14 @@ from schema.base import (
     Senders,
     UTCDateTime,
 )
-from schema.catalog import (
+from schema.agents.catalog import (
     AgentFull,
     AgentPublic,
     BuiltinToolInfo,
     ModelChoice,
     ToolManifest,
 )
-from schema.conversations import (
+from schema.conversations.conversations import (
     ActiveConversationsOut,
     ConversationDetail,
     ConversationForkIn,
@@ -58,41 +58,41 @@ from schema.conversations import (
     TitleOut,
     UpdateConversationResponse,
 )
-from schema.inference import (
+from schema.inference.runs import (
     InferenceRunOut,
     InferenceRunResumeIn,
     InferenceStartPayload,
     InferenceStartResponse,
     ResumeActionDecisionIn,
 )
-from schema.internal_conversations import (
+from schema.internal.conversations import (
     InputFileOut,
     InputFilesOut,
 )
-from schema.internal_memory import (
+from schema.internal.memory import (
     MemoryMessageMatch,
     MemorySearchRequest,
 )
-from schema.memories import (
+from schema.agents.memories import (
     MemoryDetail,
     MemoryEntry,
 )
-from schema.messages import (
+from schema.conversations.messages import (
     MessageCompactionOut,
     MessageIn,
     MessageOut,
     MessageUpdate,
     TaskNoticeOut,
 )
-from schema.compaction import (
+from schema.conversations.compaction import (
     AgentCompactionResult,
     AgentCompactionUndoResult,
     AgentCompactionUsage,
     CompactConversationIn,
     CompactConversationOut,
 )
-from schema.document_export import DocumentExportIn, DocumentExportFormat
-from schema.document_comments import (
+from schema.documents.export import DocumentExportIn, DocumentExportFormat
+from schema.documents.comments import (
     DocumentCommentAnchor,
     DocumentCommentIn,
     DocumentCommentOut,
@@ -100,8 +100,8 @@ from schema.document_comments import (
     DocumentCommentRefusal,
     DocumentCommentsOut,
 )
-from schema.document_suggestions import DocumentSuggestionIn, DocumentSuggestionOut
-from schema.documents import (
+from schema.documents.suggestions import DocumentSuggestionIn, DocumentSuggestionOut
+from schema.documents.documents import (
     DocumentListOut,
     DocumentSaveIn,
     DocumentSaveOut,
@@ -111,17 +111,17 @@ from schema.documents import (
     DocumentVersionsOut,
     DocumentVersionSummaryOut,
 )
-from schema.sources import (
+from schema.conversations.sources import (
     ConversationSource,
     ConversationSourcesOut,
     keep_valid_sources,
 )
-from schema.preferences import (
+from schema.account.preferences import (
     CustomInstructions,
     PERSONALITY_IDS,
     UserPreferences,
 )
-from schema.scheduled_tasks import (
+from schema.automation.scheduled_tasks import (
     ScheduleKind,
     ScheduledTaskCreate,
     ScheduledTaskOut,
@@ -129,7 +129,7 @@ from schema.scheduled_tasks import (
     TaskStatus,
     TaskTargetMode,
 )
-from schema.tasks import (
+from schema.inference.tasks import (
     AsyncTaskStatus,
     OutboxItem,
     QueueFrame,
@@ -145,25 +145,25 @@ from schema.tasks import (
     TaskUsage,
     queued_message_from_column,
 )
-from schema.search import (
+from schema.conversations.search import (
     WorkspaceSearchResult,
 )
-from schema.account import AccountDeletionRequest, AccountDeletionStatus, ProfileUpdate
-from schema.canvas_edit import CanvasEditIn, CanvasEditOut, CanvasEditPreset
-from schema.commands import CommandInvocation, CommandListResponse, CommandOut
-from schema.export import (
+from schema.account.account import AccountDeletionRequest, AccountDeletionStatus, ProfileUpdate
+from schema.documents.canvas_edit import CanvasEditIn, CanvasEditOut, CanvasEditPreset
+from schema.agents.commands import CommandInvocation, CommandListResponse, CommandOut
+from schema.account.export import (
     ExportStatus,
     ExportTokenRequest,
     ExportTokenResponse,
 )
-from schema.sharing import (
+from schema.conversations.sharing import (
     ConversationPdfExportIn,
     ConversationShareIn,
     ConversationShareListItem,
     ConversationShareResponse,
     SharedConversationDetail,
 )
-from schema.skills import (
+from schema.agents.skills import (
     CatalogueSearchPage,
     CatalogueSkill,
     CustomSkillCreateRequest,
@@ -174,7 +174,7 @@ from schema.skills import (
     UserSkill,
     UserSkillDetail,
 )
-from schema.usage import (
+from schema.account.usage import (
     UsageAgentBreakdown,
     UsageAgentConversation,
     UsageAgentDetail,
@@ -192,7 +192,7 @@ from schema.usage import (
     UsageToolBreakdown,
     UsageWindow,
 )
-from schema.user_agents import (
+from schema.agents.user_agents import (
     AgentFile,
     AgentTrialStart,
     CustomAgentDetail,
@@ -204,7 +204,7 @@ from schema.user_agents import (
     CustomAgentWrite,
     RenderedAgentYaml,
 )
-from schema.voice import (
+from schema.inference.voice import (
     DictationResponse,
     ReadAloudPreviewRequest,
     RealtimeVoiceConversationEventIn,
@@ -214,7 +214,7 @@ from schema.voice import (
     RealtimeVoiceSessionOut,
 )
 
-from schema.workflows import (
+from schema.automation.workflows import (
     SCHEDULE_TRIGGER_KIND,
     WorkflowOut,
     WorkflowRunDetail,

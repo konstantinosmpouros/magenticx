@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { act, renderHook } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useComposer } from "@/features/chat/hooks/useComposer";
 import type { ConversationDetail } from "@/shared/lib/types";
+import { useWorkspaceStore } from "@/shared/stores/workspaceStore";
 
 /**
  * The composer's input gate.
@@ -28,15 +29,18 @@ const conversation = (messageCount: number) =>
 
 type Props = { isConversationStreaming: boolean; currentConversation: ConversationDetail | null };
 
+let renders = 0;
 const mount = (props: Partial<Props> = {}) =>
   renderHook(
-    (p: Props) =>
-      useComposer({
+    (p: Props) => {
+      renders += 1;
+      return useComposer({
         userId: "u1",
         toast: vi.fn(),
         currentConversation: p.currentConversation,
         isConversationStreaming: p.isConversationStreaming,
-      }),
+      });
+    },
     {
       initialProps: {
         isConversationStreaming: false,
@@ -47,10 +51,15 @@ const mount = (props: Partial<Props> = {}) =>
   );
 
 describe("useComposer", () => {
+  beforeEach(() => {
+    useWorkspaceStore.setState({ draft: "" });
+    renders = 0;
+  });
+
   it("starts with an empty draft and no attachments", () => {
     const { result } = mount();
 
-    expect(result.current.currentMessage).toBe("");
+    expect(result.current.getCurrentMessage()).toBe("");
     expect(result.current.attachments).toEqual([]);
     expect(result.current.isBusy).toBe(false);
   });
@@ -134,6 +143,22 @@ describe("useComposer", () => {
 
     act(() => result.current.applyDraft("Summarise this quarter"));
 
-    expect(result.current.currentMessage).toBe("Summarise this quarter");
+    expect(result.current.getCurrentMessage()).toBe("Summarise this quarter");
+  });
+
+  it("does not re-render the shell for each keystroke, only when the draft empties or fills", () => {
+    // The hook runs in the workspace shell (plan 45): it reads only whether the
+    // draft is empty, so typing more characters re-renders nothing here.
+    const { result } = mount();
+    act(() => result.current.setCurrentMessage("H"));
+    const afterFirst = renders;
+    act(() => result.current.setCurrentMessage("He"));
+    act(() => result.current.setCurrentMessage("Hel"));
+    act(() => result.current.setCurrentMessage((prev) => `${prev}lo`));
+    expect(renders).toBe(afterFirst);
+    expect(result.current.getCurrentMessage()).toBe("Hello");
+    expect(result.current.draftIsEmpty).toBe(false);
+    act(() => result.current.setCurrentMessage(""));
+    expect(result.current.draftIsEmpty).toBe(true);
   });
 });

@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 import pytest
 
 from core.auth.session import is_stale
-from utils.auth import revocation_watermark
+from engine.account.auth import revocation_watermark
 
 NOW = int(datetime(2026, 9, 18, 12, 0, tzinfo=UTC).timestamp())
 
@@ -113,7 +113,7 @@ async def test_revoking_writes_the_durable_watermark(session_factory, seeded_use
     """Postgres is the source of truth: it is what the refresh path reads, so a
     revoke that only reached Redis would evaporate on the next cache flush."""
     from core.database import UserTable
-    from utils.auth import revoke_all_sessions
+    from engine.account.auth import revoke_all_sessions
 
     async with session_factory() as session:
         before = (await session.get(UserTable, seeded_user.id)).sessions_revoked_at
@@ -133,7 +133,7 @@ async def test_revoking_one_user_does_not_touch_another(session_factory, seeded_
     """The watermark is per-user. A shared device can hold several accounts, and
     revoking one must leave the others signed in."""
     from core.database import UserTable
-    from utils.auth import revoke_all_sessions
+    from engine.account.auth import revoke_all_sessions
 
     async with session_factory() as session:
         other = UserTable(username="someone-else", is_active=True)
@@ -152,7 +152,7 @@ async def test_a_second_revoke_moves_the_watermark_forward(session_factory, seed
     # Pressing it twice must not be a no-op: tokens minted between the two
     # presses have to die on the second.
     from core.database import UserTable
-    from utils.auth import revoke_all_sessions
+    from engine.account.auth import revoke_all_sessions
 
     async with session_factory() as session:
         first = await revoke_all_sessions(session, seeded_user.id)
@@ -172,7 +172,7 @@ async def test_a_token_from_before_the_revoke_is_rejected_on_refresh(
     """The whole point, assembled: a session that predates the revoke cannot be
     renewed, which is what bounds a stolen token to its access lifetime."""
     from core.database import UserTable
-    from utils.auth import revoke_all_sessions
+    from engine.account.auth import revoke_all_sessions
 
     issued_before = int(datetime.now(UTC).timestamp()) - 60
     async with session_factory() as session:

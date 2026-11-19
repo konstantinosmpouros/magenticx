@@ -19,7 +19,7 @@ instead of a copy on its volume. Two things make that work:
 Backfill: every upload gets its hash (computed in Postgres) and a name, per
 conversation in upload order — by the rule the agents service used when it
 copied uploads onto its volume, so the names it showed before still resolve.
-The rule is frozen here on purpose (``utils/workspace_names.py`` is the live
+The rule is frozen here on purpose (``engine/conversations/workspace_names.py`` is the live
 copy): a migration must not change when application code does.
 
 Additive: one column, one table. Downgrade drops both and clears the upload

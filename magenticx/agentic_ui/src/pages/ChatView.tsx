@@ -6,7 +6,7 @@ import { Textarea } from "@/shared/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 import ChatHeader from "@/features/chat/components/ChatHeader";
-import { ChatInputBar } from "@/features/chat/components/ChatInputBar";
+import { DraftComposer } from "@/features/chat/components/DraftComposer";
 import { ChatDisclaimer } from "@/features/chat/components/ChatDisclaimer";
 import { HitlInputTakeover } from "@/features/chat/components/HitlInputTakeover";
 import { ComposerTaskNotices } from "@/features/chat/components/ComposerTaskNotices";
@@ -16,7 +16,6 @@ import { AgentMapButton } from "@/features/chat/components/agent_map/AgentMapBut
 import { PlanButton } from "@/features/chat/components/plan/PlanButton";
 import { EffortPicker } from "@/features/chat/components/EffortPicker";
 import { createCommandActions } from "@/features/chat/handlers/commandActions";
-import { useSlashCommands } from "@/features/chat/hooks/useSlashCommands";
 import { Loader } from "@/shared/ui/shadcn-io/loader";
 import { CanvasDock } from "@/features/canvas/components/CanvasDock";
 import { useCanvasRoute } from "@/features/canvas/hooks/useCanvasRoute";
@@ -203,16 +202,16 @@ export default function ChatView() {
     [agentWritingKey],
   );
 
-  const slash = useSlashCommands({
+  // The slash menu reads the draft, so it runs inside DraftComposer (plan 45):
+  // this view never subscribes to the text and does not re-render per keystroke.
+  const slashOptions = {
     userId,
     agentId: selectedAgent || currentConversation?.agent?.id || null,
-    draft: composer.currentMessage,
-    setDraft: composer.setCurrentMessage,
     setPendingCommand: composer.setPendingCommand,
     runAction: runCommandAction,
-    notify: (title, description) => toast({ title, description }),
+    notify: (title: string, description?: string) => toast({ title, description }),
     textareaRef: composer.textareaRef,
-  });
+  };
 
   return (
     <CanvasOpenerContext.Provider value={canvasConversationId ? openCanvas : null}>
@@ -314,7 +313,7 @@ export default function ChatView() {
           </div>
 
           {/* Input Area */}
-          <ChatInputBar
+          <DraftComposer
             mode={voiceSession.isActive ? "voice" : "chat"}
             voiceBarVisible={voiceBarReady}
             chatBarVisible={chatBarReady}
@@ -330,7 +329,8 @@ export default function ChatView() {
             isPrivateMode={isPrivateMode}
             thinkingActive={isCurrentConversationBusy && thinkingState?.isActive}
             isStreaming={isCurrentConversationBusy}
-            slash={voiceSession.isActive ? null : slash}
+            slashOptions={slashOptions}
+            slashEnabled={!voiceSession.isActive}
             effortControl={
               <EffortPicker
                 efforts={agentEffort.efforts}
@@ -352,8 +352,6 @@ export default function ChatView() {
                 visible={!composer.isMessagesEmpty}
               />
             }
-            currentMessage={composer.currentMessage}
-            setCurrentMessage={composer.setCurrentMessage}
             handlePaste={composer.handlePaste}
             handleSendMessage={handleSendMessage}
             handleStopStreaming={handleStopStreaming}

@@ -509,12 +509,12 @@ class InferenceSettings(BaseSettings):
 class PricingSettings(BaseSettings):
     """Model prices for the Usage tab's cost figures (plan 41).
 
-    The defaults live in ``utils/model_pricing.py``; this is only the operator's
+    The defaults live in ``utils/pricing.py``; this is only the operator's
     override, a JSON object of ``{model: {input, cached_input, output,
     long_context?}}`` in USD per 1M tokens, merged over them. From
     ``MODEL_PRICES_JSON_FILE`` (a mounted file, the repo's ``*_FILE``
     convention) or ``MODEL_PRICES_JSON`` itself. Parsed and validated when
-    ``utils.model_pricing`` is imported at startup, so a bad value stops the
+    ``utils.pricing`` is imported at startup, so a bad value stops the
     bridge from starting rather than pricing every answer wrong.
     """
     model_config = _BASE_MODEL_CONFIG
@@ -557,7 +557,7 @@ class AttachmentSettings(BaseSettings):
 
 
 class OutputCaptureSettings(BaseSettings):
-    """The run-end snapshot of the files an agent presented (utils/output_capture.py)."""
+    """The run-end snapshot of the files an agent presented (engine/inference/output_capture.py)."""
     model_config = _BASE_MODEL_CONFIG
 
     # Files fetched per request; the agents service reads at most

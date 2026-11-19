@@ -49,7 +49,7 @@ sequenceDiagram
 
 ## Phase 1 — The mirror (`tasks:status` → `conversation_tasks`)
 
-Every status change of every task is an entry on `tasks:status` (`{"event": "TASK_STARTED"|"TASK_STATUS"|"TASK_SETTLED", "task": TaskOut}`). The bridge consumes it with the consumer group `bridge` (`utils/task_consumers.py`) and writes it into `conversation_tasks` (`utils/async_tasks.apply_status_entry`), so the task tree, a reload and a drill-down never need the agents service. Ownership is enforced at write time: a task whose conversation does not exist or belongs to someone other than the user it names is **dropped, never stored** — the mirror row is what every route's ownership check reads.
+Every status change of every task is an entry on `tasks:status` (`{"event": "TASK_STARTED"|"TASK_STATUS"|"TASK_SETTLED", "task": TaskOut}`). The bridge consumes it with the consumer group `bridge` (`engine/inference/tasks/consumers.py`) and writes it into `conversation_tasks` (`engine/inference/tasks/tasks.apply_status_entry`), so the task tree, a reload and a drill-down never need the agents service. Ownership is enforced at write time: a task whose conversation does not exist or belongs to someone other than the user it names is **dropped, never stored** — the mirror row is what every route's ownership check reads.
 
 On a **settle** the same transaction also captures the task's whole event stream into `raw_events` (seq-stamped and coalesced by the run log's own `append_coalesced`, capped at `ASYNC_TASKS_RAW_EVENTS_MAX`) and books the task's spend into the usage breakdown: a `message_usage` row with scope `subagent` and `agent_name = subagent_path`, on the answer that launched the tree (`spawned_by_message_id`), plus the conversation's totals and the daily rollups. `usage_booked` remembers what was booked, so a re-opened task or a re-delivered entry books only the delta. Then the entry is announced on the conversation channel as `{"type": "task", "event", "task"}`.
 
@@ -63,7 +63,7 @@ On a **settle** the same transaction also captures the task's whole event stream
 
 ## Phase 2 — Waking the orchestrator (`tasks:outbox`)
 
-When a depth-1 task's subtree settles the agents service writes an `OutboxItem` to `tasks:outbox` (the doorbell; the durable truth is its `async_tasks.parent_notified_at`). The bridge handles each one in its own background task (`utils/task_wakeups.handle_outbox_item`, at most `ASYNC_TASKS_WAKE_CONCURRENCY` at once), modelled on the scheduled-task fire:
+When a depth-1 task's subtree settles the agents service writes an `OutboxItem` to `tasks:outbox` (the doorbell; the durable truth is its `async_tasks.parent_notified_at`). The bridge handles each one in its own background task (`engine/inference/tasks/wakeups.handle_outbox_item`, at most `ASYNC_TASKS_WAKE_CONCURRENCY` at once), modelled on the scheduled-task fire:
 
 ```mermaid
 flowchart TD
@@ -96,7 +96,7 @@ flowchart TD
 
 ## Phase 4 — The composer queue
 
-While the conversation has an active run (usually a wake-up run reporting results), a `send` with `"queue_if_busy": true` is held in `conversations.queued_message` and answered **202** `{"queued": true, "queued_message": {content, command, effort, agent_id, queued_at}}`. One slot: a second send replaces it. `DELETE /v1/conversations/{user_id}/{conversation_id}/queued-message` cancels it. When the run it waited for ends, it is sent as a normal `send` on that run's leaf (`utils/composer_queue.send_queued_message`).
+While the conversation has an active run (usually a wake-up run reporting results), a `send` with `"queue_if_busy": true` is held in `conversations.queued_message` and answered **202** `{"queued": true, "queued_message": {content, command, effort, agent_id, queued_at}}`. One slot: a second send replaces it. `DELETE /v1/conversations/{user_id}/{conversation_id}/queued-message` cancels it. When the run it waited for ends, it is sent as a normal `send` on that run's leaf (`engine/inference/composer_queue.send_queued_message`).
 
 | Key fact | Value / detail |
 | --- | --- |
@@ -279,18 +279,18 @@ flowchart TD
 
 | Concept | File | What to look for |
 | --- | --- | --- |
-| Contracts (§14) | [magenticx/dialogue_bridge/schema/tasks.py](../../magenticx/dialogue_bridge/schema/tasks.py) | `TaskOut`, `TaskStatusEntry`, `OutboxItem`, `QueuedMessageOut`, `TaskFrame`, `RunStartedFrame`, `QueueFrame` |
-| Notice in `MessageOut` | [magenticx/dialogue_bridge/schema/messages.py](../../magenticx/dialogue_bridge/schema/messages.py) | `TaskNoticeOut`, `MessageOut.kind` / `.task_notice` |
-| Mirror, agents client, usage, drill-down | [magenticx/dialogue_bridge/utils/async_tasks.py](../../magenticx/dialogue_bridge/utils/async_tasks.py) | `apply_status_entry()`, `capture_task_events()`, `book_task_usage()`, `cancel_task_for_user()`, `resume_task_for_user()`, `stream_task_events()` |
-| Wake-up, run-end hook, reconcile | [magenticx/dialogue_bridge/utils/task_wakeups.py](../../magenticx/dialogue_bridge/utils/task_wakeups.py) | `find_branch_leaf()`, `handle_outbox_item()`, `on_run_finished()`, `reconcile_once()` |
-| Consumers and loops | [magenticx/dialogue_bridge/utils/task_consumers.py](../../magenticx/dialogue_bridge/utils/task_consumers.py) | `TaskConsumers`, `handle_status_entry()` |
-| Redis access to task streams | [magenticx/dialogue_bridge/utils/task_streams.py](../../magenticx/dialogue_bridge/utils/task_streams.py) | `STATUS_STREAM`, `OUTBOX_STREAM`, `CONSUMER_GROUP`, `TaskStreams` |
-| Conversation channel | [magenticx/dialogue_bridge/utils/conversation_channel.py](../../magenticx/dialogue_bridge/utils/conversation_channel.py) | `ConversationChannel`, `publish_*()`, `channel_frames()` |
-| Composer queue | [magenticx/dialogue_bridge/utils/composer_queue.py](../../magenticx/dialogue_bridge/utils/composer_queue.py) | `queue_if_busy()`, `send_queued_message()`, `cancel_queued_message()` |
-| Routes and sockets | [magenticx/dialogue_bridge/router/tasks.py](../../magenticx/dialogue_bridge/router/tasks.py) | `router`, `conversation_router`, `conversation_websocket()`, `task_websocket()` |
-| Socket handshake, ownership, pump | [magenticx/dialogue_bridge/utils/task_sockets.py](../../magenticx/dialogue_bridge/utils/task_sockets.py) | `authenticate_socket()`, `conversation_socket_queue()`, `task_socket_owned()`, `accept_subscribe()`, `pump_frames()` |
-| Notice in the agent's history | [magenticx/dialogue_bridge/utils/inference.py](../../magenticx/dialogue_bridge/utils/inference.py) | `serialise_message_with_images_for_agent()` |
-| Run-finished hooks, shared coalescing | [magenticx/dialogue_bridge/utils/inference_runs.py](../../magenticx/dialogue_bridge/utils/inference_runs.py) | `register_run_finished_hook()`, `append_coalesced()` |
+| Contracts (§14) | [magenticx/dialogue_bridge/schema/inference/tasks.py](../../magenticx/dialogue_bridge/schema/inference/tasks.py) | `TaskOut`, `TaskStatusEntry`, `OutboxItem`, `QueuedMessageOut`, `TaskFrame`, `RunStartedFrame`, `QueueFrame` |
+| Notice in `MessageOut` | [magenticx/dialogue_bridge/schema/conversations/messages.py](../../magenticx/dialogue_bridge/schema/conversations/messages.py) | `TaskNoticeOut`, `MessageOut.kind` / `.task_notice` |
+| Mirror, agents client, usage, drill-down | [magenticx/dialogue_bridge/engine/inference/tasks/tasks.py](../../magenticx/dialogue_bridge/engine/inference/tasks/tasks.py) | `apply_status_entry()`, `capture_task_events()`, `book_task_usage()`, `cancel_task_for_user()`, `resume_task_for_user()`, `stream_task_events()` |
+| Wake-up, run-end hook, reconcile | [magenticx/dialogue_bridge/engine/inference/tasks/wakeups.py](../../magenticx/dialogue_bridge/engine/inference/tasks/wakeups.py) | `find_branch_leaf()`, `handle_outbox_item()`, `on_run_finished()`, `reconcile_once()` |
+| Consumers and loops | [magenticx/dialogue_bridge/engine/inference/tasks/consumers.py](../../magenticx/dialogue_bridge/engine/inference/tasks/consumers.py) | `TaskConsumers`, `handle_status_entry()` |
+| Redis access to task streams | [magenticx/dialogue_bridge/engine/inference/tasks/streams.py](../../magenticx/dialogue_bridge/engine/inference/tasks/streams.py) | `STATUS_STREAM`, `OUTBOX_STREAM`, `CONSUMER_GROUP`, `TaskStreams` |
+| Conversation channel | [magenticx/dialogue_bridge/engine/inference/channel.py](../../magenticx/dialogue_bridge/engine/inference/channel.py) | `ConversationChannel`, `publish_*()`, `channel_frames()` |
+| Composer queue | [magenticx/dialogue_bridge/engine/inference/composer_queue.py](../../magenticx/dialogue_bridge/engine/inference/composer_queue.py) | `queue_if_busy()`, `send_queued_message()`, `cancel_queued_message()` |
+| Routes and sockets | [magenticx/dialogue_bridge/router/inference/tasks.py](../../magenticx/dialogue_bridge/router/inference/tasks.py) | `router`, `conversation_router`, `conversation_websocket()`, `task_websocket()` |
+| Socket handshake, ownership, pump | [magenticx/dialogue_bridge/engine/inference/tasks/sockets.py](../../magenticx/dialogue_bridge/engine/inference/tasks/sockets.py) | `authenticate_socket()`, `conversation_socket_queue()`, `task_socket_owned()`, `accept_subscribe()`, `pump_frames()` |
+| Notice in the agent's history | [magenticx/dialogue_bridge/engine/inference/history.py](../../magenticx/dialogue_bridge/engine/inference/history.py) | `serialise_message_with_images_for_agent()` |
+| Run-finished hooks, shared coalescing | [magenticx/dialogue_bridge/engine/inference/runs.py](../../magenticx/dialogue_bridge/engine/inference/runs.py) | `register_run_finished_hook()`, `append_coalesced()` |
 | Schema | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) + migration `0046_async_tasks` | `ConversationTaskTable`, `MessageTable.kind` / `.task_notice`, `ConversationTable.queued_message` |
 | Settings | [magenticx/dialogue_bridge/core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `AsyncTaskSettings` (`ASYNC_TASKS_*`), `TASK_READ_*` / `TASK_MUTATE_*` rate limits |
 | Agent Protocol router (agents) | [magenticx/agents/router/agent_protocol.py](../../magenticx/agents/router/agent_protocol.py) + [utils/async_tasks.py](../../magenticx/agents/utils/async_tasks.py) | the six `/ap` endpoints, `is_parent()`, `run_view()` (settle-only masking), `_delivered()` |

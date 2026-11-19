@@ -23,7 +23,7 @@ from sqlalchemy import select
 
 from core.database import UserAvatarTable
 from core.settings import settings
-from utils import validate_userId
+from utils.validators import validate_userId
 
 EMAIL = "alice@example.com"
 

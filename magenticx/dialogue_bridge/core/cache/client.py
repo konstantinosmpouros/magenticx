@@ -1,6 +1,6 @@
 """Single source of truth for the bridge's async Redis client construction.
 
-Every raw-Redis consumer — the inference event log (``utils.event_log``), the
+Every raw-Redis consumer — the inference event log (``engine.inference.event_log``), the
 logout denylist (``core.auth.session``) and the OIDC state store
 (``core.auth.oidc``) — opens its pool through this factory so the connection
 configuration (credentials, encoding, and especially TLS trust) can never

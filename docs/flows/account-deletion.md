@@ -132,13 +132,13 @@ The `account_deletions` row, with `user_id` set to `NULL` by the delete itself a
 
 | Concern | File | What to look for |
 | --- | --- | --- |
-| Request, cancel, status, the purge | [magenticx/dialogue_bridge/utils/account_deletion.py](../../magenticx/dialogue_bridge/utils/account_deletion.py) | `request_deletion`, `cancel_deletion`, `STEPS`, `_pace`, `run_account_purger` |
-| "Is a deletion open?" | [magenticx/dialogue_bridge/utils/account_status.py](../../magenticx/dialogue_bridge/utils/account_status.py) | `open_deletion`, `open_deletion_exists_for` |
-| Routes | [magenticx/dialogue_bridge/router/account.py](../../magenticx/dialogue_bridge/router/account.py) | status, request, cancel |
+| Request, cancel, status, the purge | [magenticx/dialogue_bridge/engine/account/deletion.py](../../magenticx/dialogue_bridge/engine/account/deletion.py) | `request_deletion`, `cancel_deletion`, `STEPS`, `_pace`, `run_account_purger` |
+| "Is a deletion open?" | [magenticx/dialogue_bridge/engine/account/status.py](../../magenticx/dialogue_bridge/engine/account/status.py) | `open_deletion`, `open_deletion_exists_for` |
+| Routes | [magenticx/dialogue_bridge/router/account/account.py](../../magenticx/dialogue_bridge/router/account/account.py) | status, request, cancel |
 | Gating | [magenticx/dialogue_bridge/core/auth/session.py](../../magenticx/dialogue_bridge/core/auth/session.py) | `pending_deletion`, `require_current_user_even_if_pending` |
-| Re-authentication | [magenticx/dialogue_bridge/core/auth/oidc.py](../../magenticx/dialogue_bridge/core/auth/oidc.py), [router/auth.py](../../magenticx/dialogue_bridge/router/auth.py) | `reauth_user_id`, `consume_reauth_intent` |
+| Re-authentication | [magenticx/dialogue_bridge/core/auth/oidc.py](../../magenticx/dialogue_bridge/core/auth/oidc.py), [router/account/auth.py](../../magenticx/dialogue_bridge/router/account/auth.py) | `reauth_user_id`, `consume_reauth_intent` |
 | Table + migration | [magenticx/dialogue_bridge/core/database/migrations/versions/0029_account_deletions.py](../../magenticx/dialogue_bridge/core/database/migrations/versions/0029_account_deletions.py) | `account_deletions` |
 | Settings | [magenticx/dialogue_bridge/core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `AccountDeletionSettings` |
 | Agents service part | [magenticx/agents/utils/account_purge.py](../../magenticx/agents/utils/account_purge.py), [router/account.py](../../magenticx/agents/router/account.py) | `purge_threads`, `purge_user`, each store's `purge_user` (incl. `WorkflowStore.purge_user`) |
-| Workflow runs step | [magenticx/dialogue_bridge/utils/account_deletion.py](../../magenticx/dialogue_bridge/utils/account_deletion.py) | `_workflow_thread_id_pages`, `_step_workflow_runs` |
+| Workflow runs step | [magenticx/dialogue_bridge/engine/account/deletion.py](../../magenticx/dialogue_bridge/engine/account/deletion.py) | `_workflow_thread_id_pages`, `_step_workflow_runs` |
 | UI | [DeleteAccountCard.tsx](../../magenticx/agentic_ui/src/features/settings/components/profile_parts/DeleteAccountCard.tsx), [DeleteAccountDialog.tsx](../../magenticx/agentic_ui/src/features/settings/components/profile_parts/DeleteAccountDialog.tsx), [PendingDeletionScreen.tsx](../../magenticx/agentic_ui/src/features/settings/components/PendingDeletionScreen.tsx) | the two gates; the pending screen |

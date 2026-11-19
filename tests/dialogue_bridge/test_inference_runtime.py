@@ -1,4 +1,4 @@
-"""Coverage for ``utils.inference_runs`` — the pure ``InferenceRunRuntime``
+"""Coverage for ``engine.inference.runs`` — the pure ``InferenceRunRuntime``
 accumulator and the DB-backed create / cancel / finish helpers.
 
 The live SSE streaming paths (``_do_stream`` / ``_do_resume`` and the manager
@@ -7,7 +7,7 @@ testing. Everything here is either pure (no I/O) or DB-only.
 
 DB helpers that open their own ``SessionLocal()`` (``_finish_run`` and friends,
 ``cleanup_orphaned_inference_runs``) are pointed at the per-test sqlite engine
-by monkeypatching ``utils.inference_runs.SessionLocal`` with the test
+by monkeypatching ``engine.inference.runs.SessionLocal`` with the test
 ``session_factory``. Functions that take an explicit ``db`` session are driven
 with ``session_factory`` directly.
 
@@ -24,8 +24,8 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from core.database import ConversationTable, MessageTable
-import utils.inference_runs as ir
-from utils.inference_runs import (
+import engine.inference.runs as ir
+from engine.inference.runs import (
     InferenceRunRuntime,
     SNAPSHOT_SEQ_SENTINEL,
     _fail_stale_queued_runs_for_conversation,
@@ -808,7 +808,7 @@ async def test_fail_stale_queued_runs_skips_recent(session_factory, seeded_user,
 
 
 def _truncate(event):
-    from utils.inference_runs import truncate_tool_result
+    from engine.inference.runs import truncate_tool_result
 
     return truncate_tool_result(event)
 

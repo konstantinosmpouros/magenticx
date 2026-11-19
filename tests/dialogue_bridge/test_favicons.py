@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pytest
 
-import utils.favicons as favicons
+import engine.conversations.favicons as favicons
 from core.auth.session import require_current_user
-from utils.favicons import Favicon, get_favicon, normalise_host
+from engine.conversations.favicons import Favicon, get_favicon, normalise_host
 from utils.validators import validate_userId
 
 

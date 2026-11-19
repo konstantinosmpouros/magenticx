@@ -38,7 +38,7 @@ export type SlashComposer = {
   submitAction: () => boolean;
 };
 
-type Options = {
+export type SlashCommandsOptions = {
   userId: string | null;
   /** The agent the next message goes to. */
   agentId: string | null;
@@ -70,7 +70,7 @@ export function useSlashCommands({
   runAction,
   notify,
   textareaRef,
-}: Options): SlashComposer {
+}: SlashCommandsOptions): SlashComposer {
   const [catalog, setCatalog] = useState<SlashCommand[]>([]);
   const [caret, setCaret] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);

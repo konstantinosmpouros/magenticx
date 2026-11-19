@@ -1,4 +1,4 @@
-"""Unit + DB tests for utils.shared_conv.
+"""Unit + DB tests for engine.conversations.sharing.
 
 Pure helpers (``resolve_share_expires_at``, ``share_status``, ``share_mode``,
 ``build_share_list_item``) run against lightweight share stand-ins. The
@@ -24,7 +24,7 @@ from core.database import (
 )
 from core.settings import settings
 from schema import MessageIn
-from utils.shared_conv import (
+from engine.conversations.sharing import (
     build_share_list_item,
     create_conversation_from_share_record,
     load_active_share,

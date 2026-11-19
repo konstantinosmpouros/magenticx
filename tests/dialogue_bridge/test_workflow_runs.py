@@ -28,13 +28,13 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
-import utils.account_deletion as account_deletion
-import utils.data_export as data_export
-import utils.workflow_runs as workflow_runs
+import engine.account.deletion as account_deletion
+import engine.account.data_export as data_export
+import engine.automation.workflow_runs as workflow_runs
 from core.auth.session import require_current_user
 from core.database import UserTable, WorkflowRunEventTable, WorkflowRunTable
 from core.settings import settings
-from utils.workflow_runs import workflow_event_log, workflow_run_manager
+from engine.automation.workflow_runs import workflow_event_log, workflow_run_manager
 
 WF_ID = "wf-1"
 STREAM_PATH = "/workflows/runs/stream"

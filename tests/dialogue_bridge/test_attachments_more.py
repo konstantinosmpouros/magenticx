@@ -1,4 +1,4 @@
-"""Additional coverage for ``utils.attachments`` beyond ``test_attachments.py``.
+"""Additional coverage for ``engine.conversations.attachments`` beyond ``test_attachments.py``.
 
 Targets the paths the route-level tests don't reach:
 - ``validate_docx_preview_token`` TTL expiry (vs. the existing tamper / wrong
@@ -17,7 +17,7 @@ import pytest
 from fastapi.responses import StreamingResponse
 
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
-from utils.attachments import (
+from engine.conversations.attachments import (
     encode_disposition,
     generate_docx_preview_token,
     stream_blob_response,

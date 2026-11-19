@@ -362,7 +362,7 @@ This is the only point in the pipeline where blob storage is accessed for infere
 | MCP session per request | [magenticx/agents/utils/mcp_tools.py](../../magenticx/agents/utils/mcp_tools.py) | `optional_mcp_session()`, `_gateway_session()`, `load_mcp_tools()` |
 | Tool server ID overrides | [magenticx/agents/utils/mcp_tools.py](../../magenticx/agents/utils/mcp_tools.py) | `_TOOL_SERVER_OVERRIDES` |
 | Agent base (tool filtering) | [magenticx/agents/harness/abstractions/base_agent.py](../../magenticx/agents/harness/abstractions/base_agent.py) | `attach_tools()`; `config_tools`/`config_tool_names` now default empty (no longer seeded from the request config) |
-| Per-(user, agent) tool choices | [magenticx/dialogue_bridge/utils/agent_tool_prefs.py](../../magenticx/dialogue_bridge/utils/agent_tool_prefs.py) | `read_config` (the run's `tool_config`), `set_enabled`, `set_approval` |
+| Per-(user, agent) tool choices | [magenticx/dialogue_bridge/engine/agents/tool_prefs.py](../../magenticx/dialogue_bridge/engine/agents/tool_prefs.py) | `read_config` (the run's `tool_config`), `set_enabled`, `set_approval` |
 | LangGraph agent build & stream | [magenticx/agents/harness/abstractions/langgraph_agent.py](../../magenticx/agents/harness/abstractions/langgraph_agent.py) | `build()`, `astream()` |
 | Deep agent build lifecycle | [magenticx/agents/harness/abstractions/deep_agent.py](../../magenticx/agents/harness/abstractions/deep_agent.py) | `build()`, `register_agent()`, asset discovery |
 | Tool call lifecycle events | [magenticx/agents/harness/agui/emitter.py](../../magenticx/agents/harness/agui/emitter.py) | `tool_call_start()`, `tool_call_args()`, `tool_call_result()`, `tool_call_end()` |
@@ -371,6 +371,6 @@ This is the only point in the pipeline where blob storage is accessed for infere
 | HITL, plan, sub-agent event models | [magenticx/agents/harness/agui/events.py](../../magenticx/agents/harness/agui/events.py) | `HITLInterruptEvent`, `PlanSnapshot`, `TaskSubAgentEvent`, `SubAgentEvent` |
 | Agent stream endpoint | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `POST /agents/{agent_slug}/stream` |
 | Agent catalog endpoints | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `GET /agents`, `GET /tools` |
-| Inference runs (bridge) | [magenticx/dialogue_bridge/router/inference.py](../../magenticx/dialogue_bridge/router/inference.py) | `startInferenceFlow()`, `inference_run_websocket()`, `cancelInferenceRun()` |
-| Message history serialization | [magenticx/dialogue_bridge/utils/inference.py](../../magenticx/dialogue_bridge/utils/inference.py) | `prepare_inference_history()`, `serialise_message_with_images_for_agent()` |
+| Inference runs (bridge) | [magenticx/dialogue_bridge/router/inference/runs.py](../../magenticx/dialogue_bridge/router/inference/runs.py) | `startInferenceFlow()`, `inference_run_websocket()`, `cancelInferenceRun()` |
+| Message history serialization | [magenticx/dialogue_bridge/engine/inference/history.py](../../magenticx/dialogue_bridge/engine/inference/history.py) | `prepare_inference_history()`, `serialise_message_with_images_for_agent()` |
 | Internal caller auth | [magenticx/agents/core/security/internal_trust.py](../../magenticx/agents/core/security/internal_trust.py) | `require_internal_caller()` |

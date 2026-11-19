@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.database import AgentTable
-from utils import user_agents as ua
+from engine.agents import user_agents as ua
 
 # The real helper's signature. Fakes bind their call against it, so a caller
 # passing a keyword the helper does not take — or omitting a required one —
@@ -397,8 +397,8 @@ def test_render_is_session_scoped_and_csrf_protected():
     """Mounted like validate: the path user must be the session's, and it is a POST
     carrying a CSRF token — a literal segment declared before ``{agent_id}``."""
     from core.auth.session import require_csrf_protection
-    from router import user_agents as routes
-    from utils import validate_userId
+    from router.agents import user_agents as routes
+    from utils.validators import validate_userId
 
     paths = [route.path for route in routes.router.routes]
     assert paths.index("/{user_id}/custom/render") < paths.index("/{user_id}/custom/{agent_id}")
@@ -557,7 +557,7 @@ async def test_the_catalog_marks_each_agent_platform_or_custom(
     app, client, seeded_user, seeded_agent, owned_agent_factory, monkeypatch
 ):
     from core.auth.session import require_current_user
-    from router import catalog as catalog_router
+    from router.agents import catalog as catalog_router
 
     async def current_user():
         return seeded_user

@@ -249,6 +249,6 @@ than arriving at.
 | Custom agent CRUD + validation | `magenticx/agents/harness/abstractions/user_agents.py` |
 | YAML agent engine | `magenticx/agents/harness/abstractions/yaml_agent.py` |
 | Agent resolution (platform vs user) | `magenticx/agents/utils/agents.py` |
-| Run event log | `magenticx/dialogue_bridge/utils/event_log.py` |
+| Run event log | `magenticx/dialogue_bridge/engine/inference/event_log.py` |
 | Redis cache policies | `magenticx/dialogue_bridge/core/cache/policies.py` |
-| Artifact capture at finalize | `magenticx/dialogue_bridge/utils/inference_runs.py` |
+| Artifact capture at finalize | `magenticx/dialogue_bridge/engine/inference/runs.py` |

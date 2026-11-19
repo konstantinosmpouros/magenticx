@@ -14,9 +14,9 @@ import httpx
 import pytest
 from test_skills import FakeResponse, install_fake_client
 
-import utils.skills as skills_mod
+import engine.agents.skills as skills_mod
 from core.auth.session import require_current_user
-from utils.skills import get_platform_skill_detail, list_platform_skills
+from engine.agents.skills import get_platform_skill_detail, list_platform_skills
 
 ROW = {
     "name": "pdf",

@@ -334,11 +334,11 @@ The two lists must stay in sync. An id the bridge rejects silently falls back to
 
 | Concept | File | What to look for |
 | --- | --- | --- |
-| Realtime session endpoint (bridge) | [magenticx/dialogue_bridge/router/voice.py](../../magenticx/dialogue_bridge/router/voice.py) | `createRealtimeVoiceSession()`, `persistRealtimeVoiceConversationEvent()`, `endRealtimeVoiceSession()` |
-| Voice instruction builder | [magenticx/dialogue_bridge/utils/voice.py](../../magenticx/dialogue_bridge/utils/voice.py) | `build_voice_instructions()`, `recent_history_for_voice_instructions()` |
-| Voice preference resolution | [magenticx/dialogue_bridge/utils/voice.py](../../magenticx/dialogue_bridge/utils/voice.py) | `preferred_realtime_voice()`, `preferred_voice_mode_language()`, `normalize_realtime_voice()` |
-| Read-aloud endpoints (bridge) | [magenticx/dialogue_bridge/router/speech.py](../../magenticx/dialogue_bridge/router/speech.py) | `readMessageAloud()`, `previewReadAloudVoice()` |
-| Dictation endpoint (bridge) | [magenticx/dialogue_bridge/router/speech.py](../../magenticx/dialogue_bridge/router/speech.py) | `transcribe_dictation()` |
+| Realtime session endpoint (bridge) | [magenticx/dialogue_bridge/router/inference/voice.py](../../magenticx/dialogue_bridge/router/inference/voice.py) | `createRealtimeVoiceSession()`, `persistRealtimeVoiceConversationEvent()`, `endRealtimeVoiceSession()` |
+| Voice instruction builder | [magenticx/dialogue_bridge/engine/inference/voice.py](../../magenticx/dialogue_bridge/engine/inference/voice.py) | `build_voice_instructions()`, `recent_history_for_voice_instructions()` |
+| Voice preference resolution | [magenticx/dialogue_bridge/engine/inference/voice.py](../../magenticx/dialogue_bridge/engine/inference/voice.py) | `preferred_realtime_voice()`, `preferred_voice_mode_language()`, `normalize_realtime_voice()` |
+| Read-aloud endpoints (bridge) | [magenticx/dialogue_bridge/router/inference/speech.py](../../magenticx/dialogue_bridge/router/inference/speech.py) | `readMessageAloud()`, `previewReadAloudVoice()` |
+| Dictation endpoint (bridge) | [magenticx/dialogue_bridge/router/inference/speech.py](../../magenticx/dialogue_bridge/router/inference/speech.py) | `transcribe_dictation()` |
 | Realtime session endpoint (agents) | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `create_realtime_session()` |
 | TTS endpoint (agents) | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `generate_read_aloud_speech()` |
 | Whisper endpoint (agents) | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `transcribe_audio()` |

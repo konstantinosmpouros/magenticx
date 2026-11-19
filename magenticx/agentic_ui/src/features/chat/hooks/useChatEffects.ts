@@ -1,6 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import type { Agent } from "@/shared/lib/types";
-import type { RefObject } from "react";
 
 // ---------------------------------------------------------------------------
 // Ensure that a default agent is selected effect
@@ -125,14 +124,15 @@ export function useStickyUserBarEffect(params: {
 // ---------------------------------------------------------------------------
 type CenteredComposerLayoutArgs = {
   isMessagesEmpty: boolean;
-  textareaRef: RefObject<HTMLTextAreaElement>;
-  currentMessage: string;
+  /** Nothing typed: only this, never the text, so typing does not re-run the shell (plan 45). */
+  draftIsEmpty: boolean;
   attachmentsCount: number;
 };
 
 const DEFAULT_TEXTAREA_MAX = 280;
 const FLOATING_MAX_RATIO = 0.68;
-const MIN_TEXTAREA_HEIGHT = 48;
+/** The composer textarea's smallest height; ChatInputBar sizes the textarea between it and the max. */
+export const MIN_TEXTAREA_HEIGHT = 48;
 // The empty screen's group (greeting, composer, disclaimer, suggestions) is
 // centered with this share of the free height above it (a little above the
 // middle) ...
@@ -145,8 +145,7 @@ const DESKTOP_TEXTAREA_MIN_WIDTH = 768;
 
 export function useCenteredComposerLayout({
   isMessagesEmpty,
-  textareaRef,
-  currentMessage,
+  draftIsEmpty,
   attachmentsCount,
 }: CenteredComposerLayoutArgs) {
   // A callback ref held in state: the composer mounts after this hook does (once
@@ -178,7 +177,7 @@ export function useCenteredComposerLayout({
   // whether the screen mounted on a hard refresh or through "New chat". Once
   // the user types, that top is frozen, so the box only ever grows downward.
   const composerRestingRef = useRef(true);
-  composerRestingRef.current = currentMessage.trim() === "" && attachmentsCount === 0;
+  composerRestingRef.current = draftIsEmpty && attachmentsCount === 0;
   const targetTopRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
@@ -252,16 +251,6 @@ export function useCenteredComposerLayout({
       window.removeEventListener("resize", computeViewportMaxHeight);
     };
   }, []);
-
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.maxHeight = `${effectiveTextareaMax}px`;
-    textarea.style.height = "auto";
-    const nextHeight = Math.min(textarea.scrollHeight, effectiveTextareaMax);
-    const clampedHeight = Math.max(nextHeight, MIN_TEXTAREA_HEIGHT);
-    textarea.style.height = `${clampedHeight}px`;
-  }, [textareaRef, currentMessage, attachmentsCount, effectiveTextareaMax, isMessagesEmpty]);
 
   return {
     containerRef: setContainerEl,

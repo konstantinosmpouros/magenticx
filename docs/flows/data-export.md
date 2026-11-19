@@ -131,7 +131,7 @@ manifest.json                        counts, sizes, missing parts — written la
 
 - **Open during an account's deletion grace period.** The three export routes use `validate_userId_even_if_pending`, so a user whose account awaits deletion can still download their data — the pending screen offers it ([account-deletion](account-deletion.md)).
 
-- **Allowlists, not `SELECT *`.** Every exported column is named in `utils/data_export.py`. A column added to any of these tables later is not exported until someone adds it there — so a future secret can never ship by accident.
+- **Allowlists, not `SELECT *`.** Every exported column is named in `engine/account/data_export.py`. A column added to any of these tables later is not exported until someone adds it there — so a future secret can never ship by accident.
 - **The agent's working files are not exported as such.** Since plan 36 they live in `agent_runtime.conversation_files`; the export carries the attachments — uploads and the files the agent *presented* (snapshotted on the answer), plus generated files captured before plan 36 — i.e. what the user was shown. Offloaded tool results, summarised history and unpresented scratch files are agent internals, like checkpoints.
 - **Workflow runs are exported run by run** (plan 38): the bridge's own `workflow_runs` rows by keyset on `id`, then each run's `workflow_run_events` by `seq`. An event stored truncated is exported as its truncation marker. The run's `thread_id` is the engine's internal handle, not user data, and is left out.
 - **Never exported:** session or refresh tokens, CSRF secrets, share-link tokens and snapshots, raw agent event logs (`messages.raw_events`), message embeddings, agent memories (the user's choice), and the shared copies of remote skills (exported as references with source, commit and licence).
@@ -148,11 +148,11 @@ manifest.json                        counts, sizes, missing parts — written la
 
 | Concern | File | What to look for |
 | --- | --- | --- |
-| Token, cooldown, slots, paging, the archive | [magenticx/dialogue_bridge/utils/data_export.py](../../magenticx/dialogue_bridge/utils/data_export.py) | allowlists, `claim_export`, `_ExportSlots`, `stream_export` |
+| Token, cooldown, slots, paging, the archive | [magenticx/dialogue_bridge/engine/account/data_export.py](../../magenticx/dialogue_bridge/engine/account/data_export.py) | allowlists, `claim_export`, `_ExportSlots`, `stream_export` |
 | Streaming zip | [magenticx/dialogue_bridge/utils/zip_stream.py](../../magenticx/dialogue_bridge/utils/zip_stream.py) | `_Pipe`, `ZipStream`, `check_archive_path` |
-| Routes | [magenticx/dialogue_bridge/router/export.py](../../magenticx/dialogue_bridge/router/export.py) | status, token, download |
+| Routes | [magenticx/dialogue_bridge/router/account/export.py](../../magenticx/dialogue_bridge/router/account/export.py) | status, token, download |
 | Settings | [magenticx/dialogue_bridge/core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `ExportSettings` |
 | Cooldown column + index | [magenticx/dialogue_bridge/core/database/migrations/versions/0028_export_cooldown_index.py](../../magenticx/dialogue_bridge/core/database/migrations/versions/0028_export_cooldown_index.py) | `users.last_export_at`, `ix_messages_conversation_id_id` |
 | Agents-service stream | [magenticx/agents/utils/data_export.py](../../magenticx/agents/utils/data_export.py), [router/export.py](../../magenticx/agents/router/export.py) | frames, paging, slicing; workflows via `WorkflowStore.page_workflows` / `page_versions` |
-| Workflow runs + schedules | [magenticx/dialogue_bridge/utils/data_export.py](../../magenticx/dialogue_bridge/utils/data_export.py) | `_WORKFLOW_RUNS`, `_WORKFLOW_RUN_EVENTS`, `_WORKFLOW_SCHEDULES`, `_workflow_run_rows`, `_workflow_schedule_rows`, `_UPSTREAM_PREFIXES` |
+| Workflow runs + schedules | [magenticx/dialogue_bridge/engine/account/data_export.py](../../magenticx/dialogue_bridge/engine/account/data_export.py) | `_WORKFLOW_RUNS`, `_WORKFLOW_RUN_EVENTS`, `_WORKFLOW_SCHEDULES`, `_workflow_run_rows`, `_workflow_schedule_rows`, `_UPSTREAM_PREFIXES` |
 | UI | [magenticx/agentic_ui/src/features/settings/hooks/useDataExport.ts](../../magenticx/agentic_ui/src/features/settings/hooks/useDataExport.ts), [DataControlsTab.tsx](../../magenticx/agentic_ui/src/features/settings/components/profile_parts/DataControlsTab.tsx) | token → browser download |

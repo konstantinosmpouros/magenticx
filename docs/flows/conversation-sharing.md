@@ -11,8 +11,8 @@ flowchart LR
     Browser["Browser"] -->|"POST /share, GET /share/token"| nginx["nginx :8050"]
     nginx --> bridge["dialogue_bridge :8002"]
     bridge -->|"SELECT/INSERT/UPDATE"| pg[("chat_postgres<br/>conversation_shares<br/>conversation_reports")]
-    bridge -->|"build snapshot"| snap["snapshot builder<br/>(utils/conversations.py)"]
-    bridge -->|"render PDF"| pdf["PDF renderer<br/>(utils/share_export.py)"]
+    bridge -->|"build snapshot"| snap["snapshot builder<br/>(engine/conversations/conversations.py)"]
+    bridge -->|"render PDF"| pdf["PDF renderer<br/>(engine/conversations/share_pdf.py)"]
 ```
 
 ---
@@ -211,7 +211,7 @@ Builds the message selection from `messageId` + `mode` identically to a share, t
 
 Validates: `is_active = true`, `revoked_at IS NULL`, `expires_at IS NULL OR expires_at > now()`. Returns the full `SharedConversationDetail` from `snapshot_json`, including `sources` — the citation sources frozen at share time (below), re-validated on every read (`http(s)` URLs only, capped lengths; a bad entry is dropped). Anyone with the URL can call this.
 
-**Citation sources in a share (plan 42).** The public view has no session, so it cannot read the conversation's sources later — and it must not see sources the shared part does not cite (other branches, later turns). So when the link is made, `attach_cited_sources` (`utils/shared_conv.py`) collects the source ids the snapshot's `[src:ID]` markers cite (each message's `content` and the text deltas of its `rawEvents`, sub-agent envelopes included), fetches the conversation's sources once with the owner's ids, and stores only the cited ones as `snapshot_json["sources"]`. No marker → no call; the agents service down → the link is still made, without sources, and its markers render nothing. A share made before plan 42 has no `sources` key and returns `[]`.
+**Citation sources in a share (plan 42).** The public view has no session, so it cannot read the conversation's sources later — and it must not see sources the shared part does not cite (other branches, later turns). So when the link is made, `attach_cited_sources` (`engine/conversations/sharing.py`) collects the source ids the snapshot's `[src:ID]` markers cite (each message's `content` and the text deltas of its `rawEvents`, sub-agent envelopes included), fetches the conversation's sources once with the owner's ids, and stores only the cited ones as `snapshot_json["sources"]`. No marker → no call; the agents service down → the link is still made, without sources, and its markers render nothing. A share made before plan 42 has no `sources` key and returns `[]`.
 
 In the UI, `transformSharedConversationDetail` re-checks each frozen source (`toCitationSources`) and the share page (and a logged-in viewer's workspace view of a `full` share) hands them to `useConversationSources` as the conversation's durable list, merged with the `SOURCES` events of the snapshot's own `rawEvents`. Copy on a shared answer goes through the same `citationsToPlainText` as in the chat: markers become `[1]`, `[2]` and a `Sources:` list (title — URL) closes the text; an id with no source is removed.
 
@@ -243,7 +243,7 @@ The one case where deletion does cascade is conversation deletion — the `conve
 
 ## Phase 5 — Forking a Share and Starting Inference
 
-Shared continuation uses the same backend-owned inference start endpoint as normal chat. `utils/inference_start.py` handles the `shared_continue` mode and delegates the clone work to `utils/shared_conv.py::create_conversation_from_share_record()`.
+Shared continuation uses the same backend-owned inference start endpoint as normal chat. `engine/inference/start.py` handles the `shared_continue` mode and delegates the clone work to `engine/conversations/sharing.py::create_conversation_from_share_record()`.
 
 ```mermaid
 flowchart TD
@@ -262,7 +262,7 @@ flowchart TD
     S --> L[return InferenceStartResponse]
 ```
 
-**Citations in the continued conversation (plan 42).** The copied answers' `[src:ID]` markers name the sharer's sources, and the new conversation — owned by the importer, under a new id — has none of its own. So after the commit (a start that failed leaves nothing behind) and before the run is launched, `start_inference_flow` gives it the sources the snapshot froze: `snapshot_sources(share)` revalidates `snapshot_json["sources"]` (`keep_valid_sources`, at most 500), and `utils.agents.insert_conversation_sources` posts them to the agents service's internal `POST /users/{importer}/conversations/{new id}/sources` (`{"sources": [...]}`; each a full `Source`, upserted; a source whose id is not its URL's hash is dropped). Best-effort like a fork's copy: the agents service down → `conversation_sources_insert_failed` is logged (counts and error type only) and the conversation still starts, its old citations just don't render. A snapshot without sources makes no call. Only the cited sources travel — the importer never gets the sharer's other sources.
+**Citations in the continued conversation (plan 42).** The copied answers' `[src:ID]` markers name the sharer's sources, and the new conversation — owned by the importer, under a new id — has none of its own. So after the commit (a start that failed leaves nothing behind) and before the run is launched, `start_inference_flow` gives it the sources the snapshot froze: `snapshot_sources(share)` revalidates `snapshot_json["sources"]` (`keep_valid_sources`, at most 500), and `engine.conversations.sources.insert_conversation_sources` posts them to the agents service's internal `POST /users/{importer}/conversations/{new id}/sources` (`{"sources": [...]}`; each a full `Source`, upserted; a source whose id is not its URL's hash is dropped). Best-effort like a fork's copy: the agents service down → `conversation_sources_insert_failed` is logged (counts and error type only) and the conversation still starts, its old citations just don't render. A snapshot without sources makes no call. Only the cited sources travel — the importer never gets the sharer's other sources.
 
 **What gets new UUIDs:** conversation, messages, attachments, blobs.
 
@@ -276,11 +276,11 @@ The original shared conversation is never mutated. After the response, the front
 
 ## Phase 6 — PDF Export
 
-The PDF renderer (`utils/share_export.py`) is a custom in-house builder — no third-party PDF library.
+The PDF renderer (`engine/conversations/share_pdf.py`) is a custom in-house builder — no third-party PDF library.
 
 **What the PDF contains:**
 
-1. **Per-page header:** logo (if present at `utils/assets/logo.png`), export timestamp, page number
+1. **Per-page header:** logo (if present at `engine/conversations/assets/logo.png`), export timestamp, page number
 2. **Title block:** conversation title, agent name, export timestamp, horizontal rule
 3. **Messages:** each rendered with sender label (`YOU` / `ASSISTANT`), timestamp, and Markdown-rendered content
 4. **Sources** (plan 42): citation markers print as `[1]`, `[2]` by first appearance, with the cited pages listed at the end
@@ -353,12 +353,12 @@ There are no endpoints to list or resolve reports via the public API. Report man
 | Concept | File | What to look for |
 | --- | --- | --- |
 | DB tables (shares + reports) | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) | `ConversationShareTable`, `ConversationReportTable` |
-| Public share endpoint | [magenticx/dialogue_bridge/router/shared_conv.py](../../magenticx/dialogue_bridge/router/shared_conv.py) | `getSharedConversation()` |
-| Shared inference continuation | [magenticx/dialogue_bridge/utils/inference_start.py](../../magenticx/dialogue_bridge/utils/inference_start.py) | `mode == "shared_continue"` |
-| Owner share endpoints | [magenticx/dialogue_bridge/router/conversations.py](../../magenticx/dialogue_bridge/router/conversations.py) | `shareConversation()`, `revokeConversationShare()`, `getConversationShares()`, `exportConversationPdf()` |
-| Snapshot builder | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `build_share_snapshot()`, `build_message_lineage()`, `clone_branch_to_conversation()` |
-| Scoped message selection + PDF | [magenticx/dialogue_bridge/utils/share_export.py](../../magenticx/dialogue_bridge/utils/share_export.py) | `select_scoped_messages()`, `render_conversation_pdf()`, `_PdfDocument`, `_FontRegistry` |
-| Pydantic schemas | [magenticx/dialogue_bridge/schema/sharing.py](../../magenticx/dialogue_bridge/schema/sharing.py) | `ConversationShareIn`, `ConversationShareResponse`, `SharedConversationDetail` |
+| Public share endpoint | [magenticx/dialogue_bridge/router/conversations/sharing.py](../../magenticx/dialogue_bridge/router/conversations/sharing.py) | `getSharedConversation()` |
+| Shared inference continuation | [magenticx/dialogue_bridge/engine/inference/start.py](../../magenticx/dialogue_bridge/engine/inference/start.py) | `mode == "shared_continue"` |
+| Owner share endpoints | [magenticx/dialogue_bridge/router/conversations/conversations.py](../../magenticx/dialogue_bridge/router/conversations/conversations.py) | `shareConversation()`, `revokeConversationShare()`, `getConversationShares()`, `exportConversationPdf()` |
+| Snapshot builder | [magenticx/dialogue_bridge/engine/conversations/conversations.py](../../magenticx/dialogue_bridge/engine/conversations/conversations.py) | `build_share_snapshot()`, `build_message_lineage()`, `clone_branch_to_conversation()` |
+| Scoped message selection + PDF | [magenticx/dialogue_bridge/engine/conversations/share_pdf.py](../../magenticx/dialogue_bridge/engine/conversations/share_pdf.py) | `select_scoped_messages()`, `render_conversation_pdf()`, `_PdfDocument`, `_FontRegistry` |
+| Pydantic schemas | [magenticx/dialogue_bridge/schema/conversations/sharing.py](../../magenticx/dialogue_bridge/schema/conversations/sharing.py) | `ConversationShareIn`, `ConversationShareResponse`, `SharedConversationDetail` |
 | Frontend API calls | [magenticx/agentic_ui/src/shared/lib/api/](../../magenticx/agentic_ui/src/shared/lib/api/) | `shareConversation()`, `revokeSharedConversationLink()`, `getSharedConversation()`, `startInference()`, `downloadConversationPdfExport()` |
 | Frontend types | [magenticx/agentic_ui/src/shared/lib/types/](../../magenticx/agentic_ui/src/shared/lib/types/) | `ConversationShareMode`, `ConversationShareResponse`, `SharedConversationDetail` |
 | Citation sources on a share (plan 42) | [magenticx/agentic_ui/src/pages/SharedConvPage.tsx](../../magenticx/agentic_ui/src/pages/SharedConvPage.tsx), [features/chat/hooks/useConversationSources.ts](../../magenticx/agentic_ui/src/features/chat/hooks/useConversationSources.ts), [features/chat/lib/citationText.ts](../../magenticx/agentic_ui/src/features/chat/lib/citationText.ts) | `CitationSourcesContext` provider from `detail.sources`; Copy → numbered references |

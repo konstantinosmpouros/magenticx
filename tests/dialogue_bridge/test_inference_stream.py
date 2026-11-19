@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 
-from router import speech as speech_router
-from utils.speech import MAX_READ_ALOUD_TEXT_CHARS, READ_ALOUD_TEXT_TOO_LONG_DETAIL
+from router.inference import speech as speech_router
+from engine.inference.speech import MAX_READ_ALOUD_TEXT_CHARS, READ_ALOUD_TEXT_TOO_LONG_DETAIL
 
 
 async def test_dictation_route_returns_transcript(client, seeded_user, monkeypatch):

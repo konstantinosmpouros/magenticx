@@ -24,7 +24,7 @@ window is, and the token numbers we persist are the wrong shape for a fill ring:
 
 - Each AI message's `input_tokens`/`output_tokens` (`messages` table) are
   **summed across every model call + sub-agent in the run**
-  (`inference_runs.py:295` `_accumulate_usage`) — a *spend* number, inflated well
+  (`engine/inference/runs.py:295` `_accumulate_usage`) — a *spend* number, inflated well
   beyond the actual context occupancy. Good for cost, wrong for the ring.
 - No model id, context-window size, or pricing exists anywhere the UI can reach.
 
@@ -40,7 +40,7 @@ and its **numerator** (used) must be a real occupancy number, not the inflated s
   publishes the resolved numbers in its manifest — the single source of truth,
   so the UI just renders.
 - **Numerator = peak top-level `input_tokens` for the turn.** The bridge already
-  separates **top-level** model usage (`inference_runs.py:433`) from
+  separates **top-level** model usage (`engine/inference/runs.py:433`) from
   **sub-agent-wrapped** usage (`:429`). The top-level main-model prompt size *is*
   the context-window occupancy (system prompt + tools + history + memory +
   retrieved context that went into the main model). We capture its per-run peak.
@@ -72,14 +72,14 @@ and its **numerator** (used) must be a real occupancy number, not the inflated s
 
 - **Migration A — `agents` table:** add `main_model` (str, null), `context_window`
   (int, null), `input_price` (numeric, null), `output_price` (numeric, null).
-  Populate in `sync_agents_with_service()` (`magenticx/dialogue_bridge/utils/agents.py:129`;
-  manifest validation at `:197`) — read the new manifest fields and write the
+  Populate in `sync_agents_with_service()` (`magenticx/dialogue_bridge/engine/agents/catalog.py:77`;
+  manifest validation at `:145`) — read the new manifest fields and write the
   columns on upsert. Extend the manifest DTO in `schemas/__init__.py` accordingly.
 - **Migration B — `messages` table:** add `context_tokens` (int, null) = peak
   top-level `input_tokens` for the run.
   - `InferenceRunRuntime`: alongside the existing sum, track
     `max(top_level_input_tokens)` and persist to `run.context_tokens`
-    (`inference_runs.py` — write near `:1170` where `input_tokens`/`output_tokens`
+    (`engine/inference/runs.py` — write near `:1170` where `input_tokens`/`output_tokens`
     are set; capture in `_accumulate_usage`/the top-level branch at `:433`).
 - **Schemas:** `AgentOut` gains `contextWindow`, `mainModel`, `inputPrice`,
   `outputPrice`; `MessageOut` gains `contextTokens` (already has

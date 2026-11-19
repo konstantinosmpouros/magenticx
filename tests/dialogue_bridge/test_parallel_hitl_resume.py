@@ -22,13 +22,13 @@ import httpx
 import pytest
 import pytest_asyncio
 
-import utils.inference_runs as ir
+import engine.inference.runs as ir
 from core.cache import client as cache_client
 from core.database import ConversationTable, MessageTable
 from core.settings import settings
-from utils import event_log as event_log_module
-from utils.hitl_decisions import EXPIRED_DECISION, HitlDecisionQueue, ResumeOutcome, StaleDecisions
-from utils.inference_runs import inference_run_manager
+from engine.inference import event_log as event_log_module
+from engine.inference.hitl import EXPIRED_DECISION, HitlDecisionQueue, ResumeOutcome, StaleDecisions
+from engine.inference.runs import inference_run_manager
 
 IDS = ("int-helper-1", "int-helper-2", "int-helper-3")
 

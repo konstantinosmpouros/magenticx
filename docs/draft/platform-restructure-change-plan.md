@@ -339,7 +339,7 @@ memory    : workspaces/<user>/memory/<slug>/AGENTS.md   (workspace-only; gated b
 **dialogue_bridge (`magenticx/dialogue_bridge/`)**
 - `core/database/models.py`: `AgentTable + owner_user_id` (null=global), unique `(owner_user_id, slug)`; **retire** `UserPreferencesTable.tools` usage.
 - `schemas/__init__.py`: `AgentOut + owner/mainModel/contextWindow`; new tool-catalog + per-agent-tool DTOs; deprecate `ToolsPreferences`.
-- `utils/agents.py:129-251`: sync global agents (owner=null); per-request resolve for user agents.
+- `engine/agents/catalog.py` (`sync_agents_with_service`): sync global agents (owner=null); per-request resolve for user agents.
 - `router/*`: new endpoints (§5.4) + custom-agent upload/list; drop `enabledTools` from the inference request handling.
 - **Migrations**: (a) `agents.owner_user_id`; (b) backfill/drop `user_preferences.tools`.
 
@@ -380,4 +380,4 @@ YAML is config, never code (strict schema, `extra=forbid`, fail-closed). Allowli
 
 ## 13. Key anchors (current code)
 
-`utils/agents.py:18-49` (discovery) · `deep_agent.py:434-450` (assembly) · `deep_agent.py:280-329` (native builtins) · `deep_agent.py:457-499` (skills/memory hooks) · `base_agent.py:98-109` (manifest) · `omni_agent/__init__.py:14-92` (agent shape → YAML) · `provisioner.py`/`workspace.py:128-155` (fs mounts) · `seed_global_registry.py:40`+`Dockerfile:28` (seed) · `dialogue_bridge/utils/agents.py:129-251` (catalog sync) · `models.py:40-62,108-138` (AgentTable + prefs) · `schemas/__init__.py:244,271,337` (ToolPreference/ToolsPreferences/UserPreferences) · `McpServersTab.tsx`+`hooks/useToolStatus.ts` (current global tool toggles) · `docker-compose.yaml:64-75,200-215`+`agents/core/settings.py:426-489` (volumes/roots).
+`utils/agents.py:18-49` (discovery) · `deep_agent.py:434-450` (assembly) · `deep_agent.py:280-329` (native builtins) · `deep_agent.py:457-499` (skills/memory hooks) · `base_agent.py:98-109` (manifest) · `omni_agent/__init__.py:14-92` (agent shape → YAML) · `provisioner.py`/`workspace.py:128-155` (fs mounts) · `seed_global_registry.py:40`+`Dockerfile:28` (seed) · `dialogue_bridge/engine/agents/catalog.py` (catalog sync, `sync_agents_with_service`) · `models.py:40-62,108-138` (AgentTable + prefs) · `schemas/__init__.py:244,271,337` (ToolPreference/ToolsPreferences/UserPreferences) · `McpServersTab.tsx`+`hooks/useToolStatus.ts` (current global tool toggles) · `docker-compose.yaml:64-75,200-215`+`agents/core/settings.py:426-489` (volumes/roots).

@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from core.auth.session import require_current_user
-from router import catalog as catalog_router
+from router.agents import catalog as catalog_router
 
 
 async def test_get_available_agents_uses_cache_when_populated(app, client, seeded_user, seeded_agent, monkeypatch):

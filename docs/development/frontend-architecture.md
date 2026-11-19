@@ -334,6 +334,18 @@ answer ends inside an open code block, `Response` hands Streamdown its text at
 most every 150 ms (`useCodeFenceThrottle`), since each change re-highlights the
 whole block; prose is never held back.
 
+**Typing and the shell (Phase 4).** The composer's draft lives in the workspace
+store (`draft` / `setDraft`), not in the shell: `useComposer` (which runs in
+the shell) reads only `draftIsEmpty` and hands out `getCurrentMessage()` for
+handlers to read when they run; `DraftComposer` is the one component subscribed
+to the text (with the slash menu), and the textarea's auto-grow lives in
+`ChatInputBar` with it. A keystroke therefore re-renders the input bar only.
+`ChatSidebar` is memoized; the shell gives it stable callbacks from
+`useStableHandlers` and a memoized context-meter render prop. `requestPersist`
+is a debounced call, not state. A new piece of state that changes per keystroke
+or per token belongs in the store with selector readers, or below the shell —
+never in `useChatWorkspace`'s own state.
+
 **Rules.** A new route page is lazy (add its loader to `routeLoaders.ts`, and to
 the prefetch order if people open it often). A heavy library used by one panel
 or block loads with that panel, not in the entry chunk. Reach into a `*_parts`

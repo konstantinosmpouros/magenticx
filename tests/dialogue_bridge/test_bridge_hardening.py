@@ -10,7 +10,7 @@ import main as bridge_main
 import pytest
 
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
-from utils.attachments import ACTIVE_CONTENT_MIMES
+from engine.conversations.attachments import ACTIVE_CONTENT_MIMES
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useCallback, useMemo, useState } from "react";
+import { useEffect, useRef, useCallback, useMemo } from "react";
 import type {
   Agent,
   ConversationDetail,
@@ -279,6 +279,9 @@ export function useAuthRehydrateEffect(params: {
 // ---------------------------------------------------------------------------
 // UI snapshot persistence helper
 // ---------------------------------------------------------------------------
+/** How long a requested UI snapshot save waits for more requests to join it. */
+const UI_SNAPSHOT_PERSIST_DEBOUNCE_MS = 300;
+
 export function useUISnapshotPersistence(params: {
   userId: string | null;
   selectedAgent: string;
@@ -353,17 +356,43 @@ export function useUISnapshotPersistence(params: {
     }
   }, [uiSnapshot, userId]);
 
-  const [persistSignal, setPersistSignal] = useState(0);
+  // A save is requested by about twenty handlers (switching panels, the
+  // sidebar, agents, every conversation load). It used to be a state tick,
+  // which re-rendered the whole workspace for each request just to schedule
+  // the write (plan 45). Now a plain debounced call: no render, and a burst of
+  // requests becomes one IndexedDB write of the newest snapshot. By the time
+  // it fires, the render that carried the requesting handler's state changes
+  // has updated `snapshotRef`, so the write includes them.
+  const userIdRef = useRef(userId);
   useEffect(() => {
-    if (persistSignal === 0) return;
-    if (!userId || !snapshotRef.current) return;
-    if (snapshotOwnerRef.current !== userId) return;
-    saveUISnapshot(userId, snapshotRef.current).catch(() => {});
-  }, [userId, persistSignal]);
-
-  const requestPersist = useCallback(() => {
-    setPersistSignal((tick) => tick + 1);
+    userIdRef.current = userId;
+  }, [userId]);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const persistNow = useCallback(() => {
+    persistTimerRef.current = null;
+    const owner = userIdRef.current;
+    if (!owner || !snapshotRef.current) return;
+    if (snapshotOwnerRef.current !== owner) return;
+    saveUISnapshot(owner, snapshotRef.current).catch(() => {});
   }, []);
+  const requestPersist = useCallback(() => {
+    if (persistTimerRef.current !== null) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(persistNow, UI_SNAPSHOT_PERSIST_DEBOUNCE_MS);
+  }, [persistNow]);
+  // A save still waiting when the workspace unmounts or the page is hidden
+  // (closing the tab) is written at once rather than lost.
+  useEffect(() => {
+    const flush = () => {
+      if (persistTimerRef.current === null) return;
+      clearTimeout(persistTimerRef.current);
+      persistNow();
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [persistNow]);
 
   return { uiSnapshot, requestPersist };
 }

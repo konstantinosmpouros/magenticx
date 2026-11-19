@@ -33,7 +33,7 @@ tables, `tool_usage` and `tool_usage_daily` (migration `0041`).
 
 ```mermaid
 flowchart LR
-    A["agents<br/>UsageMetricsMiddleware + FirstTokenCallback<br/>ToolMetricsMiddleware (deep)<br/>UsageMetricsCallback (LangGraph)"] -->|"TOKEN_USAGE per model call<br/>TOOL_USAGE per tool call"| B["dialogue_bridge<br/>run accumulator → _finish_run<br/>model_pricing"]
+    A["agents<br/>UsageMetricsMiddleware + FirstTokenCallback<br/>ToolMetricsMiddleware (deep)<br/>UsageMetricsCallback (LangGraph)"] -->|"TOKEN_USAGE per model call<br/>TOOL_USAGE per tool call"| B["dialogue_bridge<br/>run accumulator → _finish_run<br/>utils/pricing"]
     B -->|"one transaction"| C[("chat_db<br/>messages · message_usage · tool_usage<br/>conversations.usage_*<br/>usage_daily · usage_daily_groups · tool_usage_daily")]
     D["agentic_ui<br/>Settings → Usage"] -->|"GET /v1/usage/{userId}/…"| B
     B -->|"reads the pre-aggregated forms"| C
@@ -148,7 +148,7 @@ added to the run totals and to its group:
 
 | Counter | Rule |
 | --- | --- |
-| `cost_micros` | `call_cost_micros(model, input, cached, output)` from `utils/model_pricing.py` (see **Pricing** below); integer micro-USD (1 USD = 1,000,000) |
+| `cost_micros` | `call_cost_micros(model, input, cached, output)` from `utils/pricing.py` (see **Pricing** below); integer micro-USD (1 USD = 1,000,000) |
 | `unpriced_calls` | +1 when the model (or no model at all) has no price; it then adds no cost |
 | `truncated_calls` | +1 when `truncated` is `true` |
 | `ttft_ms`, `ttft_calls` | the call's `ttft_ms` and +1, only when it reported one (it streamed) |
@@ -188,7 +188,7 @@ Every counter outside `messages` is `NOT NULL DEFAULT 0`.
 
 ### Pricing
 
-`utils/model_pricing.py` prices each call when the answer finishes, so the cost
+`utils/pricing.py` prices each call when the answer finishes, so the cost
 is fixed at the moment it was spent and never re-priced on read. Prices are USD
 per 1M tokens — `input`, `cached_input`, `output` — with an optional
 `long_context` tier (`above_input_tokens`, `input`, `cached_input`, `output`)
@@ -218,7 +218,7 @@ that replaces all three for a call whose own input exceeds it.
 
 | Key fact | Value / detail |
 | --- | --- |
-| Call counts | `utils/run_activity.count_run_activity`, the same rules as the UI's `countRunActivity`: model calls = distinct `TOKEN_USAGE` message ids; tool calls = distinct `TOOL_CALL_START` ids; sub-agents included |
+| Call counts | `engine/inference/activity.count_run_activity`, the same rules as the UI's `countRunActivity`: model calls = distinct `TOKEN_USAGE` message ids; tool calls = distinct `TOOL_CALL_START` ids; sub-agents included |
 | Concurrency | every total is `col = col + n` or `ON CONFLICT … DO UPDATE SET col = col + excluded.col`, so nothing is read back first and no update is lost |
 | Runs with no usage | an answer that spent nothing (e.g. failed before its first call) writes no rows and leaves its call counts `NULL` |
 | Tool rollup key | `tool_usage_daily` keys on the main agent and the tool only: a sub-agent's calls of a tool count under the agent that delegated them (the scope/agent split lives in `tool_usage`) |
@@ -299,15 +299,15 @@ from before pricing) also shows "—".
 | Per-call metrics (LangGraph agents) | `magenticx/agents/harness/agui/usage_callback.py` (`drain`, `drain_tools`), `magenticx/agents/harness/abstractions/langgraph_agent.py` (`_stream_config`, `_pending_frames`) |
 | Events | `magenticx/agents/harness/agui/events.py` (`TokenUsageEvent`, `ToolUsageEvent`), `emitter.py` (`token_usage`, `tool_usage`) |
 | Stream hooks | `magenticx/agents/harness/abstractions/base_agent.py` (`astream`, `_config_with_callback`) |
-| Accumulator, booking | `magenticx/dialogue_bridge/utils/inference_runs.py` (`InferenceRunRuntime`, `_call_metrics`, `_accumulate_tool_usage`, `_note_first_text`, `_record_usage_breakdown`) |
-| Pricing | `magenticx/dialogue_bridge/utils/model_pricing.py`; `PricingSettings` in `core/settings.py` |
-| Manual compaction booking | `magenticx/dialogue_bridge/utils/compaction.py` (`_book_compaction_usage`) |
-| Call counting | `magenticx/dialogue_bridge/utils/run_activity.py` |
-| Daily rollups writer | `magenticx/dialogue_bridge/utils/usage_rollups.py` (`add_answer_to_rollups`, `tools=`) |
-| Queries | `magenticx/dialogue_bridge/utils/usage.py` |
-| Routes, DTOs | `magenticx/dialogue_bridge/router/usage.py`, `magenticx/dialogue_bridge/schema/usage.py`; answer DTOs `schema/messages.py`, `schema/inference.py` |
+| Accumulator, booking | `magenticx/dialogue_bridge/engine/inference/runs.py` (`InferenceRunRuntime`, `_call_metrics`, `_accumulate_tool_usage`, `_note_first_text`, `_record_usage_breakdown`) |
+| Pricing | `magenticx/dialogue_bridge/utils/pricing.py`; `PricingSettings` in `core/settings.py` |
+| Manual compaction booking | `magenticx/dialogue_bridge/engine/conversations/compaction.py` (`_book_compaction_usage`) |
+| Call counting | `magenticx/dialogue_bridge/engine/inference/activity.py` |
+| Daily rollups writer | `magenticx/dialogue_bridge/engine/account/usage_rollups.py` (`add_answer_to_rollups`, `tools=`) |
+| Queries | `magenticx/dialogue_bridge/engine/account/usage.py` |
+| Routes, DTOs | `magenticx/dialogue_bridge/router/account/usage.py`, `magenticx/dialogue_bridge/schema/account/usage.py`; answer DTOs `schema/conversations/messages.py`, `schema/inference/runs.py` |
 | Tables | `magenticx/dialogue_bridge/core/database/models.py`; migrations `0032`–`0034`, `0041` |
-| Purge, export | `magenticx/dialogue_bridge/utils/account_deletion.py`, `utils/data_export.py` |
+| Purge, export | `magenticx/dialogue_bridge/engine/account/deletion.py`, `engine/account/data_export.py` |
 | UI pages | `magenticx/agentic_ui/src/features/settings/components/profile_parts/UsageTab.tsx`, `…/profile_parts/usage/*` (`UsageParts.tsx`: `ToolsSection`, `TruncationNote`, `TokensWithCost`, `TruncatedMark`) |
 | UI data | `…/settings/hooks/useUsageQuery.ts`, `useUsageConversationList.ts`, `…/settings/lib/usageMetrics.ts` |
 | Reply card | `magenticx/agentic_ui/src/features/chat/components/message_parts/MessageUsage.tsx`, `ActionBars.tsx`; `shared/ui/ai-elements/context.tsx` (`ContextMetricRow`) |

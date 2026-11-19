@@ -78,6 +78,13 @@ export type WorkspaceState = {
 
   // Misc shared UI
   starterSuggestions: string[];
+  /**
+   * The composer's draft (plan 45). Here rather than in the shell's state so a
+   * keystroke re-renders only what reads it — the input bar — instead of the
+   * whole workspace. The shell reads only whether it is empty; handlers read it
+   * when they run (`getState().draft`).
+   */
+  draft: string;
   sidebarOpen: boolean;
   activeProfileTab: string;
 
@@ -114,6 +121,7 @@ export type WorkspaceState = {
   setSharedConvHasMore: (v: SetStateArg<boolean>) => void;
   setSharedConvIsLoading: (v: SetStateArg<boolean>) => void;
   setStarterSuggestions: (v: SetStateArg<string[]>) => void;
+  setDraft: (v: SetStateArg<string>) => void;
   setSidebarOpen: (v: SetStateArg<boolean>) => void;
   setActiveProfileTab: (v: SetStateArg<string>) => void;
 };
@@ -158,6 +166,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   sharedConvIsLoading: false,
 
   starterSuggestions: [],
+  draft: "",
   sidebarOpen: false,
   activeProfileTab: "general",
 
@@ -203,6 +212,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
       sharedConvHasMore: true,
       sharedConvIsLoading: false,
       starterSuggestions: [],
+      // Never carry one account's unsent words over to another.
+      draft: "",
     })),
 
   setIsLoggedIn: (v) => set((s) => ({ isLoggedIn: resolve(v, s.isLoggedIn) })),
@@ -246,6 +257,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
     set((s) => ({ sharedConvIsLoading: resolve(v, s.sharedConvIsLoading) })),
   setStarterSuggestions: (v) =>
     set((s) => ({ starterSuggestions: resolve(v, s.starterSuggestions) })),
+  setDraft: (v) => set((s) => ({ draft: resolve(v, s.draft) })),
   setSidebarOpen: (v) => set((s) => ({ sidebarOpen: resolve(v, s.sidebarOpen) })),
   setActiveProfileTab: (v) => set((s) => ({ activeProfileTab: resolve(v, s.activeProfileTab) })),
 }));

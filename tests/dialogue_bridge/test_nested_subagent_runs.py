@@ -23,8 +23,8 @@ from pathlib import Path
 
 import pytest
 
-from utils.inference_runs import InferenceRunRuntime
-from utils.run_activity import count_run_activity
+from engine.inference.runs import InferenceRunRuntime
+from engine.inference.activity import count_run_activity
 
 FIXTURES = Path(__file__).resolve().parents[1] / "agents" / "fixtures" / "nested_subagents"
 SUBAGENT_TYPES = {"researcher", "fact-checker", "source-verifier", "citation-formatter"}

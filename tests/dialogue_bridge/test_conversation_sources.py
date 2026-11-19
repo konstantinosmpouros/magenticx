@@ -22,10 +22,10 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-import utils.async_tasks as async_tasks
-import utils.inference_start as inference_start
-import utils.runtime_reaps as runtime_reaps
-import utils.shared_conv as shared_conv
+import engine.inference.tasks.tasks as async_tasks
+import engine.inference.start as inference_start
+import engine.conversations.runtime_reaps as runtime_reaps
+import engine.conversations.sharing as shared_conv
 from core.auth.session import require_current_user
 from core.database import ConversationTable, MessageTable, PendingRuntimeReapTable
 from core.settings import settings
@@ -36,9 +36,9 @@ from schema import (
     MessageIn,
     keep_valid_sources,
 )
-from utils.agents import copy_conversation_sources, insert_conversation_sources
-from utils.inference_runs import InferenceRunRuntime, append_coalesced, truncate_tool_result
-from utils.task_streams import task_events_key, task_streams
+from engine.conversations.sources import copy_conversation_sources, insert_conversation_sources
+from engine.inference.runs import InferenceRunRuntime, append_coalesced, truncate_tool_result
+from engine.inference.tasks.streams import task_events_key, task_streams
 from utils.validators import validate_userId
 
 GOOD = {"id": "3fa2c1", "url": "https://example.com/a", "title": "A page", "snippet": "Some text", "tool": "tavily-search"}

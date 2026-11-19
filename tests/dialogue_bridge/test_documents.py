@@ -26,14 +26,14 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import utils.inference_runs as ir
-import utils.output_capture as oc
+import engine.inference.runs as ir
+import engine.inference.output_capture as oc
 from core.auth.session import require_csrf_protection
 from core.database import AttachmentTable, ConversationTable, MessageTable
 from core.settings import settings
 from schema import AttachmentOut
-from utils.conversations import clone_branch_to_conversation
-from utils.inference_runs import InferenceRunRuntime
+from engine.conversations.conversations import clone_branch_to_conversation
+from engine.inference.runs import InferenceRunRuntime
 
 BRIEF = "/conversation/output/brief.md"
 WHEN = "2026-11-18T10:00:00+00:00"

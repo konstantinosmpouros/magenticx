@@ -496,7 +496,7 @@ A `one_off` moment in the past still validates — the stored version is re-vali
 
 ### Sync (definitions proxy)
 
-`utils/workflow_schedules.sync_workflow_schedule`, after the agents service accepted a create or update — that call is the commit point:
+`engine/automation/workflow_schedules.sync_workflow_schedule`, after the agents service accepted a create or update — that call is the commit point:
 
 | Saved start node | Row |
 | --- | --- |
@@ -549,7 +549,7 @@ The schedule is edited only in the builder, on the start node; it is shown and p
 | Inputs / `set` values / `end` keep | 32 / 32 / 32 | `spec.py`, `nodes/set_state.py`, `nodes/end.py` |
 | Rules per list / router cases | 20 / 16 | `rules.py`, `nodes/router.py` |
 | Loop iterations | default 5, max 20 | `nodes/loop.py` |
-| Run inputs | 64 KiB (engine 413; bridge `WORKFLOW_RUN_MAX_INPUT_BYTES`) | `schema/workflows.py` both sides |
+| Run inputs | 64 KiB (engine 413; bridge `WORKFLOW_RUN_MAX_INPUT_BYTES`) | agents `schema/workflows.py`, bridge `schema/automation/workflows.py` |
 | Tool | 60 s default / 300 s max; result ≤ 1 MiB | `nodes/tool.py` |
 | Fetch | 15 s default / 30 s max; ≤ 3 redirects; ≤ 1 MiB | `nodes/fetch.py` |
 | LLM | 60 s default / 120 s max; ≤ 16000 output tokens; prompt ≤ 20000 chars; schema ≤ 16 KiB | `nodes/llm.py` |
@@ -560,7 +560,7 @@ The schedule is edited only in the builder, on the start node; it is shown and p
 | Step backstop | `recursion_limit` ≤ 2000 | `compiler.py` |
 | Leg wall clock / idle | 3600 s / 900 s | bridge `WorkflowSettings` |
 | Approval TTL | 24 h | `WORKFLOW_APPROVAL_TTL_HOURS` |
-| Schedule interval | ≥ 300 s (engine), clamped to `SCHEDULER_MIN_INTERVAL_SECONDS` (bridge); ≤ 366 days | `nodes/trigger_schedule.py`, `utils/workflow_schedules.py` |
+| Schedule interval | ≥ 300 s (engine), clamped to `SCHEDULER_MIN_INTERVAL_SECONDS` (bridge); ≤ 366 days | `nodes/trigger_schedule.py`, `engine/automation/workflow_schedules.py` |
 | Schedules per workflow | 1 (`workflow_schedules` PK) | migration `0045` |
 | Active runs per user / live runs per workflow | 5 / 1 | `WORKFLOW_MAX_ACTIVE_RUNS_PER_USER`, unique index |
 | Runs kept per workflow | 200 | `WORKFLOW_MAX_RUNS_PER_WORKFLOW` |
@@ -628,13 +628,13 @@ Internal (agents, `require_internal_caller`): `GET /workflows/catalog`, `GET /wo
 | SSRF guard | [magenticx/agents/harness/workflows/ssrf.py](../../magenticx/agents/harness/workflows/ssrf.py) | `resolve_target`, `is_blocked_address`, `BLOCKED_NETWORKS` |
 | Store (DDL on boot) | [magenticx/agents/harness/workflows/store.py](../../magenticx/agents/harness/workflows/store.py) | `WorkflowStore`, `_DDL`, `purge_user`, `page_*` |
 | Agents routes | [magenticx/agents/router/workflows.py](../../magenticx/agents/router/workflows.py), [utils/workflows.py](../../magenticx/agents/utils/workflows.py), [schema/workflows.py](../../magenticx/agents/schema/workflows.py) | `open_workflow_run`, `WorkflowRunRequest` |
-| Bridge routes | [magenticx/dialogue_bridge/router/workflows.py](../../magenticx/dialogue_bridge/router/workflows.py) | `router` (`/v1/workflows`), `runs_router` (`/v1/workflow-runs`) |
-| Definitions proxy | [magenticx/dialogue_bridge/utils/workflows.py](../../magenticx/dialogue_bridge/utils/workflows.py) | `_call`, `_FORWARDED_STATUSES` |
-| Run manager, stream, watchdog | [magenticx/dialogue_bridge/utils/workflow_runs.py](../../magenticx/dialogue_bridge/utils/workflow_runs.py) | `WorkflowRunManager`, `stream_run_events`, `reap_workflow_runs` |
-| Bridge DTOs + settings | [magenticx/dialogue_bridge/schema/workflows.py](../../magenticx/dialogue_bridge/schema/workflows.py), [core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `WorkflowRunOut`, `WorkflowSettings` |
+| Bridge routes | [magenticx/dialogue_bridge/router/automation/workflows.py](../../magenticx/dialogue_bridge/router/automation/workflows.py) | `router` (`/v1/workflows`), `runs_router` (`/v1/workflow-runs`) |
+| Definitions proxy | [magenticx/dialogue_bridge/engine/automation/workflows.py](../../magenticx/dialogue_bridge/engine/automation/workflows.py) | `_call`, `_FORWARDED_STATUSES` |
+| Run manager, stream, watchdog | [magenticx/dialogue_bridge/engine/automation/workflow_runs.py](../../magenticx/dialogue_bridge/engine/automation/workflow_runs.py) | `WorkflowRunManager`, `stream_run_events`, `reap_workflow_runs` |
+| Bridge DTOs + settings | [magenticx/dialogue_bridge/schema/automation/workflows.py](../../magenticx/dialogue_bridge/schema/automation/workflows.py), [core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `WorkflowRunOut`, `WorkflowSettings` |
 | Tables | [magenticx/dialogue_bridge/core/database/migrations/versions/0044_workflow_runs.py](../../magenticx/dialogue_bridge/core/database/migrations/versions/0044_workflow_runs.py) | `workflow_runs`, `workflow_run_events` |
 | Schedule node | [magenticx/agents/harness/workflows/nodes/trigger_schedule.py](../../magenticx/agents/harness/workflows/nodes/trigger_schedule.py) | `ScheduleTriggerConfig`, `ScheduleSpec`, `MIN_INTERVAL_SECONDS` |
-| Schedules (bridge) | [magenticx/dialogue_bridge/utils/workflow_schedules.py](../../magenticx/dialogue_bridge/utils/workflow_schedules.py), [0045_workflow_schedules.py](../../magenticx/dialogue_bridge/core/database/migrations/versions/0045_workflow_schedules.py) | `desired_schedule`, `sync_workflow_schedule`, `claim_due_workflow_schedules`, `fire_workflow_schedule`, `set_schedule_paused` |
+| Schedules (bridge) | [magenticx/dialogue_bridge/engine/automation/workflow_schedules.py](../../magenticx/dialogue_bridge/engine/automation/workflow_schedules.py), [0045_workflow_schedules.py](../../magenticx/dialogue_bridge/core/database/migrations/versions/0045_workflow_schedules.py) | `desired_schedule`, `sync_workflow_schedule`, `claim_due_workflow_schedules`, `fire_workflow_schedule`, `set_schedule_paused` |
 | Schedule trigger (UI) | [lib/builder/schedule.ts](../../magenticx/agentic_ui/src/features/workflows/lib/builder/schedule.ts), [builder_parts/ScheduleTriggerEditor.tsx](../../magenticx/agentic_ui/src/features/workflows/components/builder/builder_parts/ScheduleTriggerEditor.tsx), [shared/lib/workflowSchedule.ts](../../magenticx/agentic_ui/src/shared/lib/workflowSchedule.ts), [shared/lib/schedule.ts](../../magenticx/agentic_ui/src/shared/lib/schedule.ts), [hooks/useWorkflowSchedulePause.ts](../../magenticx/agentic_ui/src/features/workflows/hooks/useWorkflowSchedulePause.ts) | `scheduleConfigProblems`, `scheduleNodeSubtitle`, `setSchedulePausedOptimistic` |
 | Automations page, Workflows area | [magenticx/agentic_ui/src/features/automations/components/AutomationsPage.tsx](../../magenticx/agentic_ui/src/features/automations/components/AutomationsPage.tsx), [automations_parts/WorkflowsArea.tsx](../../magenticx/agentic_ui/src/features/automations/components/automations_parts/WorkflowsArea.tsx), [automations_parts/WorkflowCard.tsx](../../magenticx/agentic_ui/src/features/automations/components/automations_parts/WorkflowCard.tsx), [pages/AutomationsView.tsx](../../magenticx/agentic_ui/src/pages/AutomationsView.tsx) | `area`, `onRunWorkflow`; `useWorkflowQuickRun` |
 | Design | [plans/38-automations.md](../../plans/38-automations.md) | §3.2, §3.4–3.5, §3.9, §5 |

@@ -14,8 +14,8 @@ import pytest
 from fakeredis import aioredis as fake_aioredis
 
 import core.auth.parked as parked_mod
-import router.auth as auth_router
-import utils.auth as auth_utils
+import router.account.auth as auth_router
+import engine.account.auth as auth_utils
 from core.auth.parked import ParkedAccountLimit, ParkedSessionError, ParkedSessionStore
 from core.auth.session import (
     CSRF_COOKIE_NAME,
@@ -64,7 +64,7 @@ def multi_account(monkeypatch, store):
 
     Every module that did `from core.auth.parked import parked_sessions` holds its
     own reference, so patching the origin alone would miss them — the router owns
-    the switch/logout handlers and utils.auth owns the login finaliser that parks
+    the switch/logout handlers and engine.account.auth owns the login finaliser that parks
     the outgoing session.
     """
     for module in (parked_mod, auth_router, auth_utils):

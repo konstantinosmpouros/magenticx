@@ -110,7 +110,7 @@ The base64 payload is sent as part of the standard message creation request body
 ### Server-Side Persistence
 
 ```python
-# utils/conversations.py — init_attachments()
+# engine/conversations/conversations.py — init_attachments()
 for item in items:
     raw = base64.b64decode(item.dataB64, validate=True)
     blob = BlobTable(data=raw)
@@ -281,7 +281,7 @@ Edit and retry create a new sibling message row (new UUID) rather than updating 
 `clone_branch_to_conversation()` deep-copies all blob data — blobs are not shared between the source and forked conversation. Each fork independently owns complete copies of all attachment data.
 
 ```python
-# utils/conversations.py
+# engine/conversations/conversations.py
 cloned_blob = BlobTable(data=source_blob.data)  # full byte copy
 cloned_attachment = AttachmentTable(
     message_id=cloned_message.id,  # new UUID
@@ -349,7 +349,7 @@ sequenceDiagram
     D-->>A: bytes — checked against sha256, cached by it
 ```
 
-- **Stable names.** Each upload gets `attachments.workspace_name` when it is stored (`utils/workspace_names.py`, migration `0042` backfilled the rest): one safe path segment; the first file keeps a name, different bytes become `stem_1.ext`, the same bytes reuse it. Names never change, and forks and continued shares carry them, so a file from turn 1 is readable on turn 50 under the name the history shows.
+- **Stable names.** Each upload gets `attachments.workspace_name` when it is stored (`engine/conversations/workspace_names.py`, migration `0042` backfilled the rest): one safe path segment; the first file keeps a name, different bytes become `stem_1.ext`, the same bytes reuse it. Names never change, and forks and continued shares carry them, so a file from turn 1 is readable on turn 50 under the name the history shows.
 - **History.** `serialise_message_with_images_for_agent()` still inlines images; for deep agents a non-image **upload** is labelled `/conversation/input/<workspace_name>`. Generated files get no input path.
 - **The list** is fetched once per run, bytes once per hash (`CONVERSATION_INPUT_CACHE_BYTES`, process-wide LRU). A bridge that cannot answer makes the uploads *temporarily unavailable* — a readable tool error, never a failed run.
 - **LangGraph agents have no filesystem** — they receive message content only.
@@ -373,7 +373,7 @@ sequenceDiagram
 
 | Rule | Why |
 | --- | --- |
-| **Presented files only**, in the finalize transaction (`utils/output_capture.py`) | The card must find its file when the terminal frame arrives. Everything else the agent wrote is already durable in `agent_runtime` |
+| **Presented files only**, in the finalize transaction (`engine/inference/output_capture.py`) | The card must find its file when the terminal frame arrives. Everything else the agent wrote is already durable in `agent_runtime` |
 | **A snapshot.** The attachment keeps the version presented, even if the agent edits the file later | Cards, share links, forks and the PDF export show what the user was shown |
 | **Bounded.** `/conversation/output/` only, ≤ `OUTPUT_MAX_FILE_BYTES` (25 MB) each, fetched `OUTPUT_CAPTURE_BATCH_FILES` (20) at a time | An upload or offload can never become a deliverable; the snapshot is a downloadable attachment |
 | **Fail-open** | The answer is already persisted: an unreachable agents service or bad base64 is logged and skipped |
@@ -420,23 +420,23 @@ sequenceDiagram
 | Concept | File | What to look for |
 | --- | --- | --- |
 | DB tables | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) | `AttachmentTable`, `BlobTable`, FK cascade definitions |
-| Attachments router | [magenticx/dialogue_bridge/router/attachments.py](../../magenticx/dialogue_bridge/router/attachments.py) | download, preview, preview-token, public, images, files, `preview.pdf` endpoints |
-| Office PDF previews (plan 44 4.5) | [magenticx/dialogue_bridge/utils/document_export.py](../../magenticx/dialogue_bridge/utils/document_export.py), [magenticx/agents/router/document_export.py](../../magenticx/agents/router/document_export.py), [magenticx/agents/harness/conversions/](../../magenticx/agents/harness/conversions/), migration [0051](../../magenticx/dialogue_bridge/core/database/migrations/versions/0051_attachment_pdf_previews.py) | `office_pdf_preview()`, `_cached_preview()`, `office_extension()`; `office_preview_job()`; `AttachmentPdfPreviewTable` |
-| Artifacts listing (bridge) | [magenticx/dialogue_bridge/utils/user_files.py](../../magenticx/dialogue_bridge/utils/user_files.py) | `list_user_files()`, `classify_file_type()` + its SQL twin `_type_filter()`, keyset cursor |
+| Attachments router | [magenticx/dialogue_bridge/router/conversations/attachments.py](../../magenticx/dialogue_bridge/router/conversations/attachments.py) | download, preview, preview-token, public, images, files, `preview.pdf` endpoints |
+| Office PDF previews (plan 44 4.5) | [magenticx/dialogue_bridge/engine/documents/export.py](../../magenticx/dialogue_bridge/engine/documents/export.py), [magenticx/agents/router/document_export.py](../../magenticx/agents/router/document_export.py), [magenticx/agents/harness/conversions/](../../magenticx/agents/harness/conversions/), migration [0051](../../magenticx/dialogue_bridge/core/database/migrations/versions/0051_attachment_pdf_previews.py) | `office_pdf_preview()`, `_cached_preview()`, `office_extension()`; `office_preview_job()`; `AttachmentPdfPreviewTable` |
+| Artifacts listing (bridge) | [magenticx/dialogue_bridge/engine/conversations/user_files.py](../../magenticx/dialogue_bridge/engine/conversations/user_files.py) | `list_user_files()`, `classify_file_type()` + its SQL twin `_type_filter()`, keyset cursor |
 | Artifacts page (frontend) | [magenticx/agentic_ui/src/features/artifacts/](../../magenticx/agentic_ui/src/features/artifacts/) | `ArtifactsPage`, `useUserFiles`, `useArtifactActions`, `lib/fileFilters.ts`, `lib/routes.ts` |
-| Upload persistence | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `init_attachments()`, `clone_branch_to_conversation()` |
-| Stable upload names | [magenticx/dialogue_bridge/utils/workspace_names.py](../../magenticx/dialogue_bridge/utils/workspace_names.py) | `WorkspaceNames.assign()` (used by `init_attachments()` and the share import), migration `0042_conversation_files` |
-| Uploads for the agent (bridge, internal) | [magenticx/dialogue_bridge/router/internal_conversations.py](../../magenticx/dialogue_bridge/router/internal_conversations.py) | `GET /v1/internal/conversations/{cid}/input-files[/{attachment_id}]` over `utils/conversation_inputs.py` |
-| History labels | [magenticx/dialogue_bridge/utils/inference.py](../../magenticx/dialogue_bridge/utils/inference.py) | `serialise_message_with_images_for_agent(include_input_paths=...)` |
+| Upload persistence | [magenticx/dialogue_bridge/engine/conversations/conversations.py](../../magenticx/dialogue_bridge/engine/conversations/conversations.py) | `init_attachments()`, `clone_branch_to_conversation()` |
+| Stable upload names | [magenticx/dialogue_bridge/engine/conversations/workspace_names.py](../../magenticx/dialogue_bridge/engine/conversations/workspace_names.py) | `WorkspaceNames.assign()` (used by `init_attachments()` and the share import), migration `0042_conversation_files` |
+| Uploads for the agent (bridge, internal) | [magenticx/dialogue_bridge/router/internal/conversations.py](../../magenticx/dialogue_bridge/router/internal/conversations.py) | `GET /v1/internal/conversations/{cid}/input-files[/{attachment_id}]` over `engine/conversations/inputs.py` |
+| History labels | [magenticx/dialogue_bridge/engine/inference/history.py](../../magenticx/dialogue_bridge/engine/inference/history.py) | `serialise_message_with_images_for_agent(include_input_paths=...)` |
 | Mount table + permissions | [magenticx/agents/harness/filesystem/workspace.py](../../magenticx/agents/harness/filesystem/workspace.py) | `build_workspace_backend()` (routes), `WORKSPACE_WRITE_DENY` (`/conversation/input/` write-deny) |
 | Conversation files (agents) | [magenticx/agents/harness/conversation_files/](../../magenticx/agents/harness/conversation_files/) | `ConversationFilesBackend`, `ConversationFileStore`, `InputView`, `paths.normalise()` |
 | `present_artifact` tool | [magenticx/agents/harness/tools/present_artifact/tool.py](../../magenticx/agents/harness/tools/present_artifact/tool.py) | `build_present_artifact_tool()` — output/ only, returns a confirmation (never emits) |
 | Files / copy / reap routes (agents) | [magenticx/agents/router/conversation_files.py](../../magenticx/agents/router/conversation_files.py) | `GET /users/{uid}/conversations/{cid}/files`, `POST …/files/copy`, `POST …/reap` (over `utils/conversation_files.py`) |
-| Presented-file snapshot (bridge) | [magenticx/dialogue_bridge/utils/output_capture.py](../../magenticx/dialogue_bridge/utils/output_capture.py) | `capture_presented_files()` (in `_finish_run`'s transaction); metadata from `InferenceRunRuntime.presented_artifacts` |
+| Presented-file snapshot (bridge) | [magenticx/dialogue_bridge/engine/inference/output_capture.py](../../magenticx/dialogue_bridge/engine/inference/output_capture.py) | `capture_presented_files()` (in `_finish_run`'s transaction); metadata from `InferenceRunRuntime.presented_artifacts` |
 | Generated-artifact rendering (frontend) | [magenticx/agentic_ui/src/features/chat/components/message_parts/MessageAttachments.tsx](../../magenticx/agentic_ui/src/features/chat/components/message_parts/MessageAttachments.tsx) | `origin === "generated"` branch — left-aligned card, Sparkles icon, agent title/summary |
-| Share snapshot builder | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `_attachment_to_share_snapshot()`, `build_share_snapshot()` |
-| Pydantic schemas | [magenticx/dialogue_bridge/schema/attachments.py](../../magenticx/dialogue_bridge/schema/attachments.py) | `AttachmentIn`, `AttachmentOut`, `ImageOut`, `DocxPreviewTokenOut`, `UserFileOut`, `UserFilesPage` |
-| HMAC token helpers | [magenticx/dialogue_bridge/utils/attachments.py](../../magenticx/dialogue_bridge/utils/attachments.py) | `generate_docx_preview_token()`, `validate_docx_preview_token()` |
+| Share snapshot builder | [magenticx/dialogue_bridge/engine/conversations/conversations.py](../../magenticx/dialogue_bridge/engine/conversations/conversations.py) | `_attachment_to_share_snapshot()`, `build_share_snapshot()` |
+| Pydantic schemas | [magenticx/dialogue_bridge/schema/conversations/attachments.py](../../magenticx/dialogue_bridge/schema/conversations/attachments.py) | `AttachmentIn`, `AttachmentOut`, `ImageOut`, `DocxPreviewTokenOut`, `UserFileOut`, `UserFilesPage` |
+| HMAC token helpers | [magenticx/dialogue_bridge/engine/conversations/attachments.py](../../magenticx/dialogue_bridge/engine/conversations/attachments.py) | `generate_docx_preview_token()`, `validate_docx_preview_token()` |
 | Frontend API calls | [magenticx/agentic_ui/src/shared/lib/api/](../../magenticx/agentic_ui/src/shared/lib/api/) | `downloadAttachment()`, `fetchAttachmentBlob()`, `fetchAttachmentPreviewBlob()`, `getAttachmentPreviewUrl()`, `fetchDocxPreviewToken()`, `listUserFiles()` |
 | Frontend types | [magenticx/agentic_ui/src/shared/lib/types/](../../magenticx/agentic_ui/src/shared/lib/types/) | `AttachmentIn`, `AttachmentOut` |
 | Upload validation | [magenticx/agentic_ui/src/shared/lib/uploadGuards.ts](../../magenticx/agentic_ui/src/shared/lib/uploadGuards.ts) | size limits, count limits, base64 inflation check |

@@ -21,9 +21,9 @@ from datetime import datetime, timezone
 import pytest_asyncio
 
 from core.database import ConversationTable, MessageTable, UserTable
-from router import inference as inference_router
-from utils.hitl_decisions import HitlDecisionQueue, ResumeOutcome
-from utils.inference_runs import (
+from router.inference import runs as inference_router
+from engine.inference.hitl import HitlDecisionQueue, ResumeOutcome
+from engine.inference.runs import (
     InferenceRunRuntime,
     hitl_resolved_value,
     inference_run_manager,

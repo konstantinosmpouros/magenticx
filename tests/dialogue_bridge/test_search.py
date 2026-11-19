@@ -1,4 +1,4 @@
-"""Unit + DB tests for utils.search.
+"""Unit + DB tests for engine.conversations.search.
 
 ``clean_search_query`` and ``build_like_pattern`` are pure string helpers
 (whitespace normalisation, LIKE-wildcard escaping). ``search_workspace_data``
@@ -16,7 +16,7 @@ from core.database import (
     ConversationTable,
     MessageTable,
 )
-from utils.search import build_like_pattern, clean_search_query, search_workspace_data
+from engine.conversations.search import build_like_pattern, clean_search_query, search_workspace_data
 
 
 # ---------------------------------------------------------------------------

@@ -24,13 +24,13 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy import select
 
-import utils.commands as commands_mod
-import utils.inference_start as inference_start_module
+import engine.agents.commands as commands_mod
+import engine.inference.start as inference_start_module
 from core.database import AgentTable, MessageTable
 from schema import CommandOut, InferenceStartPayload, MessageIn
-from utils.commands import command_context
-from utils.inference_start import start_inference_flow
-from utils.shared_conv import _snapshot_command
+from engine.agents.commands import command_context
+from engine.inference.start import start_inference_flow
+from engine.conversations.sharing import _snapshot_command
 
 CATALOG = [
     CommandOut(name="explain", kind="prompt", description="Explain"),

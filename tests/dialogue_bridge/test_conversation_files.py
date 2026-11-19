@@ -27,7 +27,7 @@ from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import select
 
-import utils.runtime_reaps as runtime_reaps
+import engine.conversations.runtime_reaps as runtime_reaps
 from core.database import (
     AttachmentTable,
     BlobTable,
@@ -37,9 +37,9 @@ from core.database import (
 )
 from core.settings import settings
 from schema import AttachmentIn, MessageIn
-from utils.conversations import init_conv, init_message
-from utils.inference import serialise_message_with_images_for_agent
-from utils.workspace_names import WorkspaceNames, safe_workspace_name
+from engine.conversations.conversations import init_conv, init_message
+from engine.inference.history import serialise_message_with_images_for_agent
+from engine.conversations.workspace_names import WorkspaceNames, safe_workspace_name
 
 MIGRATION = (
     Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge"

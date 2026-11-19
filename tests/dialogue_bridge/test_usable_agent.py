@@ -11,14 +11,15 @@ import httpx
 import pytest
 from fastapi import HTTPException
 
-import utils.agents as agents_util
-import utils.memories as memories_mod
-import utils.skills as skills_mod
-import utils.titles
+import engine.agents.catalog as agents_util
+import engine.agents.tools as agent_tools_mod
+import engine.agents.memories as memories_mod
+import engine.agents.skills as skills_mod
+import engine.conversations.titles
 from core.database import AgentTable, UserTable
-from router import catalog as catalog_router
+from router.agents import catalog as catalog_router
 from schema import ScheduledTaskCreate, ScheduledTaskUpdate
-from utils import scheduled_tasks as scheduled_tasks_util
+from engine.automation import scheduled_tasks as scheduled_tasks_util
 
 
 @pytest.fixture
@@ -95,7 +96,7 @@ async def test_create_conversation(client, agent_rows, seeded_user, monkeypatch,
     async def no_title(_first_message):
         return None
 
-    monkeypatch.setattr(utils.titles, "generate_conversation_title", no_title)
+    monkeypatch.setattr(engine.conversations.titles, "generate_conversation_title", no_title)
     response = await client.post(
         f"/v1/conversations/{seeded_user.id}",
         json={
@@ -205,10 +206,10 @@ async def test_agent_tools_resolve_only_usable_agents(agent_rows, session_factor
     async with session_factory() as session:
         if which == "foreign":
             with pytest.raises(HTTPException) as exc:
-                await agents_util._resolve_agent_slug(session, seeded_user.id, agents[which].id)
+                await agent_tools_mod._resolve_agent_slug(session, seeded_user.id, agents[which].id)
             assert exc.value.status_code == 404
         else:
-            slug = await agents_util._resolve_agent_slug(session, seeded_user.id, agents[which].id)
+            slug = await agent_tools_mod._resolve_agent_slug(session, seeded_user.id, agents[which].id)
             assert slug == _EXPECTED_SLUG[which]
 
 

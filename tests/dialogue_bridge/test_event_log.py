@@ -1,6 +1,6 @@
 """Unit tests for the Redis-backed inference event log.
 
-These tests exercise :class:`utils.event_log.RedisEventLog` against an
+These tests exercise :class:`engine.inference.event_log.RedisEventLog` against an
 in-process fakeredis instance, covering the three behaviours we rely on for
 the WebSocket-based inference streaming:
 
@@ -18,7 +18,7 @@ import pytest_asyncio
 
 from fakeredis import aioredis as fake_aioredis
 
-from utils.event_log import RedisEventLog, _stream_key
+from engine.inference.event_log import RedisEventLog, _stream_key
 
 
 TERMINAL = {"completed", "cancelled", "failed"}

@@ -110,7 +110,7 @@ async def test_a_failed_write_rolls_the_whole_batch_back(
 ):
     """All or nothing even past validation: the second write fails, the first
     must not survive it."""
-    from utils import agent_tool_prefs
+    from engine.agents import tool_prefs as agent_tool_prefs
 
     real = agent_tool_prefs.set_approval
     calls = {"n": 0}
@@ -122,11 +122,11 @@ async def test_a_failed_write_rolls_the_whole_batch_back(
         return await real(*args, **kwargs)
 
     monkeypatch.setattr(agent_tool_prefs, "set_approval", flaky)
-    from utils import agents as agents_util
+    from engine.agents import tools as agent_tools_mod
 
     async with session_factory() as session:
         with pytest.raises(RuntimeError):
-            await agents_util.set_agent_tool_approvals(
+            await agent_tools_mod.set_agent_tool_approvals(
                 session, seeded_user.id, seeded_agent.id, {"rag/sql_query": True, "write_file": False}
             )
 

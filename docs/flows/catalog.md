@@ -370,11 +370,11 @@ Edit, retry, and shared conversation continuation use the same `/start` endpoint
 
 | Concept | File | What to look for |
 | --- | --- | --- |
-| Catalog endpoints | [magenticx/dialogue_bridge/router/catalog.py](../../magenticx/dialogue_bridge/router/catalog.py) | `GET /agents`, `GET /tools`, `GET /models`, `GET /builtin-tools`, `GET /{userId}/suggestions` handlers |
-| Agent sync + cache | [magenticx/dialogue_bridge/utils/agents.py](../../magenticx/dialogue_bridge/utils/agents.py) | `_AGENT_CACHE`, `get_cached_agents()`, `sync_agents_with_service()`, `prime_agent_cache()`, `get_usable_agent()` |
+| Catalog endpoints | [magenticx/dialogue_bridge/router/agents/catalog.py](../../magenticx/dialogue_bridge/router/agents/catalog.py) | `GET /agents`, `GET /tools`, `GET /models`, `GET /builtin-tools`, `GET /{userId}/suggestions` handlers |
+| Agent sync + cache | [magenticx/dialogue_bridge/engine/agents/catalog.py](../../magenticx/dialogue_bridge/engine/agents/catalog.py) | `_AGENT_CACHE`, `get_cached_agents()`, `sync_agents_with_service()`, `prime_agent_cache()`, `get_usable_agent()` |
 | Agent DB table | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) | `AgentTable`, `is_active` column |
-| Pydantic schemas | [magenticx/dialogue_bridge/schema/catalog.py](../../magenticx/dialogue_bridge/schema/catalog.py) | `AgentPublic`, `ToolManifest`, `ModelChoice`, `BuiltinToolInfo` |
-| Suggestion generation | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `generate_conversation_suggestions()` |
+| Pydantic schemas | [magenticx/dialogue_bridge/schema/agents/catalog.py](../../magenticx/dialogue_bridge/schema/agents/catalog.py) | `AgentPublic`, `ToolManifest`, `ModelChoice`, `BuiltinToolInfo` |
+| Suggestion generation | [magenticx/dialogue_bridge/engine/conversations/conversations.py](../../magenticx/dialogue_bridge/engine/conversations/conversations.py) | `generate_conversation_suggestions()` |
 | MCP catalog registry | [mcp_gateway/mcp_catalog.yaml](https://github.com/konstantinosmpouros/mcp_gateway/blob/main/mcp_catalog.yaml) | registered MCP servers and tool lists |
 | MCP server config | [mcp_gateway/mcp_config.yaml](https://github.com/konstantinosmpouros/mcp_gateway/blob/main/mcp_config.yaml) | runtime parameters per server |
 | Frontend API calls | [magenticx/agentic_ui/src/shared/lib/api/](../../magenticx/agentic_ui/src/shared/lib/api/) | `getAgents()`, `getTools()`, `getSuggestions()` |

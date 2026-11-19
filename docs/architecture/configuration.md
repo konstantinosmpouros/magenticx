@@ -178,7 +178,7 @@ All rate limits are counted in **Redis** via `fastapi-redis-sdk` (they survive r
 
 ### Model pricing (`PricingSettings`)
 
-The Usage tab's cost figures (plan 41, see [usage-analytics](../flows/usage-analytics.md#pricing)). The default price table lives in `utils/model_pricing.py`; these variables only override it.
+The Usage tab's cost figures (plan 41, see [usage-analytics](../flows/usage-analytics.md#pricing)). The default price table lives in `utils/pricing.py`; these variables only override it.
 
 | Env var | Default | What it does |
 | --- | --- | --- |
@@ -197,7 +197,7 @@ The Usage tab's cost figures (plan 41, see [usage-analytics](../flows/usage-anal
 }
 ```
 
-`input` and `output` are required; `cached_input` defaults to `input`; `long_context` replaces all three prices for a call whose input exceeds `above_input_tokens` (a positive integer). Prices must be non-negative numbers, and unknown keys are refused (a typo such as `"ouput"` must not price at zero). The table is parsed when `utils.model_pricing` is imported at startup: **bad JSON or a bad entry stops the bridge**. A model name is matched exactly, then without a `provider:` prefix, then without a `-YYYY-MM-DD` suffix. Changing a price never re-prices stored answers. The defaults are estimates — verify them against your invoice.
+`input` and `output` are required; `cached_input` defaults to `input`; `long_context` replaces all three prices for a call whose input exceeds `above_input_tokens` (a positive integer). Prices must be non-negative numbers, and unknown keys are refused (a typo such as `"ouput"` must not price at zero). The table is parsed when `utils.pricing` is imported at startup: **bad JSON or a bad entry stops the bridge**. A model name is matched exactly, then without a `provider:` prefix, then without a `-YYYY-MM-DD` suffix. Changing a price never re-prices stored answers. The defaults are estimates — verify them against your invoice.
 
 ### Redis (`RedisSettings`)
 
@@ -628,7 +628,7 @@ These flip behavior at boot; all are **fail-closed by default** (secure unless e
 | --- | --- | --- |
 | bridge settings | [magenticx/dialogue_bridge/core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | every `*Settings` class + `validation_alias` |
 | agents settings | [magenticx/agents/core/settings.py](../../magenticx/agents/core/settings.py) | checkpointer, workflows, deep-agents, filesystem, `RateLimitRetrySettings` |
-| model price table | [magenticx/dialogue_bridge/utils/model_pricing.py](../../magenticx/dialogue_bridge/utils/model_pricing.py) | `DEFAULT_PRICES`, `parse_price_table()`, `call_cost_micros()` |
+| model price table | [magenticx/dialogue_bridge/utils/pricing.py](../../magenticx/dialogue_bridge/utils/pricing.py) | `DEFAULT_PRICES`, `parse_price_table()`, `call_cost_micros()` |
 | rag settings | [magenticx/rag_service/core/settings.py](../../magenticx/rag_service/core/settings.py) | `AppSettings`, `RagSettings`, `ProxySettings` |
 | TLS toggles | [magenticx/tls/entrypoint-tls.sh](../../magenticx/tls/entrypoint-tls.sh) | `REQUIRE_TLS`, `REQUIRE_MTLS` |
 | nginx env substitution | [magenticx/agentic_ui/nginx.conf.template](../../magenticx/agentic_ui/nginx.conf.template) | `BFF_BASE_URL`, `TRUSTED_PROXY_SECRET` (edge-proxy marker only) |

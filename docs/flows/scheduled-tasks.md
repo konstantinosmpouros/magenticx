@@ -31,7 +31,7 @@ Two schema changes (migration `0009_add_scheduled_tasks`):
 
 `scheduled_tasks.last_run_message_id` is a **plain String, not an FK** — an FK there would close a `messages → scheduled_tasks → conversations → messages` cycle. The latest fire's true status is derived by looking that message up, so the task row never goes stale.
 
-Model: [`core/database/models.py`](../../magenticx/dialogue_bridge/core/database/models.py) (`ScheduledTaskTable`). Schemas: [`schema/scheduled_tasks.py`](../../magenticx/dialogue_bridge/schema/scheduled_tasks.py) (`ScheduledTaskCreate` / `ScheduledTaskUpdate` / `ScheduledTaskOut`).
+Model: [`core/database/models.py`](../../magenticx/dialogue_bridge/core/database/models.py) (`ScheduledTaskTable`). Schemas: [`schema/automation/scheduled_tasks.py`](../../magenticx/dialogue_bridge/schema/automation/scheduled_tasks.py) (`ScheduledTaskCreate` / `ScheduledTaskUpdate` / `ScheduledTaskOut`).
 
 ---
 
@@ -52,7 +52,7 @@ In `bound` mode, while a fire is running the conversation has an active run, so 
 
 ### Create
 
-`POST /v1/scheduled-tasks/{user_id}` → `create_scheduled_task` ([`utils/scheduled_tasks.py`](../../magenticx/dialogue_bridge/utils/scheduled_tasks.py)). Validates the agent, caps per-user task count (`SCHEDULER_MAX_TASKS_PER_USER`), and computes the initial `next_run_at` via `compute_next_run_at`. A task no longer snapshots a tool list — the retired `enabled_tools` column (migration `0016_retire_enabled_tools`) is gone. When a fire runs, the agent resolves its own tools (declared in `agent.yaml`, minus the owner's per-(user, agent) disables), exactly as an interactive run does.
+`POST /v1/scheduled-tasks/{user_id}` → `create_scheduled_task` ([`engine/automation/scheduled_tasks.py`](../../magenticx/dialogue_bridge/engine/automation/scheduled_tasks.py)). Validates the agent, caps per-user task count (`SCHEDULER_MAX_TASKS_PER_USER`), and computes the initial `next_run_at` via `compute_next_run_at`. A task no longer snapshots a tool list — the retired `enabled_tools` column (migration `0016_retire_enabled_tools`) is gone. When a fire runs, the agent resolves its own tools (declared in `agent.yaml`, minus the owner's per-(user, agent) disables), exactly as an interactive run does.
 
 ### Claim (single-fire safe)
 
@@ -110,7 +110,7 @@ The management page shows two layers, both built on the durable tag:
 | `PATCH` | `/v1/scheduled-tasks/{user_id}/{task_id}` | `ScheduledTaskUpdate` (pause/resume, label, prompt) | `ScheduledTaskOut` |
 | `DELETE` | `/v1/scheduled-tasks/{user_id}/{task_id}` | — | `204` |
 
-Mutations require the CSRF token; all are scoped to the authenticated user. Router: [`router/scheduled_tasks.py`](../../magenticx/dialogue_bridge/router/scheduled_tasks.py).
+Mutations require the CSRF token; all are scoped to the authenticated user. Router: [`router/automation/scheduled_tasks.py`](../../magenticx/dialogue_bridge/router/automation/scheduled_tasks.py).
 
 ---
 
@@ -139,7 +139,7 @@ Tasks are fetched fresh (not cached in the IndexedDB UI snapshot), so no snapsho
 | `SCHEDULER_MAX_TASKS_PER_USER` | `50` | Per-user task cap |
 | `SCHEDULER_MIN_INTERVAL_SECONDS` | `300` | Floor on recurring cadence |
 
-The same loop also fires **workflow schedules** (a workflow whose start node is `trigger.schedule`, plan 38 §3.9): `Scheduler._tick` calls `utils/workflow_schedules.run_due_workflow_schedules()` after the tasks, with the same poll interval, claim batch, enabled switch and interval floor. They live in their own table (`workflow_schedules`), never in `scheduled_tasks`, so they never appear in this list or its API; they are edited in the workflow builder. See [workflows](workflows.md#schedules--triggerschedule).
+The same loop also fires **workflow schedules** (a workflow whose start node is `trigger.schedule`, plan 38 §3.9): `Scheduler._tick` calls `engine/automation/workflow_schedules.run_due_workflow_schedules()` after the tasks, with the same poll interval, claim batch, enabled switch and interval floor. They live in their own table (`workflow_schedules`), never in `scheduled_tasks`, so they never appear in this list or its API; they are edited in the workflow builder. See [workflows](workflows.md#schedules--triggerschedule).
 
 ---
 

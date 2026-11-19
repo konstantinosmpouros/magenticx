@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete
 
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable, UserTable
-from utils.user_files import classify_file_type
+from engine.conversations.user_files import classify_file_type
 from utils.validators import validate_userId
 
 BASE = datetime(2026, 11, 1, 12, 0, 0)

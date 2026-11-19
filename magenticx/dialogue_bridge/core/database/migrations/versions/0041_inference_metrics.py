@@ -8,7 +8,7 @@ Plan 41 records four more things about every answer, from what the agents
 service already reports per model call (``TOKEN_USAGE``) and per tool call
 (the new ``TOOL_USAGE`` event):
 
-* **Cost** — priced by the bridge from ``utils/model_pricing.py`` at the
+* **Cost** — priced by the bridge from ``utils/pricing.py`` at the
   moment the answer finishes, in micro-USD (``BIGINT``; 1 USD = 1,000,000). A
   call on a model with no price adds to ``unpriced_calls`` instead, so a total
   is never shown as complete when it is not.

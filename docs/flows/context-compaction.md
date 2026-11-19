@@ -34,7 +34,7 @@ own usage scope, `compaction`.
 
 ```mermaid
 flowchart LR
-    UI["agentic_ui<br/>ContextMeter (sidebar gauge + panel)<br/>CompactionMarker"] -->|"POST /v1/conversations/{user}/{conv}/compact[/undo]"| BR["dialogue_bridge<br/>utils/compaction.py<br/>Redis lock compaction:{conv}"]
+    UI["agentic_ui<br/>ContextMeter (sidebar gauge + panel)<br/>CompactionMarker"] -->|"POST /v1/conversations/{user}/{conv}/compact[/undo]"| BR["dialogue_bridge<br/>engine/conversations/compaction.py<br/>Redis lock compaction:{conv}"]
     BR -->|"POST /agents/{slug}/compact[/undo]"| AG["agents<br/>harness/checkpointer/compaction.py"]
     AG -->|"read head · write _summarization_event"| CK[("agent_runtime<br/>LangGraph checkpoints")]
     AG -->|"/conversation_history/{thread}.md"| FS[("conversation volume")]
@@ -81,8 +81,8 @@ A compaction rewrites the state a run would build on, so each side refuses the o
 
 | Guard | Where |
 | --- | --- |
-| Redis lock `compaction:{conversation_id}` (`SET NX EX 300`), held for the whole request | `utils/compaction_lock.py`. `create_inference_run_record` refuses a run with a 409 while it is held. A Redis error on the probe lets the run through, because the next guard still holds. |
-| No active run (`queued` / `running` / `cancelling`) in the conversation | `utils/compaction.py` (409) |
+| Redis lock `compaction:{conversation_id}` (`SET NX EX 300`), held for the whole request | `engine/conversations/compaction_lock.py`. `create_inference_run_record` refuses a run with a 409 while it is held. A Redis error on the probe lets the run through, because the next guard still holds. |
+| No active run (`queued` / `running` / `cancelling`) in the conversation | `engine/conversations/compaction.py` (409) |
 | The branch's head must equal the answer's `checkpoint_id`, checked **before summarizing and again right before writing** | `harness/checkpointer/compaction.py`, which raises `CompactionConflict` (409) |
 | The composer holds sends while compacting | `useConversationCompaction` adds to the send handler's `isSendingMessage` |
 
@@ -135,8 +135,8 @@ stays booked, because it happened.
 | Fork keeps compaction | `magenticx/agents/harness/checkpointer/fork.py` (`carry_compaction`) |
 | Endpoints | `magenticx/agents/router/inference.py`, `magenticx/agents/utils/compaction.py`, `magenticx/agents/schema/inference.py` |
 | AG-UI event | `magenticx/agents/harness/agui/{events,emitter,normalizer}.py` |
-| Bridge flow, lock | `magenticx/dialogue_bridge/utils/compaction.py`, `utils/compaction_lock.py` |
-| Bridge routes, DTOs | `magenticx/dialogue_bridge/router/conversations.py`, `schema/compaction.py`, `schema/messages.py` (`MessageCompactionOut`) |
+| Bridge flow, lock | `magenticx/dialogue_bridge/engine/conversations/compaction.py`, `engine/conversations/compaction_lock.py` |
+| Bridge routes, DTOs | `magenticx/dialogue_bridge/router/conversations/conversations.py`, `schema/conversations/compaction.py`, `schema/conversations/messages.py` (`MessageCompactionOut`) |
 | Column | `messages.compaction`, migration `0035_message_compaction` |
 | Sidebar gauge, panel | `magenticx/agentic_ui/src/features/chat/components/ContextMeter.tsx` (rendered by `ChatSidebar`'s `contextControl`, wired in `app/WorkspaceShell.tsx`) |
 | Marker | `…/chat/components/message_parts/ConversationMarkers.tsx` (`CompactionMarker`), `ChatBody.tsx`, `block-registry.tsx` |

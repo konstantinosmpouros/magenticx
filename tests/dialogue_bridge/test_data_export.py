@@ -27,8 +27,8 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-import utils.data_export as data_export
-from utils.attachments import generate_docx_preview_token
+import engine.account.data_export as data_export
+from engine.conversations.attachments import generate_docx_preview_token
 from core.database import AttachmentTable, BlobTable, ConversationShareTable, MessageTable, UserTable
 from core.settings import ExportSettings, settings
 

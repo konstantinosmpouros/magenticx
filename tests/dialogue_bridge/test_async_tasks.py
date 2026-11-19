@@ -36,16 +36,16 @@ from starlette.websockets import WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
-import utils.task_sockets as task_sockets
-import utils.account_deletion as account_deletion
-import utils.async_tasks as async_tasks
-import utils.composer_queue as composer_queue
-import utils.data_export as data_export
-import utils.inference_runs as ir
-import utils.inference_start as inference_start
-import utils.runtime_reaps as runtime_reaps
-import utils.task_consumers as task_consumers_module
-import utils.task_wakeups as task_wakeups
+import engine.inference.tasks.sockets as task_sockets
+import engine.account.deletion as account_deletion
+import engine.inference.tasks.tasks as async_tasks
+import engine.inference.composer_queue as composer_queue
+import engine.account.data_export as data_export
+import engine.inference.runs as ir
+import engine.inference.start as inference_start
+import engine.conversations.runtime_reaps as runtime_reaps
+import engine.inference.tasks.consumers as task_consumers_module
+import engine.inference.tasks.wakeups as task_wakeups
 from core.database import (
     ConversationTable,
     ConversationTaskTable,
@@ -57,11 +57,11 @@ from core.database import (
 )
 from core.settings import settings
 from schema import MessageOut, OutboxItem, TaskStatusEntry
-from utils.conversation_channel import channel_frames, channel_key, conversation_channel
-from utils.inference import serialise_message_with_images_for_agent
-from utils.task_consumers import TaskConsumers, handle_status_entry
-from utils.task_streams import STATUS_STREAM, task_events_key, task_streams
-from utils.task_wakeups import WakeOutcome, find_branch_leaf, handle_outbox_item, on_run_finished, reconcile_once
+from engine.inference.channel import channel_frames, channel_key, conversation_channel
+from engine.inference.history import serialise_message_with_images_for_agent
+from engine.inference.tasks.consumers import TaskConsumers, handle_status_entry
+from engine.inference.tasks.streams import STATUS_STREAM, task_events_key, task_streams
+from engine.inference.tasks.wakeups import WakeOutcome, find_branch_leaf, handle_outbox_item, on_run_finished, reconcile_once
 
 pytestmark = pytest.mark.timeout(30)
 

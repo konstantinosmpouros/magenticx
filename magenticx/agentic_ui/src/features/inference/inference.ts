@@ -37,7 +37,9 @@ type InferenceCtx = {
   attachments: File[];
   agents: Agent[];
   currentConversation: ConversationDetail | null;
-  currentMessage: string;
+  /** The draft, or a getter for it: the shell passes a getter so it reads the
+   *  draft when the send runs instead of holding a copy (plan 45). */
+  currentMessage: string | (() => string);
   /** The slash command picked for this send (plan 35), if any. */
   pendingCommand: CommandRef | null;
   /** The composer's effort pick; sent only when the run goes to the agent it is for. */
@@ -187,7 +189,8 @@ export function createInferenceHandlers(ctx: InferenceCtx) {
   };
 
   const handleSendMessage = async () => {
-    const currentMessage = ctx.currentMessage;
+    const currentMessage =
+      typeof ctx.currentMessage === "function" ? ctx.currentMessage() : ctx.currentMessage;
     // A slash command lasts this one send; it may run with no text (`/summarize`).
     const command = ctx.pendingCommand ?? undefined;
     // The `/name` in the draft is the composer's highlight, nothing more: the

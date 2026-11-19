@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 import core.auth.oidc as oidc_module_for_tests
-import router.auth as auth_router_module
+import router.account.auth as auth_router_module
 from core.auth.oidc import EntraAccessDeniedError, EntraOIDCError
 from core.auth.providers import AuthIdentity
 from core.auth.session import OIDC_BINDING_COOKIE_NAME, require_current_user

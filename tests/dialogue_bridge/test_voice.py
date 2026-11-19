@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from core.database import UserPreferencesTable
-from router import voice as voice_router
+from router.inference import voice as voice_router
 
 
 async def test_realtime_voice_session_creates_empty_conversation(client, seeded_user, seeded_agent, session_factory, monkeypatch):

@@ -4,7 +4,7 @@ import base64
 import os
 
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
-from utils.attachments import (
+from engine.conversations.attachments import (
     generate_docx_preview_token,
     validate_docx_preview_token,
 )

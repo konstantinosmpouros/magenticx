@@ -16,8 +16,8 @@ import pytest
 
 from core.auth.session import require_csrf_protection
 from core.database import AgentTable
-from router import user_agents as routes
-from utils import validate_userId
+from router.agents import user_agents as routes
+from utils.validators import validate_userId
 
 _CREATED = "2026-11-01T09:30:00Z"
 

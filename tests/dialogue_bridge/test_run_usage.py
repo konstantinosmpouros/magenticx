@@ -17,10 +17,10 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-import utils.inference_runs as ir
+import engine.inference.runs as ir
 from core.database import ConversationTable, MessageTable, MessageUsageTable, UsageDailyGroupTable, UsageDailyTable
-from utils.inference_runs import InferenceRunRuntime, _mark_run_completed
-from utils.run_activity import count_run_activity
+from engine.inference.runs import InferenceRunRuntime, _mark_run_completed
+from engine.inference.activity import count_run_activity
 
 
 def _usage(mid, *, inp, out, cached=0, reasoning=0, latency=0, context=None, window=None, model=None, compaction=None):

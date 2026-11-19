@@ -1,4 +1,12 @@
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation, useOutlet } from "react-router-dom";
 
@@ -39,6 +47,8 @@ import { OVERLAY_HOST_ID } from "@/shared/lib/overlay-host";
 import { CitationSourcesContext } from "@/shared/lib/citations-context";
 import { guarded } from "@/shared/lib/leaveGuard";
 import { useWorkspaceStore } from "@/shared/stores/workspaceStore";
+import { useStableHandlers } from "@/shared/hooks/useStableHandlers";
+import type { ConversationSummary } from "@/shared/lib/types";
 import { Loader } from "@/shared/ui/shadcn-io/loader";
 import { SidebarProvider, SidebarInset } from "@/shared/ui/sidebar";
 import { TooltipProvider } from "@/shared/ui/tooltip";
@@ -48,6 +58,9 @@ type WorkspaceShellProps = ChatWorkspaceOptions & { children?: ReactNode };
 /** How long the leaving view stays for the swap: the chat holds under the
  *  Automations or Agents page until it has fully faded in (their PAGE). */
 const ROUTE_SWAP_HOLD_S = 0.42;
+
+/** The sidebar's context-meter slot: a render prop given the row's trigger. */
+type SidebarContextControl = NonNullable<ComponentProps<typeof ChatSidebar>["contextControl"]>;
 
 // Settings is the largest panel (usage charts, skills, agents) and most visits
 // never open it, so it is its own chunk (plan 45), mounted on first open.
@@ -218,6 +231,53 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
   // One object while its two callbacks are unchanged: an inline value gave every
   // approval and tool row in every message a new context on each token, which
   // re-rendered them despite their memo (plan 45).
+  // The sidebar is memoized (plan 45). Its callbacks are rebuilt on every render
+  // of the shell (guarded(), inline arrows, the workspace's handler factories),
+  // so it gets stable stand-ins that always call the current one; the context
+  // meter, a render prop drawn from live data, is memoized on that data instead.
+  const sidebarHandlers = useStableHandlers({
+    onSelectAccount: accountSwitching.onSelectAccount,
+    onAddAccount: accountSwitching.onAddAccount,
+    onLogoutAccount: accountSwitching.onLogoutAccount,
+    onLogoutAllAccounts: accountSwitching.onLogoutAllAccounts,
+    onSelectConversation: guarded(handleConversationSelect),
+    onDeleteConversation: handleDeleteConversation,
+    onRenameConversation: handleRenameConversation,
+    onArchiveConversation: handleArchiveConversation,
+    onTogglePinConversation: (conversation: ConversationSummary) =>
+      void handleToggleConversationPin(conversation),
+    onReportConversation: handleReportConversationFromSidebar,
+    onLoadMore: handleLoadMoreConversations,
+    onTitleClick: guarded(handleTitleClick),
+    onNewChat: guarded(handleNewChat),
+    onOpenSearch: handleOpenSearch,
+    onOpenAutomations: guarded(() => navigate(AUTOMATIONS_PATH)),
+    onOpenAgents: guarded(() => navigate(AGENTS_PATH)),
+    onOpenArtifacts: guarded(() => navigate(ARTIFACTS_PATH)),
+    onOpenWorkflow: guarded((workflowId: string) => navigate(workflowPath(workflowId))),
+    onOpenSettings: (tab?: string) => openProfilePanel(tab),
+    onEditProfile: settingsPanels.openEditProfile,
+    onOpenShortcuts: openShortcutsPanel,
+    onOpenHelp: settingsPanels.openHelpPanel,
+    onLogout: handleLogout,
+    onFloatingUiStateChange: overlayMenus.setIsSidebarFloatingUiOpen,
+  });
+  const { conversationContext, conversationStats, conversationCompaction } = ws;
+  const sidebarContextControl = useMemo(
+    () =>
+      isOverChatPage
+        ? null
+        : (renderTrigger: Parameters<SidebarContextControl>[0]) => (
+            <ContextMeter
+              renderTrigger={renderTrigger}
+              context={conversationContext}
+              stats={conversationStats}
+              compaction={conversationCompaction}
+            />
+          ),
+    [isOverChatPage, conversationContext, conversationStats, conversationCompaction],
+  );
+
   const hitlValue = useMemo(
     () => ({ resumeRun: resumeInferenceRunHandler, isDecisionInFlight }),
     [resumeInferenceRunHandler, isDecisionInFlight],
@@ -285,28 +345,28 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
           canAddAccount={accountSwitching.accountsMeta.canAddAccount}
           maxAccounts={accountSwitching.accountsMeta.maxAccounts}
           busyAccountId={accountSwitching.busyAccountId}
-          onSelectAccount={accountSwitching.onSelectAccount}
-          onAddAccount={accountSwitching.onAddAccount}
-          onLogoutAccount={accountSwitching.onLogoutAccount}
-          onLogoutAllAccounts={accountSwitching.onLogoutAllAccounts}
+          onSelectAccount={sidebarHandlers.onSelectAccount}
+          onAddAccount={sidebarHandlers.onAddAccount}
+          onLogoutAccount={sidebarHandlers.onLogoutAccount}
+          onLogoutAllAccounts={sidebarHandlers.onLogoutAllAccounts}
           conversations={conversations}
           currentConversationId={currentConversation?.id || null}
           // The sidebar's ways off the page ask a page with unsaved work
           // first (the agent builder); everything else goes straight through.
-          onSelectConversation={guarded(handleConversationSelect)}
-          onDeleteConversation={handleDeleteConversation}
-          onRenameConversation={handleRenameConversation}
-          onArchiveConversation={handleArchiveConversation}
-          onTogglePinConversation={(conversation) => void handleToggleConversationPin(conversation)}
-          onReportConversation={handleReportConversationFromSidebar}
-          onLoadMore={handleLoadMoreConversations}
-          onTitleClick={guarded(handleTitleClick)}
-          onNewChat={guarded(handleNewChat)}
-          onOpenSearch={handleOpenSearch}
-          onOpenAutomations={guarded(() => navigate(AUTOMATIONS_PATH))}
+          onSelectConversation={sidebarHandlers.onSelectConversation}
+          onDeleteConversation={sidebarHandlers.onDeleteConversation}
+          onRenameConversation={sidebarHandlers.onRenameConversation}
+          onArchiveConversation={sidebarHandlers.onArchiveConversation}
+          onTogglePinConversation={sidebarHandlers.onTogglePinConversation}
+          onReportConversation={sidebarHandlers.onReportConversation}
+          onLoadMore={sidebarHandlers.onLoadMore}
+          onTitleClick={sidebarHandlers.onTitleClick}
+          onNewChat={sidebarHandlers.onNewChat}
+          onOpenSearch={sidebarHandlers.onOpenSearch}
+          onOpenAutomations={sidebarHandlers.onOpenAutomations}
           automationsRunningCount={automations.runningCount}
-          onOpenAgents={guarded(() => navigate(AGENTS_PATH))}
-          onOpenArtifacts={guarded(() => navigate(ARTIFACTS_PATH))}
+          onOpenAgents={sidebarHandlers.onOpenAgents}
+          onOpenArtifacts={sidebarHandlers.onOpenArtifacts}
           activePage={
             isAgentsPage
               ? "agents"
@@ -318,27 +378,16 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
           }
           workflows={workflows.workflows}
           activeWorkflowId={activeWorkflowId}
-          onOpenWorkflow={guarded((workflowId: string) => navigate(workflowPath(workflowId)))}
-          onOpenSettings={(tab) => openProfilePanel(tab)}
-          onEditProfile={settingsPanels.openEditProfile}
-          onOpenShortcuts={openShortcutsPanel}
-          onOpenHelp={settingsPanels.openHelpPanel}
-          onLogout={handleLogout}
+          onOpenWorkflow={sidebarHandlers.onOpenWorkflow}
+          onOpenSettings={sidebarHandlers.onOpenSettings}
+          onEditProfile={sidebarHandlers.onEditProfile}
+          onOpenShortcuts={sidebarHandlers.onOpenShortcuts}
+          onOpenHelp={sidebarHandlers.onOpenHelp}
+          onLogout={sidebarHandlers.onLogout}
           userProfile={userProfile}
-          contextControl={
-            isOverChatPage
-              ? null
-              : (renderTrigger) => (
-                  <ContextMeter
-                    renderTrigger={renderTrigger}
-                    context={ws.conversationContext}
-                    stats={ws.conversationStats}
-                    compaction={ws.conversationCompaction}
-                  />
-                )
-          }
+          contextControl={sidebarContextControl}
           dismissFloatingUiSignal={overlayMenus.sidebarDismissFloatingUiSignal}
-          onFloatingUiStateChange={overlayMenus.setIsSidebarFloatingUiOpen}
+          onFloatingUiStateChange={sidebarHandlers.onFloatingUiStateChange}
           isLoadingMore={convIsLoadingMore}
           isInitialLoading={conversationsLoading}
           hasMore={convHasMore}

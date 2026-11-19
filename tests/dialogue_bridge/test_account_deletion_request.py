@@ -22,9 +22,9 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
 
-import router.auth as auth_router_module
-import utils.account_deletion as account_deletion
-import utils.data_export as data_export
+import router.account.auth as auth_router_module
+import engine.account.deletion as account_deletion
+import engine.account.data_export as data_export
 from core.auth.session import (
     AuthContext,
     PENDING_DELETION_DETAIL,
@@ -42,10 +42,10 @@ from core.database import (
 )
 from core.logging import hash_identifier
 from schema import MessageIn
-from utils import validate_userId, validate_userId_even_if_pending
-from utils.inference_runs import create_inference_run_record
-from utils.scheduled_tasks import claim_due_tasks
-from utils.shared_conv import create_conversation_from_share_record, load_active_share
+from utils.validators import validate_userId, validate_userId_even_if_pending
+from engine.inference.runs import create_inference_run_record
+from engine.automation.scheduled_tasks import claim_due_tasks
+from engine.conversations.sharing import create_conversation_from_share_record, load_active_share
 
 EMAIL = "alice@example.com"
 

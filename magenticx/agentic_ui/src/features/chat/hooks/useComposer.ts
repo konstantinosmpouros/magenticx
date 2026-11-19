@@ -5,6 +5,7 @@ import { type DictationStatus } from "@/features/chat/components/ChatInputBar";
 import { useCenteredComposerLayout } from "@/features/chat/hooks/useChatEffects";
 import { createVoiceDictationHandlers } from "@/features/voice/handlers/voice";
 import type { CommandRef, ConversationDetail } from "@/shared/lib/types";
+import { useWorkspaceStore } from "@/shared/stores/workspaceStore";
 
 type ToastFn = (opts: {
   title: string;
@@ -44,7 +45,13 @@ export function useComposer({
   toast,
   isConversationStreaming,
 }: UseComposerOptions) {
-  const [currentMessage, setCurrentMessage] = useState("");
+  // The draft lives in the workspace store (plan 45). This hook — which runs
+  // in the shell — reads only whether it is empty, so typing never re-renders
+  // the shell; the input bar subscribes to the text itself (DraftComposer),
+  // and handlers read it when they run through `getCurrentMessage`.
+  const setCurrentMessage = useWorkspaceStore((s) => s.setDraft);
+  const draftIsEmpty = useWorkspaceStore((s) => s.draft.trim() === "");
+  const getCurrentMessage = useCallback(() => useWorkspaceStore.getState().draft, []);
   // The slash command picked for the next send (plan 35), shown as a chip in
   // the composer. One send only: the send handler clears it.
   const [pendingCommand, setPendingCommand] = useState<CommandRef | null>(null);
@@ -99,7 +106,7 @@ export function useComposer({
         textareaRef,
         toast,
       }),
-    [userId, toast],
+    [userId, setCurrentMessage, toast],
   );
 
   const {
@@ -128,19 +135,22 @@ export function useComposer({
     textareaMaxHeight,
   } = useCenteredComposerLayout({
     isMessagesEmpty,
-    textareaRef,
-    currentMessage,
+    draftIsEmpty,
     attachmentsCount: attachments.length,
   });
 
   /** Fill the draft from a starter chip and put the caret in it. */
-  const applyDraft = useCallback((text: string) => {
-    setCurrentMessage(text);
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
+  const applyDraft = useCallback(
+    (text: string) => {
+      setCurrentMessage(text);
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [setCurrentMessage],
+  );
 
   return {
-    currentMessage,
+    getCurrentMessage,
+    draftIsEmpty,
     setCurrentMessage,
     pendingCommand,
     setPendingCommand,

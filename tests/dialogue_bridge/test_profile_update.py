@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from utils import validate_userId
+from utils.validators import validate_userId
 
 EMAIL = "alice@example.com"
 

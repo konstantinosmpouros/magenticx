@@ -17,7 +17,7 @@ subtleties are worth pinning, all of them invisible from the screen until wrong:
 import pytest
 import pytest_asyncio
 
-from utils import agent_tool_prefs as prefs
+from engine.agents import tool_prefs as prefs
 
 
 @pytest_asyncio.fixture

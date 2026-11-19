@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
-from utils.share_export import _answer_with_question, _markdown_blocks, conversation_turns
+from engine.conversations.share_pdf import _answer_with_question, _markdown_blocks, conversation_turns
 
 T0 = datetime(2026, 11, 13, 10, 0, tzinfo=UTC)
 

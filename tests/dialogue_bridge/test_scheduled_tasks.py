@@ -5,10 +5,10 @@ from datetime import datetime, timedelta
 import pydantic
 import pytest
 
-import utils.scheduled_tasks as scheduled_tasks_util
+import engine.automation.scheduled_tasks as scheduled_tasks_util
 from core.database import ConversationTable, MessageTable, ScheduledTaskTable
 from schema import ScheduledTaskCreate
-from utils.scheduled_tasks import claim_due_tasks, compute_next_run_at
+from engine.automation.scheduled_tasks import claim_due_tasks, compute_next_run_at
 
 try:
     import croniter as _croniter  # noqa: F401
@@ -223,9 +223,9 @@ async def test_update_changes_schedule_and_recomputes_next_run(client, seeded_us
 async def test_fire_creates_tagged_run(db_session_factory, seeded_user, seeded_agent, monkeypatch):
     """The fire path runs the real start_inference_flow (which calls db.expire_all());
     this regression-guards the reload-after-expire fix and the scheduled_task_id tag."""
-    import utils.inference_start as inference_start_mod
-    import utils.titles as titles_mod
-    from utils.scheduled_tasks import fire_scheduled_task, inference_run_manager
+    import engine.inference.start as inference_start_mod
+    import engine.conversations.titles as titles_mod
+    from engine.automation.scheduled_tasks import fire_scheduled_task, inference_run_manager
 
     # Route the util's own SessionLocal to the test DB and stub the external bits.
     monkeypatch.setattr(scheduled_tasks_util, "SessionLocal", db_session_factory)

@@ -8,10 +8,10 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import router.conversations as conversations_router
-import utils.share_export as share_export
+import router.conversations.conversations as conversations_router
+import engine.conversations.share_pdf as share_export
 from core.database import AgentTable, AttachmentTable, ConversationTable, MessageTable
-from utils.share_export import (
+from engine.conversations.share_pdf import (
     _FontRegistry,
     _UnicodeFont,
     _clean_inline_markdown,

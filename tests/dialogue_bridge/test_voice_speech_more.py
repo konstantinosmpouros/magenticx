@@ -1,4 +1,4 @@
-"""Unit tests for ``utils.voice`` and ``utils.speech``.
+"""Unit tests for ``engine.inference.voice`` and ``engine.inference.speech``.
 
 Voice splits into pure helpers (normalization, instruction building) and
 httpx/DB-backed helpers. The pure helpers are tested directly; the DB ones use
@@ -13,16 +13,16 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-import utils.speech as speech_mod
-import utils.voice as voice_mod
+import engine.inference.speech as speech_mod
+import engine.inference.voice as voice_mod
 from core.database import AgentTable, UserPreferencesTable
 from schema import DictationResponse
-from utils.speech import (
+from engine.inference.speech import (
     generate_read_aloud_audio,
     read_aloud_response,
     transcribe_dictation_audio,
 )
-from utils.voice import (
+from engine.inference.voice import (
     build_voice_instructions,
     create_realtime_session_with_agents,
     load_realtime_agent,
@@ -406,7 +406,7 @@ async def test_generate_read_aloud_empty_text_400():
 
 
 async def test_generate_read_aloud_too_long_413():
-    from utils.speech import MAX_READ_ALOUD_TEXT_CHARS
+    from engine.inference.speech import MAX_READ_ALOUD_TEXT_CHARS
 
     with pytest.raises(Exception) as exc:
         await generate_read_aloud_audio("x" * (MAX_READ_ALOUD_TEXT_CHARS + 1), voice="shimmer")

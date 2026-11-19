@@ -1,13 +1,13 @@
-"""Unit tests for the bridge -> agents-service skills proxy (``utils.skills``).
+"""Unit tests for the bridge -> agents-service skills proxy (``engine.agents.skills``).
 
-Every public function in ``utils.skills`` opens an ``httpx.AsyncClient`` and
+Every public function in ``engine.agents.skills`` opens an ``httpx.AsyncClient`` and
 calls the agents service through ``upstream_error_handler.run_with_retries``.
-We monkeypatch ``utils.skills.httpx.AsyncClient`` with a fake client whose
+We monkeypatch ``engine.agents.skills.httpx.AsyncClient`` with a fake client whose
 ``get``/``post``/``delete``/``request`` methods either return a fake response
 or raise an httpx transport error. Nothing is cached any more — the bundled
 catalogue and its Redis cache were removed by plan 30 — so every test is about
 what is forwarded and how upstream answers are mapped.
-``utils.skills.get_usable_agent`` is patched directly to control slug resolution.
+``engine.agents.skills.get_usable_agent`` is patched directly to control slug resolution.
 """
 from __future__ import annotations
 
@@ -17,9 +17,9 @@ import httpx
 import pytest
 import pytest_asyncio
 
-import utils.skills as skills_mod
+import engine.agents.skills as skills_mod
 from schema import UserSkill, UserSkillDetail
-from utils.skills import (
+from engine.agents.skills import (
     add_remote_skill_to_user_pool,
     create_custom_skill_in_pool,
     disable_user_agent_skill,
@@ -91,7 +91,7 @@ class FakeClient:
 
 
 def install_fake_client(monkeypatch, handler, calls=None):
-    """Patch ``utils.skills.httpx.AsyncClient`` to yield a FakeClient.
+    """Patch ``engine.agents.skills.httpx.AsyncClient`` to yield a FakeClient.
 
     If ``calls`` is supplied each dispatch is appended to it as
     ``(method, url, kwargs)`` for assertions.
@@ -387,7 +387,7 @@ async def test_resolve_agent_slug_returns_slug(monkeypatch):
 
 async def test_resolve_agent_slug_404_when_missing(monkeypatch, session_factory):
     # The real lookup, against the test DB, with no such agent.
-    import utils.agents as agents_util
+    import engine.agents.catalog as agents_util
 
     monkeypatch.setattr(agents_util, "SessionLocal", session_factory)
     with pytest.raises(Exception) as exc:

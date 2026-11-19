@@ -478,7 +478,7 @@ export function useChatWorkspace({
     isConversationStreaming: isCurrentConversationStreaming,
   });
   const {
-    currentMessage,
+    getCurrentMessage,
     setCurrentMessage,
     attachments,
     setAttachments,
@@ -1088,7 +1088,8 @@ export function useChatWorkspace({
     attachments,
     agents,
     currentConversation,
-    currentMessage,
+    // Read when the send runs: the shell holds no copy of the draft (plan 45).
+    currentMessage: getCurrentMessage,
     pendingCommand: composer.pendingCommand,
     effort: agentEffort.choice,
     // While a run streams, a send is queued rather than blocked (plan 41) — so
@@ -1122,10 +1123,10 @@ export function useChatWorkspace({
    */
   const handleCancelQueuedMessage = useCallback(async () => {
     const cancelled = await cancelQueuedMessage();
-    if (cancelled?.content && !composer.currentMessage.trim()) {
+    if (cancelled?.content && !getCurrentMessage().trim()) {
       setCurrentMessage(cancelled.content);
     }
-  }, [cancelQueuedMessage, composer.currentMessage, setCurrentMessage]);
+  }, [cancelQueuedMessage, getCurrentMessage, setCurrentMessage]);
 
   // Conversation handlers
   const {
@@ -1404,7 +1405,7 @@ export function useChatWorkspace({
   const canTogglePrivateMode = (currentConversation?.messages?.length ?? 0) === 0 || isPrivateMode;
   const canShowStarterSuggestions =
     !currentConversation &&
-    currentMessage.trim().length === 0 &&
+    composer.draftIsEmpty &&
     resolvedPreferences.suggestionsEnabled !== false &&
     starterSuggestions.length > 0;
 
@@ -1414,7 +1415,7 @@ export function useChatWorkspace({
   // the draft (per keystroke) re-ran it, and its `set([])` re-rendered the
   // workspace a second time, on every token and keystroke (plan 45).
   const hasCurrentConversation = Boolean(currentConversation);
-  const draftIsEmpty = currentMessage.trim().length === 0;
+  const draftIsEmpty = composer.draftIsEmpty;
 
   useEffect(() => {
     let cancelled = false;

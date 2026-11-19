@@ -374,10 +374,10 @@ A tool whose result lists web pages can make them **citable**: the agent ends a 
 | Assembly + builtins | [magenticx/agents/harness/abstractions/deep_agent.py](../../magenticx/agents/harness/abstractions/deep_agent.py) | `build_deep_agent`, `_builtin_tools`, `_unique_by_name`, `_apply_live_tools` |
 | MCP filter (`attach_tools`, cache keys, user choices) | [magenticx/agents/harness/abstractions/base_agent.py](../../magenticx/agents/harness/abstractions/base_agent.py) | `ToolConfig`, `attach_tools`, `_filter_live_tools`, `_build_tool_key_from_config` |
 | YAML → spec tools (native + MCP) | [magenticx/agents/harness/abstractions/yaml_agent.py](../../magenticx/agents/harness/abstractions/yaml_agent.py) | `config_tool_names` seed, `_resolve_native_tools` |
-| Per-(user, agent) override store | [magenticx/dialogue_bridge/utils/agent_tool_prefs.py](../../magenticx/dialogue_bridge/utils/agent_tool_prefs.py) | `read_prefs`, `read_config`, `set_enabled`, `set_approval`, `apply_to_rows` |
+| Per-(user, agent) override store | [magenticx/dialogue_bridge/engine/agents/tool_prefs.py](../../magenticx/dialogue_bridge/engine/agents/tool_prefs.py) | `read_prefs`, `read_config`, `set_enabled`, `set_approval`, `apply_to_rows` |
 | Baseline tool rows | [magenticx/agents/utils/agent_tools.py](../../magenticx/agents/utils/agent_tools.py) · [router/agent_tools.py](../../magenticx/agents/router/agent_tools.py) | `list_agent_tools`, `baseline_gates` |
 | Live MCP manifest load | [magenticx/agents/utils/mcp_tools.py](../../magenticx/agents/utils/mcp_tools.py) · [router/inference.py](../../magenticx/agents/router/inference.py) | `load_mcp_tools`, `optional_mcp_session`, `attach_tools` call |
-| Bridge proxy | [magenticx/dialogue_bridge/router/agent_tools.py](../../magenticx/dialogue_bridge/router/agent_tools.py) | GET list, POST `tools/enabled` + `tools/approval`, PUT `tools/approvals` (CSRF) |
+| Bridge proxy | [magenticx/dialogue_bridge/router/agents/tools.py](../../magenticx/dialogue_bridge/router/agents/tools.py) | GET list, POST `tools/enabled` + `tools/approval`, PUT `tools/approvals` (CSRF) |
 | User-agent spec validation (tool refs, gate keys, quotas), YAML import/export | [magenticx/agents/harness/abstractions/user_agents.py](../../magenticx/agents/harness/abstractions/user_agents.py) | `validate_definition`, `parse_agent_yaml`, `render_agent_yaml`, `_ALLOWED_EXTENSIONS` |
 | Ownership-aware resolution | [magenticx/agents/utils/agents.py](../../magenticx/agents/utils/agents.py) | `resolve_agent_definition`, `_load_user_agent`, `_USER_AGENT_CACHE` |
 | Frontend tool switches (agent page) | [magenticx/agentic_ui/src/features/agents/hooks/useAgentTools.ts](../../magenticx/agentic_ui/src/features/agents/hooks/useAgentTools.ts) | optimistic toggle, `getAgentTools` / `setAgentToolEnabled` / `setAgentToolApproval` |
@@ -506,6 +506,6 @@ over `GET /catalog/tools`. It has no per-agent state and is not involved here.
 | MCP selection | [magenticx/agents/harness/abstractions/base_agent.py](../../magenticx/agents/harness/abstractions/base_agent.py) — `ToolConfig`, `_filter_live_tools` |
 | Gate merge | [magenticx/agents/harness/abstractions/deep_agent.py](../../magenticx/agents/harness/abstractions/deep_agent.py) — `_user_hitl_gates`, `build_deep_agent` |
 | Baseline catalog | [magenticx/agents/utils/agent_tools.py](../../magenticx/agents/utils/agent_tools.py) |
-| Stored choices | [magenticx/dialogue_bridge/utils/agent_tool_prefs.py](../../magenticx/dialogue_bridge/utils/agent_tool_prefs.py) |
-| Overlay + guards | [magenticx/dialogue_bridge/utils/agents.py](../../magenticx/dialogue_bridge/utils/agents.py) |
+| Stored choices | [magenticx/dialogue_bridge/engine/agents/tool_prefs.py](../../magenticx/dialogue_bridge/engine/agents/tool_prefs.py) |
+| Overlay + guards | [magenticx/dialogue_bridge/engine/agents/tools.py](../../magenticx/dialogue_bridge/engine/agents/tools.py) |
 | UI | [ToolList.tsx](../../magenticx/agentic_ui/src/features/agents/components/detail/ToolList.tsx) · [agentTools.ts](../../magenticx/agentic_ui/src/features/agents/lib/agentTools.ts) |

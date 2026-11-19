@@ -22,6 +22,7 @@ import { DraftHighlight } from "@/features/chat/components/DraftHighlight";
 import { SlashCommandMenu } from "@/features/chat/components/SlashCommandMenu";
 import { Orb } from "@/shared/ui/orb";
 import type { SlashComposer } from "@/features/chat/hooks/useSlashCommands";
+import { MIN_TEXTAREA_HEIGHT } from "@/features/chat/hooks/useChatEffects";
 import { INTERACTIVE_SURFACE } from "@/shared/lib/consts";
 import type {
   Tooltip as TooltipComponent,
@@ -33,7 +34,7 @@ import { usePanelMotion } from "@/shared/lib/motion/panels";
 export type { DictationStatus };
 export type ChatInputMode = "chat" | "voice";
 
-type ChatInputBarProps = {
+export type ChatInputBarProps = {
   /** Replace "top-1/2 -translate-y-1/2" with anything you want */
   positionClass?: string;
   mode?: ChatInputMode;
@@ -255,6 +256,18 @@ export function ChatInputBar(props: ChatInputBarProps) {
   // and goes. Synced when the draft changes and when the textarea resizes, not
   // after every render: reading offsetWidth forces a layout, and the composer
   // re-renders on every streamed token (plan 45).
+  // The textarea grows with its text up to `textareaMaxHeight`. It lives here,
+  // with the text, rather than in the shell's layout hook: there it made every
+  // keystroke re-render the whole workspace (plan 45).
+  React.useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.maxHeight = `${textareaMaxHeight}px`;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(textarea.scrollHeight, textareaMaxHeight);
+    textarea.style.height = `${Math.max(nextHeight, MIN_TEXTAREA_HEIGHT)}px`;
+  }, [textareaRef, currentMessage, attachments.length, textareaMaxHeight, isMessagesEmpty]);
+
   const draftCommand = slash?.found ?? null;
   const draftMirrorRef = React.useRef<HTMLDivElement>(null);
   const [draftScrollbarWidth, setDraftScrollbarWidth] = React.useState(0);

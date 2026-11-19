@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import func, select, text
 
-import utils.embeddings as embeddings
+import engine.conversations.embeddings as embeddings
 from core.database import ConversationTable, MessageEmbeddingTable, MessageTable
 from core.settings import settings
 

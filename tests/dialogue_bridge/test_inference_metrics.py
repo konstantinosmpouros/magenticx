@@ -23,8 +23,8 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-import utils.inference_runs as ir
-import utils.model_pricing as model_pricing
+import engine.inference.runs as ir
+import utils.pricing as model_pricing
 from core.database import (
     ConversationTable,
     MessageTable,
@@ -36,12 +36,12 @@ from core.database import (
 )
 from core.settings import PricingSettings, settings
 from schema import MessageOut
-from utils.inference_runs import (
+from engine.inference.runs import (
     InferenceRunRuntime,
     _mark_run_completed,
     build_run_out_from_message,
 )
-from utils.model_pricing import call_cost_micros, lookup_price, parse_price_table
+from utils.pricing import call_cost_micros, lookup_price, parse_price_table
 
 # ---------------------------------------------------------------------------
 # Pricing

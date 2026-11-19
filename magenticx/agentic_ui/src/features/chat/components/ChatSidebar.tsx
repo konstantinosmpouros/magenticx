@@ -469,7 +469,7 @@ function SidebarListRowTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-export default function ChatSidebar({
+function ChatSidebar({
   conversations,
   currentConversationId,
   onSelectConversation,
@@ -1800,3 +1800,11 @@ export default function ChatSidebar({
     </SidebarRoot>
   );
 }
+
+/**
+ * Memoized (plan 45): the shell re-renders on every streamed frame, and the
+ * sidebar — every row with its menus and tooltips — used to re-render with it.
+ * The shell hands it stable callbacks (useStableHandlers) and a memoized
+ * context meter, so it renders when its own data changes.
+ */
+export default React.memo(ChatSidebar);

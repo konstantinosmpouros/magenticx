@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from core.database import ConversationTable, MessageTable, UserTable
-from utils import embeddings as embeddings_module
+from engine.conversations import embeddings as embeddings_module
 
 
 def _utcnow() -> datetime:

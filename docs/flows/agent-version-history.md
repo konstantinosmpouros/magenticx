@@ -168,8 +168,8 @@ The history belongs to the agent and goes with it.
 | Agents routes | [magenticx/agents/router/user_agents.py](../../magenticx/agents/router/user_agents.py) | `list_custom_agent_versions`, `get_custom_agent_version`, `restore_custom_agent_version` |
 | Agents schemas | [magenticx/agents/schema/user_agents.py](../../magenticx/agents/schema/user_agents.py) | `AgentVersionSummary`, `AgentVersionDetail` |
 | Export | [magenticx/agents/utils/data_export.py](../../magenticx/agents/utils/data_export.py) | `agents/versions.ndjson` |
-| Bridge routes | [magenticx/dialogue_bridge/router/user_agents.py](../../magenticx/dialogue_bridge/router/user_agents.py) | `list_my_agent_versions`, `get_my_agent_version`, `restore_my_agent_version` |
-| Bridge proxy | [magenticx/dialogue_bridge/utils/user_agents.py](../../magenticx/dialogue_bridge/utils/user_agents.py) | `list_custom_agent_versions`, `get_custom_agent_version`, `restore_custom_agent_version` |
+| Bridge routes | [magenticx/dialogue_bridge/router/agents/user_agents.py](../../magenticx/dialogue_bridge/router/agents/user_agents.py) | `list_my_agent_versions`, `get_my_agent_version`, `restore_my_agent_version` |
+| Bridge proxy | [magenticx/dialogue_bridge/engine/agents/user_agents.py](../../magenticx/dialogue_bridge/engine/agents/user_agents.py) | `list_custom_agent_versions`, `get_custom_agent_version`, `restore_custom_agent_version` |
 | History tab | [magenticx/agentic_ui/src/features/agents/components/detail/AgentHistory.tsx](../../magenticx/agentic_ui/src/features/agents/components/detail/AgentHistory.tsx) | timeline rows, `CompareWith`, Restore confirm |
 | Diff + labels | [magenticx/agentic_ui/src/features/agents/lib/agentHistory.ts](../../magenticx/agentic_ui/src/features/agents/lib/agentHistory.ts) | `CHANGE_LABELS`, `versionKindLabel`, `versionSummary`, `currentVersion`, `compareVersions` |
 | Data hook | [magenticx/agentic_ui/src/features/agents/hooks/useAgentHistory.ts](../../magenticx/agentic_ui/src/features/agents/hooks/useAgentHistory.ts) | `useAgentHistory`, `RestoreFailure` |

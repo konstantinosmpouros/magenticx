@@ -1,4 +1,4 @@
-"""Unit tests for utils.agents.
+"""Unit tests for engine.agents.catalog.
 
 Covers the in-memory agent cache (prime/get + active filtering), the
 slug-based URL builders (success + missing-slug 500 + missing-agent 404), and
@@ -16,11 +16,11 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import select
 
-import utils.agents as agents_util
+import engine.agents.catalog as agents_util
+import engine.agents.tools as agent_tools_mod
 from core.database import AgentTable
-from utils.agents import (
-    build_agent_resume_url,
-    build_agent_stream_url,
+from engine.agents.service_urls import build_agent_resume_url, build_agent_stream_url
+from engine.agents.catalog import (
     fetch_tools_from_agents_service,
     get_agent_by_id,
     get_cached_agents,
@@ -363,15 +363,15 @@ async def tool_rows(monkeypatch):
     async def fake_slug(db, user_id, agent_id):
         return "omni"
 
-    monkeypatch.setattr(agents_util, "fetch_agent_tools", fake_fetch)
-    monkeypatch.setattr(agents_util, "_resolve_agent_slug", fake_slug)
+    monkeypatch.setattr(agent_tools_mod, "fetch_agent_tools", fake_fetch)
+    monkeypatch.setattr(agent_tools_mod, "_resolve_agent_slug", fake_slug)
     return rows
 
 
 @pytest.mark.asyncio
 async def test_switching_an_mcp_tool_off_is_stored(tool_rows, session_factory):
     async with session_factory() as db:
-        payload = await agents_util.set_agent_tool_enabled(
+        payload = await agent_tools_mod.set_agent_tool_enabled(
             db, "u1", "omni", "rag/sql_query", False
         )
     row = next(r for r in payload["tools"] if r["key"] == "rag/sql_query")
@@ -382,13 +382,13 @@ async def test_switching_an_mcp_tool_off_is_stored(tool_rows, session_factory):
 async def test_switching_a_builtin_off_is_refused(tool_rows, session_factory):
     async with session_factory() as db:
         with _expect_http(400):
-            await agents_util.set_agent_tool_enabled(db, "u1", "omni", "write_file", False)
+            await agent_tools_mod.set_agent_tool_enabled(db, "u1", "omni", "write_file", False)
 
 
 @pytest.mark.asyncio
 async def test_gating_an_ordinary_tool_is_stored(tool_rows, session_factory):
     async with session_factory() as db:
-        payload = await agents_util.set_agent_tool_approval(
+        payload = await agent_tools_mod.set_agent_tool_approval(
             db, "u1", "omni", "rag/sql_query", True
         )
     row = next(r for r in payload["tools"] if r["key"] == "rag/sql_query")
@@ -399,7 +399,7 @@ async def test_gating_an_ordinary_tool_is_stored(tool_rows, session_factory):
 async def test_clearing_a_builtins_default_gate_is_stored(tool_rows, session_factory):
     # The capability the tri-state exists for.
     async with session_factory() as db:
-        payload = await agents_util.set_agent_tool_approval(
+        payload = await agent_tools_mod.set_agent_tool_approval(
             db, "u1", "omni", "write_file", False
         )
     row = next(r for r in payload["tools"] if r["key"] == "write_file")
@@ -410,7 +410,7 @@ async def test_clearing_a_builtins_default_gate_is_stored(tool_rows, session_fac
 async def test_ungating_a_locked_tool_is_refused(tool_rows, session_factory):
     async with session_factory() as db:
         with _expect_http(409):
-            await agents_util.set_agent_tool_approval(db, "u1", "omni", "execute", False)
+            await agent_tools_mod.set_agent_tool_approval(db, "u1", "omni", "execute", False)
 
 
 @pytest.mark.asyncio
@@ -421,11 +421,11 @@ async def test_gating_a_tool_that_is_itself_a_pause_is_refused(tool_rows, sessio
     )
     async with session_factory() as db:
         with _expect_http(409):
-            await agents_util.set_agent_tool_approval(db, "u1", "omni", "ask_user", True)
+            await agent_tools_mod.set_agent_tool_approval(db, "u1", "omni", "ask_user", True)
 
 
 @pytest.mark.asyncio
 async def test_a_tool_that_does_not_exist_is_a_404(tool_rows, session_factory):
     async with session_factory() as db:
         with _expect_http(404):
-            await agents_util.set_agent_tool_approval(db, "u1", "omni", "gone/missing", True)
+            await agent_tools_mod.set_agent_tool_approval(db, "u1", "omni", "gone/missing", True)

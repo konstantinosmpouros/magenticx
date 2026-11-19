@@ -114,13 +114,13 @@ bridge_app.state._redis = _sdk_pool_state
 import core.auth.oidc as oidc_module
 from core.auth.parked import parked_sessions
 from core.auth.session import OIDC_BINDING_COOKIE_NAME, logout_denylist, refresh_guard, session_revocation
-from utils.compaction_lock import compaction_locks
-from utils.event_log import event_log as run_event_log
-from utils.trial_drafts import trial_drafts
-from utils.workflow_runs import workflow_event_log
-from utils.conversation_channel import conversation_channel
-from utils.task_streams import task_streams
-from utils.favicons import favicon_cache
+from engine.conversations.compaction_lock import compaction_locks
+from engine.inference.event_log import event_log as run_event_log
+from engine.agents.trial_drafts import trial_drafts
+from engine.automation.workflow_runs import workflow_event_log
+from engine.inference.channel import conversation_channel
+from engine.inference.tasks.streams import task_streams
+from engine.conversations.favicons import favicon_cache
 
 # Every raw-Redis singleton the app holds. Left alone, each would dial the real
 # (absent) server on first use: the logout denylist and revocation checks run
@@ -133,7 +133,7 @@ _REDIS_HOLDERS = (
 )
 # Holders with a second pool for blocking stream reads.
 _REDIS_READERS = (run_event_log, workflow_event_log, conversation_channel, task_streams)
-import router.auth as auth_router_module
+import router.account.auth as auth_router_module
 from core.auth.providers import AuthIdentity
 from core.auth.session import require_csrf_protection
 from core.database import (

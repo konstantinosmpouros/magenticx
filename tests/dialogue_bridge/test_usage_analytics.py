@@ -26,7 +26,7 @@ import pytest
 from sqlalchemy import select
 
 from core.database import AgentTable, ConversationTable, MessageTable, MessageUsageTable, UserTable
-from utils.usage_rollups import add_answer_to_rollups
+from engine.account.usage_rollups import add_answer_to_rollups
 
 
 def _now() -> datetime:

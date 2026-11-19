@@ -79,7 +79,7 @@ class AgentTable(Base):
     # Set = a user-authored agent: this row is its catalog identity, and its
     # definition (spec + files) is stored by the agents service in
     # `agent_runtime`, keyed by (owner, slug). Drives both the agents service's
-    # resolution path and every ownership check (`utils.agents.get_usable_agent`).
+    # resolution path and every ownership check (`engine.agents.catalog.get_usable_agent`).
     owner_user_id = Column(
         String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
     )
@@ -319,7 +319,7 @@ class ConversationTable(Base):
     # sent as a normal ``send`` when that run ends. One slot — a second send
     # replaces it — so a column, not a table. Kept in the database so it
     # survives a bridge restart. NULL when nothing is queued. Text and a slash
-    # command only, never attachment bytes (utils/composer_queue.py).
+    # command only, never attachment bytes (engine/inference/composer_queue.py).
     queued_message = Column(_nullable_jsonb(), nullable=True)
 
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
@@ -444,7 +444,7 @@ class MessageTable(Base):
     # answer summed, sub-agents included; NULL when it spent nothing, and on
     # answers from before 0041.
     # - cost_micros: what the priced calls cost, in micro-USD, priced by the
-    #   bridge (utils/model_pricing.py) when the answer finished;
+    #   bridge (utils/pricing.py) when the answer finished;
     #   unpriced_calls: calls on a model with no price, which add no cost —
     #   when it is not 0, cost_micros is a lower bound.
     # - truncated_calls: calls that stopped at the output-token limit.
@@ -479,7 +479,7 @@ class MessageTable(Base):
     effort = Column(String(16), nullable=True)
     # The canvas passage a USER message asks the agent to change (plan 44 4.3,
     # migration 0050): {"path", "version", "selection", "headingPath",
-    # "instruction", "preset"} as schema.canvas_edit.CanvasEditIn wrote it.
+    # "instruction", "preset"} as schema.documents.canvas_edit.CanvasEditIn wrote it.
     # NULL on every other message. Retry re-reads it, so the same change is asked.
     canvas_edit = Column(JSON, nullable=True)
     # A background-task notification row (plan 41, migration 0046). ``kind`` is
@@ -487,7 +487,7 @@ class MessageTable(Base):
     # {"task_id", "name", "status", "duration_ms"} for the UI, plus
     # "agent_kwargs" — the notification's ``additional_kwargs`` the agents
     # service needs to rebuild the exact HumanMessage it wrote (never sent to
-    # the browser; schema.messages.TaskNoticeOut projects the four keys).
+    # the browser; schema.conversations.messages.TaskNoticeOut projects the four keys).
     kind = Column(MessageKindEnum, nullable=True)
     task_notice = Column(_nullable_jsonb(), nullable=True)
 
@@ -619,7 +619,7 @@ class AttachmentTable(Base):
     content_sha256 = Column(String(64), nullable=True)
     # An upload's name in the agent's /conversation/input/ folder (migration
     # 0042): one safe path segment, unique within the conversation, assigned
-    # once at upload and never changed (utils/workspace_names.py). The history
+    # once at upload and never changed (engine/conversations/workspace_names.py). The history
     # the agent reads and the file it opens agree on it. NULL for generated files.
     workspace_name = Column(String, nullable=True)
     # The agent showed this file to the user (present_artifact) — it has a card.
@@ -730,7 +730,7 @@ class PendingRuntimeReapTable(Base):
     (the checkpoint threads; the files are found by the conversation id) and
     is removed once it confirms. Drained right after each delete and at boot —
     no loop, no TTL; it exists only until the reap succeeds
-    (utils/runtime_reaps.py). Keyed by the conversation, which is gone, so
+    (engine/conversations/runtime_reaps.py). Keyed by the conversation, which is gone, so
     there is no foreign key to it; the user's cascades.
     """
 
@@ -834,7 +834,7 @@ class ConversationTaskTable(Base):
     The agents service owns tasks (``agent_runtime.async_tasks``) and runs
     them; it announces every status change on the Redis stream
     ``tasks:status``, which the bridge consumes into this table
-    (utils/async_tasks.py). The mirror is what the conversation's task tree,
+    (engine/inference/tasks/tasks.py). The mirror is what the conversation's task tree,
     its reload and its drill-down read, so the UI never needs the agents
     service to draw it. The columns are the §14.1 ``TaskOut`` fields plus:
 
@@ -1199,7 +1199,7 @@ class MessageEmbeddingTable(Base):
 
     Kept in its own table (not a column on ``messages``) so the hot message
     table stays lean and embeddings can be regenerated/versioned independently.
-    Populated asynchronously by the embedding sweeper (``utils/embeddings.py``),
+    Populated asynchronously by the embedding sweeper (``engine/conversations/embeddings.py``),
     never on the request path. Rows are created only for finalized, non-error
     messages with non-empty content whose conversation is **not** private;
     deleting a message cascades to its embedding.

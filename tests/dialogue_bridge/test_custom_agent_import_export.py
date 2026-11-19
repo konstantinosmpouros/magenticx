@@ -21,7 +21,7 @@ import httpx
 import pytest
 
 from core.database import AgentTable
-from utils import agent_import
+from engine.agents import agent_import
 
 IMPORT_RESULT = {
     "valid": True,

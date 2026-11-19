@@ -23,7 +23,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import OperationalError
 
-import utils.account_deletion as account_deletion
+import engine.account.deletion as account_deletion
 from core.database import (
     AccountDeletionTable,
     AgentTable,

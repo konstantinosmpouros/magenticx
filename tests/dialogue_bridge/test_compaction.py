@@ -23,10 +23,10 @@ import httpx
 import pytest
 from sqlalchemy import select
 
-import utils.compaction as compaction_module
+import engine.conversations.compaction as compaction_module
 from core.database import ConversationTable, MessageTable, MessageUsageTable, UsageDailyGroupTable, UsageDailyTable
-from utils.compaction_lock import compaction_locks
-from utils.inference_runs import InferenceRunRuntime, create_inference_run_record
+from engine.conversations.compaction_lock import compaction_locks
+from engine.inference.runs import InferenceRunRuntime, create_inference_run_record
 from utils.validators import validate_convId_full
 
 SUMMARY_USAGE = {"calls": 1, "input_tokens": 90_000, "cached_input_tokens": 10_000,

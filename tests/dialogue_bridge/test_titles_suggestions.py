@@ -1,4 +1,4 @@
-"""Unit tests for ``utils.titles`` and ``utils.suggestions``.
+"""Unit tests for ``engine.conversations.titles`` and ``engine.conversations.suggestions``.
 
 Both modules post to the agents service through an ``httpx.AsyncClient`` opened
 inside the function, so we monkeypatch ``<module>.httpx.AsyncClient`` with a
@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import httpx
 
-import utils.titles as titles_mod
-import utils.suggestions as suggestions_mod
+import engine.conversations.titles as titles_mod
+import engine.conversations.suggestions as suggestions_mod
 from schema import AttachmentIn, MessageIn
-from utils.suggestions import (
+from engine.conversations.suggestions import (
     build_suggestion_context_payload,
     generate_conversation_suggestions,
 )
-from utils.titles import (
+from engine.conversations.titles import (
     _message_to_chain_payload,
     generate_conversation_title,
     resolve_conversation_title,

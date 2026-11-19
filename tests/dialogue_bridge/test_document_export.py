@@ -28,7 +28,7 @@ import httpx
 import pytest
 from sqlalchemy import func, select
 
-import utils.document_export as preview_utils
+import engine.documents.export as preview_utils
 from core.database import (
     AttachmentPdfPreviewTable,
     AttachmentTable,

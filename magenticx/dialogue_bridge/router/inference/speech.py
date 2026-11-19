@@ -1,0 +1,131 @@
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from core.logging import get_logger, set_context
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.auth.session import AuthUser, require_csrf_protection
+from core.database import ConversationTable, get_db
+from core.security.rate_limit import speech_rate_limit
+from schema import DictationResponse, ReadAloudPreviewRequest
+from engine.conversations.messages import get_owned_message
+from engine.inference.speech import (
+    generate_read_aloud_audio,
+    read_aloud_response,
+    read_capped_dictation_audio,
+    transcribe_dictation_audio,
+)
+from engine.inference.voice import normalize_realtime_voice, preferred_realtime_voice
+from utils.validators import validate_convId, validate_userId
+
+
+# Every speech endpoint proxies a paid OpenAI audio API — one per-user ceiling
+# (one shared "speech" bucket) covers dictation, read-aloud and previews. It is
+# declared on each route after auth + CSRF rather than on the router, because a
+# router-level dependency runs first and the bucket is keyed on the path's
+# {user_id}: an anonymous caller could otherwise drain anyone's budget.
+router = APIRouter()
+logger = get_logger(__name__)
+
+
+@router.post(
+    "/dictation/{user_id}",
+    response_model=DictationResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def transcribe_dictation(
+    user_id: str,
+    audio: UploadFile = File(...),
+    _: AuthUser = Depends(validate_userId),
+    __: None = Depends(require_csrf_protection),
+    ___: None = Depends(speech_rate_limit),
+) -> DictationResponse:
+    """
+    Accept an audio upload from the UI, proxy it to the agents STT endpoint,
+    and return the transcription text.
+    """
+    set_context(user_id=user_id)
+
+    try:
+        audio_bytes = await read_capped_dictation_audio(audio)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning(
+            "dictation_read_failed",
+            "Failed to read dictation upload",
+            exc_info=True,
+            error=str(exc),
+            failure_reason="upload_read_failed",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to read the uploaded audio file.",
+        ) from exc
+
+    return await transcribe_dictation_audio(
+        audio_bytes,
+        filename=audio.filename,
+        content_type=audio.content_type,
+    )
+
+
+@router.post(
+    "/read-aloud/{user_id}/{conversation_id}/{message_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Generate read-aloud audio for an AI message",
+)
+async def readMessageAloud(
+    user_id: str,
+    conversation_id: str,
+    message_id: str,
+    _current_user: AuthUser = Depends(validate_userId),
+    _: None = Depends(require_csrf_protection),
+    _rate_limited: None = Depends(speech_rate_limit),
+    _current_conv: ConversationTable = Depends(validate_convId),
+    db: AsyncSession = Depends(get_db),
+):
+    set_context(user_id=user_id, conversation_id=conversation_id, message_id=message_id)
+    msg = await get_owned_message(db, conversation_id, message_id, with_attachments=False)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if msg.sender != "ai":
+        raise HTTPException(status_code=400, detail="Only AI messages can be read aloud.")
+
+    # The user's saved voice (no voice requested on this route).
+    voice = await preferred_realtime_voice(db, user_id, None)
+
+    audio, content_type = await generate_read_aloud_audio(msg.content or "", voice)
+    logger.info(
+        "message_read_aloud_generated",
+        "Read-aloud audio generated for message",
+        audio_bytes=len(audio),
+        content_type=content_type,
+        voice_mode_voice=voice,
+    )
+    extension = "mp3" if content_type == "audio/mpeg" else content_type.split("/")[-1]
+    return read_aloud_response(audio, content_type, f"read-aloud-{message_id}.{extension}")
+
+
+@router.post(
+    "/read-aloud-preview/{user_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Generate a short read-aloud voice preview",
+)
+async def previewReadAloudVoice(
+    user_id: str,
+    payload: ReadAloudPreviewRequest,
+    _current_user: AuthUser = Depends(validate_userId),
+    _: None = Depends(require_csrf_protection),
+    _rate_limited: None = Depends(speech_rate_limit),
+):
+    set_context(user_id=user_id)
+    voice = normalize_realtime_voice(payload.voice)
+    audio, content_type = await generate_read_aloud_audio(payload.text, voice)
+    logger.info(
+        "read_aloud_preview_generated",
+        "Read-aloud preview audio generated",
+        audio_bytes=len(audio),
+        content_type=content_type,
+        voice_mode_voice=voice,
+    )
+    extension = "mp3" if content_type == "audio/mpeg" else content_type.split("/")[-1]
+    return read_aloud_response(audio, content_type, f"read-aloud-preview-{voice}.{extension}")

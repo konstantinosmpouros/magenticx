@@ -10,8 +10,8 @@ import pytest_asyncio
 
 from core.database import AgentTable, ConversationTable, MessageTable
 from schema import InferenceStartPayload, MessageIn
-import utils.inference_start as inference_start_module
-from utils.inference_start import start_inference_flow
+import engine.inference.start as inference_start_module
+from engine.inference.start import start_inference_flow
 
 
 @pytest_asyncio.fixture

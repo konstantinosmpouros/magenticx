@@ -26,7 +26,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from utils.inference import (
+from engine.inference.history import (
     build_path_to_message,
     prepare_inference_history,
     resolve_inference_message_path,
