@@ -4,7 +4,7 @@ import { hideUnclosedCitationMarker } from "@/shared/lib/citations";
 import { CITATION_ELEMENT, remarkCitations } from "@/shared/lib/remarkCitations";
 import { prepareStreamingMarkdown } from "@/shared/lib/streaming-markdown";
 import { cn } from "@/shared/lib/utils";
-import { type ComponentProps, memo, useState } from "react";
+import { type ComponentProps, memo, useMemo, useState } from "react";
 import { defaultRemarkPlugins, Streamdown, type MermaidConfig } from "streamdown";
 
 import { CitationElement } from "./inline-citation";
@@ -60,6 +60,58 @@ const defaultMermaidConfig: MermaidConfig = {
 };
 
 /**
+ * Links in an answer open in a new tab; footnote markers render as plain
+ * superscript-style refs and their back-links are dropped.
+ */
+const MarkdownLink = ({
+  children,
+  href,
+  node: _node,
+  ...anchorProps
+}: ComponentProps<"a"> & { node?: unknown }) => {
+  const isFootnoteRef = "data-footnote-ref" in anchorProps;
+  const isFootnoteBackref = "data-footnote-backref" in anchorProps;
+
+  if (isFootnoteBackref) {
+    return null;
+  }
+
+  if (isFootnoteRef) {
+    return (
+      <span className="chat-markdown-footnote-ref" aria-label={`Footnote ${String(children)}`}>
+        {children}
+      </span>
+    );
+  }
+
+  return (
+    <a className="chat-markdown-link" href={href} rel="noreferrer" target="_blank" {...anchorProps}>
+      {children}
+    </a>
+  );
+};
+
+// Built once (plan 45). Streamdown hands `mermaidConfig` to every diagram
+// through a context its memoized blocks read, so a new object per render made
+// each finished diagram re-initialise Mermaid and re-render on every streamed
+// token; a component defined inline would likewise remount every link.
+const BASE_COMPONENTS = { a: MarkdownLink, table: MarkdownTable };
+const CITED_COMPONENTS = { ...BASE_COMPONENTS, ...CITATION_COMPONENTS };
+
+/** The default Mermaid theme merged with a caller's overrides. */
+const mergeMermaidConfig = (overrides: MermaidConfig | undefined): MermaidConfig =>
+  overrides
+    ? {
+        ...defaultMermaidConfig,
+        ...overrides,
+        themeVariables: {
+          ...defaultMermaidConfig.themeVariables,
+          ...overrides.themeVariables,
+        },
+      }
+    : defaultMermaidConfig;
+
+/**
  * An answer rendered as Markdown. Mermaid diagrams get a "Download image (PNG)"
  * button beside Streamdown's own source-download and copy buttons, from
  * `MermaidExportLayer`. Tables render through `MarkdownTable` (a card frame,
@@ -81,6 +133,11 @@ export const Response = memo(
     // `contents`: the wrapper only gives the diagram buttons a root to look in; it
     // adds no box, so the answer's layout is unchanged.
     const [root, setRoot] = useState<HTMLDivElement | null>(null);
+    const resolvedMermaidConfig = useMemo(() => mergeMermaidConfig(mermaidConfig), [mermaidConfig]);
+    const resolvedComponents = useMemo(() => {
+      const base = citations ? CITED_COMPONENTS : BASE_COMPONENTS;
+      return components ? { ...base, ...components } : base;
+    }, [citations, components]);
     return (
       <div ref={setRoot} className="contents">
         <Streamdown
@@ -89,54 +146,14 @@ export const Response = memo(
             "leading-relaxed break-words text-inherit",
             className,
           )}
-          mermaidConfig={{
-            ...defaultMermaidConfig,
-            ...mermaidConfig,
-            themeVariables: {
-              ...defaultMermaidConfig.themeVariables,
-              ...mermaidConfig?.themeVariables,
-            },
-          }}
-          components={{
-            a: ({ children, href, node, ...anchorProps }) => {
-              const isFootnoteRef = "data-footnote-ref" in anchorProps;
-              const isFootnoteBackref = "data-footnote-backref" in anchorProps;
-
-              if (isFootnoteBackref) {
-                return null;
-              }
-
-              if (isFootnoteRef) {
-                return (
-                  <span
-                    className="chat-markdown-footnote-ref"
-                    aria-label={`Footnote ${String(children)}`}
-                  >
-                    {children}
-                  </span>
-                );
-              }
-
-              return (
-                <a
-                  className="chat-markdown-link"
-                  href={href}
-                  rel="noreferrer"
-                  target="_blank"
-                  {...anchorProps}
-                >
-                  {children}
-                </a>
-              );
-            },
-            table: MarkdownTable,
-            ...(citations ? CITATION_COMPONENTS : {}),
-            ...components,
-          }}
+          mermaidConfig={resolvedMermaidConfig}
+          components={resolvedComponents as ComponentProps<typeof Streamdown>["components"]}
           {...(citations ? { remarkPlugins: CITATION_REMARK_PLUGINS } : {})}
           {...props}
         >
-          {typeof children === "string" ? prepareMarkdown(children, streaming, citations) : children}
+          {typeof children === "string"
+            ? prepareMarkdown(children, streaming, citations)
+            : children}
         </Streamdown>
         <MermaidExportLayer root={root} />
       </div>

@@ -64,6 +64,7 @@ export function useComposer({
   /** A local send OR a run already streaming server-side. */
   const isBusy = isSendingMessage || isConversationStreaming;
   const isMessagesEmpty = (currentConversation?.messages?.length ?? 0) === 0;
+  const currentConversationId = currentConversation?.id ?? null;
 
   const focusComposer = useCallback(() => {
     textareaRef.current?.focus();
@@ -116,9 +117,9 @@ export function useComposer({
         setAttachments,
         toast,
         userId,
-        currentConversation,
+        conversationId: currentConversationId,
       }),
-    [attachments, toast, userId, currentConversation],
+    [attachments, toast, userId, currentConversationId],
   );
 
   const {

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation, useOutlet } from "react-router-dom";
 
@@ -215,6 +215,14 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
   const signedIn = authResolved && isLoggedIn && Boolean(userId);
   useEffect(() => (signedIn ? prefetchRouteChunks() : undefined), [signedIn]);
 
+  // One object while its two callbacks are unchanged: an inline value gave every
+  // approval and tool row in every message a new context on each token, which
+  // re-rendered them despite their memo (plan 45).
+  const hitlValue = useMemo(
+    () => ({ resumeRun: resumeInferenceRunHandler, isDecisionInFlight }),
+    [resumeInferenceRunHandler, isDecisionInFlight],
+  );
+
   // Main Chat Interface
   if (!authResolved) {
     return (
@@ -354,7 +362,7 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
           {/* The incognito card's breathing edge light (styles/private.css). */}
           <div aria-hidden="true" className="private-card-glow" />
           <TooltipProvider>
-            <HitlProvider value={{ resumeRun: resumeInferenceRunHandler, isDecisionInFlight }}>
+            <HitlProvider value={hitlValue}>
               {/* The open conversation's background task tree (plan 41). */}
               <BackgroundTasksContext.Provider value={backgroundTasksContext}>
                 {/* The sources the answers' citation pills resolve against (plan 42). */}

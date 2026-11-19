@@ -305,6 +305,18 @@ that sets its own `Cache-Control`: nginx's `add_header` does not merge, so a
 location that adds a header without that include would serve the app with no
 CSP or HSTS.
 
+**Rendering while a run streams.** A run event arrives about once per token, so
+everything it touches keeps its identity when the event changes nothing:
+`patchRowById` (the sidebar list) and `nextLiveThinkingState` (the thinking
+state) in `features/inference/runState.ts` return the previous value, and the
+current conversation is only replaced when a message, a summary or the run's
+flags change. Effects depend on the facts they need (`Boolean(conversation)`,
+"draft is empty"), never on the conversation object or the draft text. Objects
+handed to memoized children or to a context (`Streamdown`'s `mermaidConfig` and
+`components`, `MarkdownRenderer`'s renderers, the `HitlProvider` value) are
+module constants or `useMemo`, and window listeners read the latest handlers
+through a ref and register once (`useKeyboardShortcuts`).
+
 **Rules.** A new route page is lazy (add its loader to `routeLoaders.ts`, and to
 the prefetch order if people open it often). A heavy library used by one panel
 or block loads with that panel, not in the entry chunk. Reach into a `*_parts`

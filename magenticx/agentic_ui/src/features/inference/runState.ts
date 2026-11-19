@@ -11,7 +11,12 @@ import {
   reduceTimelineEvents,
   timelineThoughtStrings,
 } from "./timeline";
-import type { InferenceRun, InferenceRunEvent, MessageOut } from "@/shared/lib/types";
+import type {
+  InferenceRun,
+  InferenceRunEvent,
+  MessageOut,
+  ThinkingState,
+} from "@/shared/lib/types";
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "cancelling"]);
 
@@ -21,6 +26,63 @@ export const patchMessage = (messages: MessageOut[], message: MessageOut) => {
     ? messages.map((item) => (item.id === message.id ? message : item))
     : [...messages, message];
 };
+
+/**
+ * Patch the row with this id, keeping the same list (and the same row) when
+ * every patched field already holds that value.
+ *
+ * A run event arrives about once per streamed token (plan 45). `list.map()`
+ * always returns a new array, so patching unconditionally made every token a
+ * new conversation list and re-rendered the whole sidebar for nothing.
+ */
+export function patchRowById<T extends { id: string }>(
+  rows: T[],
+  id: string,
+  patch: Partial<T>,
+): T[] {
+  let changed = false;
+  const next = rows.map((row) => {
+    if (row.id !== id) return row;
+    const differs = (Object.keys(patch) as (keyof T)[]).some(
+      (key) => !Object.is(row[key], patch[key]),
+    );
+    if (!differs) return row;
+    changed = true;
+    return { ...row, ...patch };
+  });
+  return changed ? next : rows;
+}
+
+const sameStrings = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
+  a === b ||
+  (a !== undefined && b !== undefined && a.length === b.length && a.every((v, i) => v === b[i]));
+
+/**
+ * The thinking state for a live run, or `prev` itself when nothing it shows
+ * has changed (same message, thoughts, start and branch).
+ *
+ * While the answer's text streams, the thoughts don't move; rebuilding the
+ * object anyway handed every message a new `thinkingState` on every token.
+ */
+export function nextLiveThinkingState(
+  prev: ThinkingState | null,
+  next: ThinkingState,
+): ThinkingState {
+  if (
+    prev &&
+    prev.messageId === next.messageId &&
+    prev.isActive === next.isActive &&
+    prev.isDone === next.isDone &&
+    prev.startTime === next.startTime &&
+    prev.endTime === next.endTime &&
+    prev.currentThoughtIndex === next.currentThoughtIndex &&
+    sameStrings(prev.thoughts, next.thoughts) &&
+    sameStrings(prev.branchPath, next.branchPath)
+  ) {
+    return prev;
+  }
+  return next;
+}
 
 export const isActiveRun = (run: InferenceRun | null | undefined) =>
   Boolean(run && ACTIVE_STATUSES.has(String(run.status)));

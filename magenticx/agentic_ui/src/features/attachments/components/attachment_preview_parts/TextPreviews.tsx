@@ -98,12 +98,18 @@ export function JsonPreview({ content }: { content: string }) {
   return <CodeTextPreview content={parsed ?? content} language="json" />;
 }
 
+/** The rows a CSV preview shows. */
+const CSV_PREVIEW_ROWS = 500;
+
 export function CsvPreview({ content }: { content: string }) {
   const rows = React.useMemo(() => {
+    // `preview` stops the parser after the rows shown: a large CSV was parsed
+    // whole on the main thread only to keep its first 500 rows (plan 45).
     const parsed = Papa.parse<string[]>(content.trim(), {
       skipEmptyLines: true,
+      preview: CSV_PREVIEW_ROWS,
     });
-    return (parsed.data || []).slice(0, 500);
+    return (parsed.data || []).slice(0, CSV_PREVIEW_ROWS);
   }, [content]);
 
   const maxColumns = Math.min(

@@ -1,7 +1,7 @@
 import { validateAdd } from "@/shared/lib/uploadGuards";
 import { downloadAttachment, fetchAttachmentBlob } from "@/shared/lib/api";
 import { toastError } from "@/shared/lib/toast";
-import type { ConversationDetail, MessageOut } from "@/shared/lib/types";
+import type { MessageOut } from "@/shared/lib/types";
 
 // Attachment handlers centralize the file lifecycle for the composer:
 // validate pending files, derive previews, and fetch persisted blobs.
@@ -15,7 +15,10 @@ type AttachmentsCtx = {
     duration?: number;
   }) => void;
   userId?: string | null;
-  currentConversation?: ConversationDetail | null;
+  /** The open conversation's id: the only thing the handlers read from it. An
+   * id rather than the conversation object, which changes on every streamed
+   * event and would rebuild these handlers each time (plan 45). */
+  conversationId?: string | null;
 };
 
 export function createAttachmentHandlers(ctx: AttachmentsCtx) {
@@ -192,13 +195,13 @@ export function createAttachmentHandlers(ctx: AttachmentsCtx) {
     attachment: { blobId?: string | null },
     message: MessageOut,
   ): Promise<Blob> => {
-    const { userId, currentConversation } = ctx;
-    if (!userId || !currentConversation || !attachment.blobId) {
+    const { userId, conversationId } = ctx;
+    if (!userId || !conversationId || !attachment.blobId) {
       throw new Error("This file can't be loaded.");
     }
     return fetchAttachmentBlob({
       userId,
-      conversationId: currentConversation.id,
+      conversationId,
       messageId: message.id,
       blobId: attachment.blobId,
     });
@@ -206,9 +209,9 @@ export function createAttachmentHandlers(ctx: AttachmentsCtx) {
 
   // Only the message's id is read, so the preview panel can pass `{ id }`.
   const handleFileDownload = async (attachment: any, message: Pick<MessageOut, "id">) => {
-    const { userId, currentConversation } = ctx;
+    const { userId, conversationId } = ctx;
     // Downloads only work for persisted blobs tied to a real conversation/message.
-    if (!userId || !currentConversation) {
+    if (!userId || !conversationId) {
       toast({
         title: "Download unavailable",
         description: "You must be signed in to download attachments",
@@ -237,7 +240,7 @@ export function createAttachmentHandlers(ctx: AttachmentsCtx) {
       });
       await downloadAttachment({
         userId,
-        conversationId: currentConversation.id,
+        conversationId,
         messageId: message.id,
         blobId: attachment.blobId,
         filename: attachment.name,

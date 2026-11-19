@@ -430,7 +430,16 @@ export function useChatWorkspace({
       taskConversationId
         ? { tree: taskTree, openTaskId, openTask, viewTask, stopTask, resumeTask, isDecisionSent }
         : null,
-    [isDecisionSent, openTask, openTaskId, resumeTask, stopTask, taskConversationId, taskTree, viewTask],
+    [
+      isDecisionSent,
+      openTask,
+      openTaskId,
+      resumeTask,
+      stopTask,
+      taskConversationId,
+      taskTree,
+      viewTask,
+    ],
   );
   // A message typed while the run streams is queued (plan 41 §3.6) — only in a
   // persisted conversation, the only kind that has a queue.
@@ -1400,17 +1409,24 @@ export function useChatWorkspace({
     starterSuggestions.length > 0;
 
   const preferencesLoaded = userPreferences !== null;
+  // The effect below needs only these two facts, not the values themselves:
+  // depending on the whole conversation (a new object per streamed token) and
+  // the draft (per keystroke) re-ran it, and its `set([])` re-rendered the
+  // workspace a second time, on every token and keystroke (plan 45).
+  const hasCurrentConversation = Boolean(currentConversation);
+  const draftIsEmpty = currentMessage.trim().length === 0;
 
   useEffect(() => {
     let cancelled = false;
     if (
       !userId ||
       !preferencesLoaded ||
-      currentConversation ||
-      currentMessage.trim().length > 0 ||
+      hasCurrentConversation ||
+      !draftIsEmpty ||
       resolvedPreferences.suggestionsEnabled === false
     ) {
-      setStarterSuggestions([]);
+      // Keep the same (empty) array when there is nothing to clear.
+      setStarterSuggestions((prev) => (prev.length > 0 ? [] : prev));
       return () => {
         cancelled = true;
       };
@@ -1433,8 +1449,8 @@ export function useChatWorkspace({
     preferencesLoaded,
     selectedAgent,
     currentAgent?.id,
-    currentConversation,
-    currentMessage,
+    hasCurrentConversation,
+    draftIsEmpty,
     resolvedPreferences.suggestionsEnabled,
   ]);
 

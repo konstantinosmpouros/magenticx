@@ -252,7 +252,10 @@ export function ChatInputBar(props: ChatInputBarProps) {
 
   // The highlighted-command mirror behind the textarea (DraftHighlight): kept
   // scrolled with it, and wrapping at the same column as its scrollbar comes
-  // and goes. Cheap enough to sync on every render.
+  // and goes. Synced when the draft changes and when the textarea resizes, not
+  // after every render: reading offsetWidth forces a layout, and the composer
+  // re-renders on every streamed token (plan 45).
+  const draftCommand = slash?.found ?? null;
   const draftMirrorRef = React.useRef<HTMLDivElement>(null);
   const [draftScrollbarWidth, setDraftScrollbarWidth] = React.useState(0);
   const syncDraftMirror = React.useCallback(() => {
@@ -262,8 +265,14 @@ export function ChatInputBar(props: ChatInputBarProps) {
     const width = textarea.offsetWidth - textarea.clientWidth;
     setDraftScrollbarWidth((current) => (current === width ? current : width));
   }, [textareaRef]);
-  React.useLayoutEffect(syncDraftMirror);
-  const draftCommand = slash?.found ?? null;
+  React.useLayoutEffect(syncDraftMirror, [syncDraftMirror, currentMessage, draftCommand]);
+  React.useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => syncDraftMirror());
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [textareaRef, syncDraftMirror]);
 
   const voiceClosePulse = useAnimationControls();
   const voiceMutePulse = useAnimationControls();

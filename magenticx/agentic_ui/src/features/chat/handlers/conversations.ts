@@ -119,7 +119,11 @@ type ConversationsCtx = {
   persistUIState: () => void;
 };
 
-const LOAD_MORE_DELAY_MS = 1200;
+// The shortest time the "loading more" row shows, so a near-instant page doesn't
+// flash it for one frame. A floor, not a delay: a page that takes longer than
+// this waits for nothing extra. (It used to be a fixed 1.2 s wait on every page,
+// chained page after page when the sidebar fills a tall screen; plan 45.)
+const LOAD_MORE_MIN_VISIBLE_MS = 250;
 
 const getConversationUpdatedTime = (value: string | Date | undefined | null) => {
   if (!value) return 0;
@@ -246,9 +250,12 @@ export function createConversationHandlers(ctx: ConversationsCtx) {
     setConvIsLoadingMore(true);
     try {
       const nextPage = convPage + 1;
+      const startedAt = Date.now();
       const items = await getConversations(userId, nextPage, pageSize);
-      // Smooth the loading affordance even when the backend responds almost instantly.
-      await new Promise<void>((resolve) => setTimeout(resolve, LOAD_MORE_DELAY_MS));
+      const remaining = LOAD_MORE_MIN_VISIBLE_MS - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+      }
       if (!items || items.length === 0) {
         setConvHasMore(false);
       } else {

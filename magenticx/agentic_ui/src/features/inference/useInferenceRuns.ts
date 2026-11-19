@@ -31,7 +31,9 @@ import {
   foldRunSnapshot,
   isActiveRun,
   mergeRunEvent,
+  nextLiveThinkingState,
   patchMessage,
+  patchRowById,
   runHasAgentSignal,
   runThoughts,
 } from "./runState";
@@ -124,26 +126,30 @@ export function useInferenceRuns({
       };
       setDecisionsInFlight((prev) => settleDecisionsForRun(prev, progress, Date.now()));
 
+      // Each setter keeps its previous value when the frame changes nothing it
+      // holds: most frames are one more token, and a new list or object here
+      // re-rendered the sidebar and the shell on every token (plan 45).
       if (resolvedSummary) {
-        setConversations((prev) =>
-          prev.map((conversation) =>
-            conversation.id === resolvedSummary.id
-              ? { ...conversation, ...resolvedSummary }
-              : conversation,
-          ),
-        );
+        setConversations((prev) => patchRowById(prev, resolvedSummary.id, resolvedSummary));
       } else {
         setConversations((prev) =>
-          prev.map((conversation) =>
-            conversation.id === run.conversationId
-              ? { ...conversation, activeRunId: active ? run.id : null, isStreaming: active }
-              : conversation,
-          ),
+          patchRowById(prev, run.conversationId, {
+            activeRunId: active ? run.id : null,
+            isStreaming: active,
+          }),
         );
       }
 
       setCurrentConversation((prev) => {
         if (!prev || prev.id !== run.conversationId) {
+          return prev;
+        }
+        if (
+          !message &&
+          !resolvedSummary &&
+          prev.activeRunId === (active ? run.id : null) &&
+          Boolean(prev.isStreaming) === active
+        ) {
           return prev;
         }
         const nextMessages = message ? patchMessage(prev.messages ?? [], message) : prev.messages;
@@ -204,7 +210,7 @@ export function useInferenceRuns({
             // (no branchPath) always passes, so the dot shows on the new branch.
             return prev && prev.messageId === run.assistantMessageId ? prev : null;
           }
-          return {
+          return nextLiveThinkingState(prev, {
             messageId: run.assistantMessageId,
             thoughts,
             currentThoughtIndex: Math.max(0, thoughts.length - 1),
@@ -212,7 +218,7 @@ export function useInferenceRuns({
             isDone: false,
             startTime: run.startedAt.getTime(),
             branchPath: [...run.messagePath],
-          };
+          });
         });
       }
 

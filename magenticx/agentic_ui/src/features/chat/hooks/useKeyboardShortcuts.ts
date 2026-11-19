@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 
 import { createShortcutHandlers } from "@/features/chat/handlers/shortcuts";
 import {
@@ -72,11 +72,16 @@ function isShortcutEnabled(
   return true;
 }
 
-export function useKeyboardShortcuts({
-  actions,
-  context,
-  shortcuts = getGlobalShortcuts(),
-}: UseKeyboardShortcutsArgs) {
+export function useKeyboardShortcuts({ actions, context, shortcuts }: UseKeyboardShortcutsArgs) {
+  // The listeners read the latest actions, context and shortcuts through refs
+  // and are registered once. Depending on them directly tore both listeners
+  // down and added them again on every render of the shell — every keystroke
+  // and every streamed token — because the callers pass new objects (plan 45).
+  const latest = useRef({ actions, context, shortcuts: shortcuts ?? getGlobalShortcuts() });
+  useLayoutEffect(() => {
+    latest.current = { actions, context, shortcuts: shortcuts ?? getGlobalShortcuts() };
+  });
+
   useEffect(() => {
     const platform = detectShortcutPlatform();
 
@@ -90,6 +95,7 @@ export function useKeyboardShortcuts({
       if (event.defaultPrevented) {
         return;
       }
+      const { actions, context, shortcuts } = latest.current;
 
       const editableTarget = isEditableTarget(event.target);
 
@@ -133,7 +139,7 @@ export function useKeyboardShortcuts({
       window.removeEventListener("keydown", handleCapture, { capture: true });
       window.removeEventListener("keydown", handleBubble);
     };
-  }, [actions, context, shortcuts]);
+  }, []);
 }
 
 export function useChatKeyboardShortcuts(
