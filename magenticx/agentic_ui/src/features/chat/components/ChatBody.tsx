@@ -15,6 +15,7 @@ import { TaskSidePanel } from "./message_parts/RunSidePanels";
 
 import { findStreamAnchor, streamScrollTarget } from "@/features/chat/lib/streamScroll";
 import { groupAnswers } from "@/features/chat/lib/answerGroups";
+import { useStableHandlers } from "@/shared/hooks/useStableHandlers";
 
 // Distance (px) of the newest REAL content below the fold before the
 // jump-to-bottom button appears.
@@ -73,7 +74,6 @@ const MODE_PRIORITY: Record<ScrollMode, number> = {
   glideButton: 2,
   instant: 3,
 };
-
 
 type ChatBody = {
   messages: MessageOut[];
@@ -286,7 +286,13 @@ export default function ChatBody({
             activeRunAssistantMessageId ?? (thinkingState?.isActive ? streamingMessageId : null),
           )
         : null,
-    [isStreaming, messages, activeRunAssistantMessageId, thinkingState?.isActive, streamingMessageId],
+    [
+      isStreaming,
+      messages,
+      activeRunAssistantMessageId,
+      thinkingState?.isActive,
+      streamingMessageId,
+    ],
   );
   const anchorIndex = anchorMessageId ? messages.findIndex((m) => m.id === anchorMessageId) : -1;
   const turnKey = anchorIndex >= 0 ? rowKeys[anchorIndex] : null;
@@ -685,6 +691,33 @@ export default function ChatBody({
     [onSelectBranch],
   );
 
+  // The message rows are memoized (plan 45): a settled answer must not re-render
+  // while another one streams. Their event callbacks arrive as new functions on
+  // every render of the workspace, so each row gets a stable stand-in that calls
+  // the latest one. Callbacks a row calls while rendering (resolveMessageAgent,
+  // isImageFile) are passed as they are, so what a row shows is never stale.
+  const rowHandlers = useStableHandlers({
+    onChangeEditDraft,
+    onCancelEdit,
+    onSubmitEdit,
+    onCopy,
+    onLike,
+    onDislike,
+    onReportMessage,
+    onRetryMessage,
+    onForkMessage,
+    onShareMessage,
+    onReadAloud,
+    onFlashUserActionBar,
+    onRequestEdit,
+    onToggleThinking,
+    onDownloadAttachment,
+    onLoadAttachment,
+    onPreviewAttachment,
+    onImageClick,
+    onSelectBranch: handleSelectBranch,
+  });
+
   // A manual wheel ALWAYS cancels an in-flight glide (up, or down while gliding) so the
   // user is never fighting our tween — including the non-streaming jump-button glide.
   // Any upward intent also detaches the follow, whether or not a run is streaming, so
@@ -761,7 +794,6 @@ export default function ChatBody({
     if (!viewport) return;
     onScrolledPastTop(viewport.scrollTop > 4);
   }, [messages.length, onScrolledPastTop]);
-
 
   return (
     <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -845,7 +877,7 @@ export default function ChatBody({
                     selectionIndex: groupParentId
                       ? (branchSelections[groupParentId] ?? 0)
                       : (branchSelections[branchRootKey] ?? 0),
-                    onSelectBranch: handleSelectBranch,
+                    onSelectBranch: rowHandlers.onSelectBranch,
                   }
                 : undefined;
 
@@ -862,46 +894,49 @@ export default function ChatBody({
                     message={message}
                     showMessageTokenUsage={showMessageTokenUsage}
                     isEditing={isEditingMessage}
-                    editingDraft={editingDraft}
+                    editingDraft={isEditingMessage ? editingDraft : undefined}
                     editingBusy={editingBusy}
-                    onChangeEditDraft={onChangeEditDraft}
-                    onCancelEdit={onCancelEdit}
-                    onSubmitEdit={onSubmitEdit}
+                    onChangeEditDraft={rowHandlers.onChangeEditDraft}
+                    onCancelEdit={rowHandlers.onCancelEdit}
+                    onSubmitEdit={rowHandlers.onSubmitEdit}
                     AgentIcon={AgentIcon}
                     currentAgent={currentAgent}
                     resolveMessageAgent={resolveMessageAgent}
                     copiedId={copiedId}
-                    onCopy={onCopy}
-                    onLike={onLike}
-                    onDislike={onDislike}
-                    onReportMessage={onReportMessage}
+                    onCopy={rowHandlers.onCopy}
+                    onLike={rowHandlers.onLike}
+                    onDislike={rowHandlers.onDislike}
+                    onReportMessage={rowHandlers.onReportMessage}
                     conversationIsReported={conversationIsReported}
-                    onRetryMessage={onRetryMessage}
-                    onForkMessage={onForkMessage}
-                    onShareMessage={onShareMessage}
-                    onReadAloud={onReadAloud}
+                    onRetryMessage={rowHandlers.onRetryMessage}
+                    onForkMessage={rowHandlers.onForkMessage}
+                    onShareMessage={rowHandlers.onShareMessage}
+                    onReadAloud={rowHandlers.onReadAloud}
                     speakingMessageId={speakingMessageId}
                     readOnly={readOnly}
                     isStreaming={isStreaming}
-                    onFlashUserActionBar={onFlashUserActionBar}
-                    onRequestEdit={onRequestEdit}
+                    onFlashUserActionBar={rowHandlers.onFlashUserActionBar}
+                    onRequestEdit={rowHandlers.onRequestEdit}
                     userActionVisibilityClass={userActionVisibilityClass}
-                    thinkingState={thinkingState}
+                    // Only the streaming answer reads the live thinking state
+                    // (ChatMessage's isStreamingTarget) or the edit draft (the
+                    // message being edited); the others would re-render with it.
+                    thinkingState={streamingMessageId === message.id ? thinkingState : null}
                     expandedThinking={expandedThinking}
-                    onToggleThinking={onToggleThinking}
+                    onToggleThinking={rowHandlers.onToggleThinking}
                     activeBranchPath={activeBranchPath}
                     streamingMessageId={streamingMessageId}
                     liveTimeline={streamingMessageId === message.id ? liveTimeline : null}
                     isImageFile={isImageFile}
-                    onDownloadAttachment={onDownloadAttachment}
-                    onLoadAttachment={onLoadAttachment}
-                    onPreviewAttachment={onPreviewAttachment}
-                    onImageClick={onImageClick}
+                    onDownloadAttachment={rowHandlers.onDownloadAttachment}
+                    onLoadAttachment={rowHandlers.onLoadAttachment}
+                    onPreviewAttachment={rowHandlers.onPreviewAttachment}
+                    onImageClick={rowHandlers.onImageClick}
                     branchData={{
                       parentId,
                       options: branchOptions,
                       selectionIndex: branchSelection,
-                      onSelectBranch: handleSelectBranch,
+                      onSelectBranch: rowHandlers.onSelectBranch,
                     }}
                     answerGroup={answerGroup}
                     groupBranchData={groupBranchData}
@@ -934,11 +969,7 @@ export default function ChatBody({
         </div>
       </ScrollArea>
       {!loadingConversation && (
-        <ConversationRail
-          messages={railMessages}
-          viewportRef={viewportRef}
-          columnRef={columnRef}
-        />
+        <ConversationRail messages={railMessages} viewportRef={viewportRef} columnRef={columnRef} />
       )}
       {/* One drill-down for the conversation's background tasks, any depth. */}
       <TaskSidePanel />

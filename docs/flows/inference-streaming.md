@@ -564,6 +564,7 @@ Why this matters: every HITL within a single run shares that run's checkpoint `t
 - On mount, it calls `getActiveInferenceRuns(userId)` and observes every active run.
 - When active-run hydration returns, conversations not returned as active are cleared locally.
 - Terminal events always clear `runsByConversation`, `activeRunId`, and `isStreaming` for that conversation.
+- **Fold every frame, publish once per animation frame** (plan 45). `applyRunEvent` folds each frame into `runsRef` synchronously and in order (`mergeRunEvent` → `reduceTimelineEvents`), so no event — no thinking delta — is ever dropped or merged. Only the hand-off to React waits: an ordinary token frame marks its conversation for the next animation frame (`createFrameScheduler` in `features/inference/frameScheduler.ts`, with a 100 ms timer beside `requestAnimationFrame` for background tabs), and `publishRun` then sets the run map, the sidebar row, the open conversation and the thinking state once for the whole burst. A frame is published **at once** when it is a snapshot, terminal or update frame, carries a message or a summary, is the run's first, changes its status, ends it, or changes its pending approvals — so approval cards and the end of a run never wait a frame. The "decision sent" bookkeeping (`settleDecisionsForRun`) still runs per frame, with the frame's own arrival time.
 
 ### Send UX lifecycle (optimistic echo → transition dot → first signal)
 

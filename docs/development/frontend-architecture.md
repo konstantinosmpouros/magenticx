@@ -317,6 +317,17 @@ handed to memoized children or to a context (`Streamdown`'s `mermaidConfig` and
 module constants or `useMemo`, and window listeners read the latest handlers
 through a ref and register once (`useKeyboardShortcuts`).
 
+On top of that (Phase 3): run state reaches React at most once per animation
+frame (see `docs/flows/inference-streaming.md` § Phase 7). `ChatMessage` is
+memoized, comparing the two branch switchers field by field; `ChatBody` hands
+the rows stable callbacks from `useStableHandlers` (`shared/hooks/`) — never for
+callbacks a row calls while rendering, like `resolveMessageAgent` — and gives
+the live thinking state and the edit draft only to the message that reads them.
+`TimelineSequence` gives each `CoTBlock` a stable toggle per block key. While an
+answer ends inside an open code block, `Response` hands Streamdown its text at
+most every 150 ms (`useCodeFenceThrottle`), since each change re-highlights the
+whole block; prose is never held back.
+
 **Rules.** A new route page is lazy (add its loader to `routeLoaders.ts`, and to
 the prefetch order if people open it often). A heavy library used by one panel
 or block loads with that panel, not in the entry chunk. Reach into a `*_parts`

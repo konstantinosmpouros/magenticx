@@ -37,6 +37,16 @@ function openFenceAtEnd(lines: string[]): OpenFence | null {
 }
 
 /**
+ * Whether the text ends inside a fenced code block that has not closed yet —
+ * the part of a streaming answer whose syntax highlighting is redone on every
+ * chunk (plan 45). Cheap when the text has no fence at all.
+ */
+export function endsInOpenCodeFence(markdown: string): boolean {
+  if (!markdown.includes("```") && !markdown.includes("~~~")) return false;
+  return openFenceAtEnd(markdown.split("\n")) !== null;
+}
+
+/**
  * The answer as it should be rendered right now. An open ```mermaid block at the
  * end is held back: while `streaming` it becomes a short "Generating diagram…"
  * line (the diagram renders once, when its block closes); in a finished answer

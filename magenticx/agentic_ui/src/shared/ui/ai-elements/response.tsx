@@ -2,7 +2,8 @@
 
 import { hideUnclosedCitationMarker } from "@/shared/lib/citations";
 import { CITATION_ELEMENT, remarkCitations } from "@/shared/lib/remarkCitations";
-import { prepareStreamingMarkdown } from "@/shared/lib/streaming-markdown";
+import { endsInOpenCodeFence, prepareStreamingMarkdown } from "@/shared/lib/streaming-markdown";
+import { useCodeFenceThrottle } from "@/shared/hooks/useCodeFenceThrottle";
 import { cn } from "@/shared/lib/utils";
 import { type ComponentProps, memo, useMemo, useState } from "react";
 import { defaultRemarkPlugins, Streamdown, type MermaidConfig } from "streamdown";
@@ -133,6 +134,13 @@ export const Response = memo(
     // `contents`: the wrapper only gives the diagram buttons a root to look in; it
     // adds no box, so the answer's layout is unchanged.
     const [root, setRoot] = useState<HTMLDivElement | null>(null);
+    // While the text streams inside an open code block, hand it on a few times
+    // a second rather than per token: each change re-highlights the whole block.
+    const text = typeof children === "string" ? children : "";
+    const shownText = useCodeFenceThrottle(
+      text,
+      streaming && typeof children === "string" && endsInOpenCodeFence(text),
+    );
     const resolvedMermaidConfig = useMemo(() => mergeMermaidConfig(mermaidConfig), [mermaidConfig]);
     const resolvedComponents = useMemo(() => {
       const base = citations ? CITED_COMPONENTS : BASE_COMPONENTS;
@@ -152,7 +160,7 @@ export const Response = memo(
           {...props}
         >
           {typeof children === "string"
-            ? prepareMarkdown(children, streaming, citations)
+            ? prepareMarkdown(shownText, streaming, citations)
             : children}
         </Streamdown>
         <MermaidExportLayer root={root} />

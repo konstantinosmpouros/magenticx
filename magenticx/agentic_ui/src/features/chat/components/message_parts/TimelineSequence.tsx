@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo } from "react";
+import { Fragment, useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import { subagentRunStatus, subagentTree } from "@/features/inference";
 import type {
   AttachmentOut,
@@ -9,6 +9,7 @@ import type {
   TimelineBlock,
 } from "@/shared/lib/types";
 import { BLOCK_REGISTRY, type BlockRenderContext } from "./block-registry";
+import { useStableHandlers } from "@/shared/hooks/useStableHandlers";
 
 /**
  * How sub-agent cards behave when the timeline is not an answer of its own —
@@ -105,6 +106,27 @@ export function TimelineSequence({
     return merged;
   }, [timeline, statusOf, tree]);
 
+  // Stable per-block callbacks (plan 45): an inline `() => onToggleThinking(…)`
+  // and a delegation opener rebuilt with every timeline gave each CoTBlock new
+  // props on every streamed frame, so its memo never held and every thought of
+  // the answer re-rendered per token. Each toggler reads the block's current
+  // open state and the latest handler when clicked.
+  const openByKeyRef = useRef<Record<string, boolean>>({});
+  const toggleRef = useRef(onToggleThinking);
+  useLayoutEffect(() => {
+    toggleRef.current = onToggleThinking;
+  });
+  const togglersRef = useRef(new Map<string, () => void>());
+  const togglerFor = (expandKey: string) => {
+    let toggler = togglersRef.current.get(expandKey);
+    if (!toggler) {
+      toggler = () => toggleRef.current(expandKey, !openByKeyRef.current[expandKey]);
+      togglersRef.current.set(expandKey, toggler);
+    }
+    return toggler;
+  };
+  const { onOpenDelegation } = useStableHandlers({ onOpenDelegation: openDelegation });
+
   const lastThinkingIndex = useMemo(() => {
     for (let i = renderBlocks.length - 1; i >= 0; i -= 1) {
       if (renderBlocks[i].kind === "thinking") return i;
@@ -122,6 +144,7 @@ export function TimelineSequence({
         const isLiveActive = isStreaming && !timeline.terminal && isLastBlock;
         const expandKey = `${runId}:${block.id}`;
         const open = expandedThinking[expandKey] ?? isLiveActive;
+        openByKeyRef.current[expandKey] = open;
         const ctx: BlockRenderContext = {
           runId,
           subagentIndex,
@@ -130,7 +153,7 @@ export function TimelineSequence({
           onOpenSubagent: subagentLinks?.onOpen,
           subagentChildrenOf: tree.childrenOf,
           subagentStatusOf: statusOf,
-          onOpenDelegation: openDelegation,
+          onOpenDelegation,
           doneStatus:
             timeline.terminal && isLast
               ? timeline.terminalStatus
@@ -139,7 +162,7 @@ export function TimelineSequence({
                 : undefined,
           fallbackDurationSeconds: isLast ? fallbackThinkingSeconds : null,
           open,
-          onOpenChange: () => onToggleThinking(expandKey, !open),
+          onOpenChange: togglerFor(expandKey),
           message,
           onDownloadAttachment,
           onLoadAttachment,

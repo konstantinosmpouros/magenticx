@@ -27,6 +27,7 @@ import {
   type DecisionsInFlight,
 } from "./decisionsInFlight";
 import { pendingTimelineInterrupts, timelineThoughtStrings } from "./timeline";
+import { createFrameScheduler, type FrameScheduler } from "./frameScheduler";
 import {
   foldRunSnapshot,
   isActiveRun,
@@ -48,6 +49,9 @@ import type {
   MessageOut,
   ThinkingState,
 } from "@/shared/lib/types";
+
+/** A conversation summary from a run frame, with the run's live flags applied. */
+type ResolvedSummary = ConversationSummary & { activeRunId: string | null; isStreaming: boolean };
 
 type UseInferenceRunsOptions = {
   userId: string | null;
@@ -91,40 +95,16 @@ export function useInferenceRuns({
     currentConversationIdRef.current = currentConversationId;
   }, [currentConversationId]);
 
-  const applyRunEvent = useCallback(
-    (event: InferenceRunEvent) => {
-      const { message, summary } = event;
-      const run = mergeRunEvent(runsRef.current[event.run.conversationId], event);
+  /**
+   * Hand one conversation's run state to React: the run map, its sidebar row,
+   * the open conversation and the thinking state. Called once per animation
+   * frame for ordinary token frames, and at once for anything that changes
+   * what the user must see or answer (see `applyRunEvent`).
+   */
+  const publishRun = useCallback(
+    (run: InferenceRun, message: MessageOut | null, resolvedSummary: ResolvedSummary | null) => {
       const active = isActiveRun(run);
-      const resolvedSummary = summary
-        ? {
-            ...summary,
-            activeRunId: active ? (summary.activeRunId ?? run.id) : null,
-            isStreaming: active,
-          }
-        : null;
-
-      {
-        const next = { ...runsRef.current };
-        if (active) {
-          next[run.conversationId] = run;
-        } else {
-          delete next[run.conversationId];
-        }
-        runsRef.current = next;
-        setRunsByConversation(next);
-      }
-
-      // The event log is the truth about a sent decision: resolved there (or
-      // the run ended) → stop saying "Decision sent"; still streaming → the
-      // marker may yet come, keep waiting.
-      const progress = {
-        runId: run.id,
-        active,
-        pendingInterruptIds: pendingTimelineInterrupts(run.timeline).map((item) => item.id),
-        streamed: event.type === "events" && (event.events?.length ?? 0) > 0,
-      };
-      setDecisionsInFlight((prev) => settleDecisionsForRun(prev, progress, Date.now()));
+      setRunsByConversation(runsRef.current);
 
       // Each setter keeps its previous value when the frame changes nothing it
       // holds: most frames are one more token, and a new list or object here
@@ -221,8 +201,106 @@ export function useInferenceRuns({
           });
         });
       }
+    },
+    [setConversations, setCurrentConversation, setShowAiTransition, setThinkingState],
+  );
+
+  // Conversations folded since the last publish, published together on the
+  // next animation frame (plan 45, Phase 3).
+  const pendingPublishRef = useRef<Set<string>>(new Set());
+  // Each conversation's pending approvals at its last fold, to spot a change.
+  const pendingInterruptKeysRef = useRef<Record<string, string>>({});
+  const publishRunRef = useRef(publishRun);
+  publishRunRef.current = publishRun;
+  const frameSchedulerRef = useRef<FrameScheduler | null>(null);
+  if (frameSchedulerRef.current === null) {
+    frameSchedulerRef.current = createFrameScheduler(() => {
+      const conversationIds = [...pendingPublishRef.current];
+      pendingPublishRef.current.clear();
+      for (const conversationId of conversationIds) {
+        const latest = runsRef.current[conversationId];
+        // Gone = it ended, and the end was published at once.
+        if (latest) publishRunRef.current(latest, null, null);
+      }
+    });
+  }
+  useEffect(() => () => frameSchedulerRef.current?.cancel(), []);
+
+  /**
+   * Fold one WebSocket frame (or a start/cancel/resume answer) into the run.
+   *
+   * Every frame is folded here, synchronously and in order — nothing is
+   * dropped, merged or reordered; each thinking delta lands in the timeline.
+   * What waits is only the hand-off to React: an ordinary token frame marks
+   * its conversation for the next animation frame, so a burst of tokens costs
+   * one render instead of one each. A frame that changes what the user must
+   * see or answer is published at once: a snapshot, terminal or update frame,
+   * one carrying a message or a summary, the first frame of a run, a status
+   * change, the run ending, or a change in its pending approvals.
+   */
+  const applyRunEvent = useCallback(
+    (event: InferenceRunEvent) => {
+      const { message, summary } = event;
+      const previous = runsRef.current[event.run.conversationId];
+      const run = mergeRunEvent(previous, event);
+      const active = isActiveRun(run);
+      const resolvedSummary: ResolvedSummary | null = summary
+        ? {
+            ...summary,
+            activeRunId: active ? (summary.activeRunId ?? run.id) : null,
+            isStreaming: active,
+          }
+        : null;
+
+      {
+        const next = { ...runsRef.current };
+        if (active) {
+          next[run.conversationId] = run;
+        } else {
+          delete next[run.conversationId];
+        }
+        runsRef.current = next;
+      }
+
+      // The event log is the truth about a sent decision: resolved there (or
+      // the run ended) → stop saying "Decision sent"; still streaming → the
+      // marker may yet come, keep waiting. Settled on every frame, not per
+      // animation frame: it is a no-op unless a decision is waiting, and its
+      // deadline must follow the frame's own arrival time.
+      const pendingInterruptIds = pendingTimelineInterrupts(run.timeline).map((item) => item.id);
+      const progress = {
+        runId: run.id,
+        active,
+        pendingInterruptIds,
+        streamed: event.type === "events" && (event.events?.length ?? 0) > 0,
+      };
+      setDecisionsInFlight((prev) => settleDecisionsForRun(prev, progress, Date.now()));
+
+      const interruptKey = `${run.id}:${pendingInterruptIds.join("|")}`;
+      const interruptsChanged =
+        pendingInterruptKeysRef.current[run.conversationId] !== interruptKey;
+      pendingInterruptKeysRef.current[run.conversationId] = interruptKey;
+
+      const urgent =
+        event.type !== "events" ||
+        Boolean(message) ||
+        Boolean(resolvedSummary) ||
+        !active ||
+        !previous ||
+        previous.id !== run.id ||
+        previous.status !== run.status ||
+        interruptsChanged;
+
+      if (urgent) {
+        pendingPublishRef.current.delete(run.conversationId);
+        publishRun(run, message ?? null, resolvedSummary);
+      } else {
+        pendingPublishRef.current.add(run.conversationId);
+        frameSchedulerRef.current?.schedule();
+      }
 
       if (!active) {
+        delete pendingInterruptKeysRef.current[run.conversationId];
         // Terminal run — the one non-abort stop condition. Drop the observer and
         // any pending re-observe so nothing reattaches to a finished run.
         controllersRef.current[run.id]?.abort();
@@ -232,7 +310,7 @@ export function useInferenceRuns({
         delete reobserveAttemptsRef.current[run.id];
       }
     },
-    [setConversations, setCurrentConversation, setShowAiTransition, setThinkingState],
+    [publishRun],
   );
 
   // Self-reference for the clean-resolve retry below — a useCallback cannot

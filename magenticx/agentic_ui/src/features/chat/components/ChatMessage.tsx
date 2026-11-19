@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { Card } from "@/shared/ui/card";
 import { Button } from "@/shared/ui/button";
 import type { Agent, MessageOut, RunTimeline, ThinkingState } from "@/shared/lib/types";
@@ -77,7 +77,7 @@ type BranchData = {
   onSelectBranch?: (parentId: string | null, branchIndex: number) => void;
 };
 
-export function ChatMessage({
+function ChatMessageView({
   message,
   showMessageTokenUsage = false,
   isEditing,
@@ -398,3 +398,38 @@ export function ChatMessage({
     </div>
   );
 }
+
+const sameBranchData = (a: BranchData | undefined, b: BranchData | undefined) =>
+  a === b ||
+  (a !== undefined &&
+    b !== undefined &&
+    a.parentId === b.parentId &&
+    a.options === b.options &&
+    a.selectionIndex === b.selectionIndex &&
+    a.onSelectBranch === b.onSelectBranch);
+
+/**
+ * Props equal for rendering: every prop by identity, except the two branch
+ * switchers, which the list builds fresh for each row on every render and are
+ * compared field by field.
+ */
+function sameChatMessageProps(prev: ChatMessageProps, next: ChatMessageProps): boolean {
+  const keys = new Set([...Object.keys(prev), ...Object.keys(next)]) as Set<keyof ChatMessageProps>;
+  for (const key of keys) {
+    if (key === "branchData" || key === "groupBranchData") {
+      if (!sameBranchData(prev[key], next[key])) return false;
+    } else if (!Object.is(prev[key], next[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * One message in the conversation. Memoized (plan 45): while an answer
+ * streams, only that answer's props change, so every settled message above it
+ * skips the per-frame render. ChatBody hands the rows stable callbacks and
+ * gives the live thinking state and the edit draft only to the message that
+ * reads them, which is what lets this hold.
+ */
+export const ChatMessage = memo(ChatMessageView, sameChatMessageProps);
