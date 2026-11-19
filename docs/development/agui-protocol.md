@@ -585,6 +585,8 @@ sequenceDiagram
 
 The AI message body is the **derived run timeline**: a temporal block sequence `[Thinking, Content, Subagent, Content, Thinking, …]` folded from the raw event log by `lib/timeline.ts`. The same reducer runs incrementally on live `events` frames (`reduceTimelineEvents`) and in batch on hydration (`foldTimeline` via the memoized `useRunTimeline` hook, keyed to the message's final event state) — live and hydrated views cannot drift because they are the same function. Nothing derived is ever persisted.
 
+**Copy-on-write, frame by frame (plan 45).** Each `reduceTimelineEvents` call copies the block list and the interrupts, then copies only what the frame writes: a block on its first write (untouched blocks keep their identity, so memoized block views skip the render), and each fold map (`subagentIndexByKey`, `taskIdRemap`, `namespaceToKey`, `toolPaths`, `subFolds`) and each sub-agent's fold on its first write (`foldMapForWrite`, `subFoldForWrite`). A text delta therefore copies no fold map, so a token's cost no longer grows with the number of tool calls and sub-agents the run has seen. An earlier state is never mutated. A new write to fold state must go through those two accessors; checked against 366 recorded runs (7,404 frame-sized steps: identical states, no earlier state mutated).
+
 Block semantics (`reduceTimelineEvents`):
 
 | Event | Effect on blocks |

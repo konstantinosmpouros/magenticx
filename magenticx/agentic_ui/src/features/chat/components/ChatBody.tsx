@@ -303,6 +303,11 @@ export default function ChatBody({
   // transform aimed the view a few px off, then corrected it — a visible tremble.
   // The real content bottom is read from messagesEndRef, which sits ABOVE the
   // streaming spacer, so it stays independent of the current spacer height.
+  // The anchor row's element, kept between measurements (plan 45): measure runs
+  // up to twice a frame while streaming, and searching the whole column by
+  // selector each time was wasted work. Looked up again when the anchor
+  // changes or its row leaves the page (a branch switch, a new turn).
+  const anchorElRef = React.useRef<{ id: string; el: HTMLElement } | null>(null);
   const measure = React.useCallback(() => {
     const viewport = viewportRef.current;
     const column = columnRef.current;
@@ -315,9 +320,15 @@ export default function ChatBody({
     const contentBottom = endEl ? columnTop + endEl.offsetTop : viewport.scrollHeight;
     let anchorTop: number | null = null;
     if (anchorMessageId) {
-      const anchorEl = column.querySelector<HTMLElement>(
-        `[data-message-id="${CSS.escape(anchorMessageId)}"]`,
-      );
+      const cached = anchorElRef.current;
+      let anchorEl =
+        cached && cached.id === anchorMessageId && cached.el.isConnected ? cached.el : null;
+      if (!anchorEl) {
+        anchorEl = column.querySelector<HTMLElement>(
+          `[data-message-id="${CSS.escape(anchorMessageId)}"]`,
+        );
+        anchorElRef.current = anchorEl ? { id: anchorMessageId, el: anchorEl } : null;
+      }
       if (anchorEl) anchorTop = columnTop + anchorEl.offsetTop;
     }
     return { H, scrollTop, contentBottom, anchorTop };

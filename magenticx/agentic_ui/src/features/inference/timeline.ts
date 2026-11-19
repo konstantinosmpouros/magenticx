@@ -104,29 +104,23 @@ export function createTimeline(): RunTimeline {
 // ------------------------------------------------------
 // Copy-on-write session — one per reduce call. Blocks untouched by the
 // frame keep their identity so memoized block components skip re-render.
+//
+// The fold's bookkeeping maps are copied lazily too (plan 45): each map, and
+// each sub-agent's fold, is copied the first time the frame writes to it, not
+// up front. Copying every map on every frame made a token's cost grow with
+// the run (every tool call and sub-agent ever seen), while most frames are a
+// text delta that writes none of them.
 // ------------------------------------------------------
 type Session = {
   state: RunTimeline;
   clonedBlocks: Set<number>;
   clonedSubBlocks: Map<number, Set<number>>;
+  clonedFoldMaps: Set<FoldMapName>;
+  clonedSubFolds: Set<string>;
 };
 
-function cloneFold(fold: TimelineFoldIndexes): TimelineFoldIndexes {
-  return {
-    ...fold,
-    subagentIndexByKey: { ...fold.subagentIndexByKey },
-    taskIdRemap: { ...fold.taskIdRemap },
-    namespaceToKey: { ...fold.namespaceToKey },
-    toolPaths: { ...fold.toolPaths },
-    ...(fold.nestedTasks ? { nestedTasks: { ...fold.nestedTasks } } : {}),
-    subFolds: Object.fromEntries(
-      Object.entries(fold.subFolds).map(([key, sub]) => [
-        key,
-        { ...sub, toolPaths: { ...sub.toolPaths } },
-      ]),
-    ),
-  };
-}
+type FoldMapName =
+  "subagentIndexByKey" | "taskIdRemap" | "namespaceToKey" | "toolPaths" | "subFolds";
 
 function openSession(state: RunTimeline): Session {
   return {
@@ -134,11 +128,34 @@ function openSession(state: RunTimeline): Session {
       ...state,
       blocks: [...state.blocks],
       interrupts: [...state.interrupts],
-      fold: cloneFold(state.fold),
+      fold: { ...state.fold },
     },
     clonedBlocks: new Set(),
     clonedSubBlocks: new Map(),
+    clonedFoldMaps: new Set(),
+    clonedSubFolds: new Set(),
   };
+}
+
+/** The fold map `name`, copied on its first write in this session. */
+function foldMapForWrite<K extends FoldMapName>(session: Session, name: K): TimelineFoldIndexes[K] {
+  const fold = session.state.fold;
+  if (!session.clonedFoldMaps.has(name)) {
+    fold[name] = { ...fold[name] };
+    session.clonedFoldMaps.add(name);
+  }
+  return fold[name];
+}
+
+/** A sub-agent's fold (and its tool paths), copied on its first write in this session. */
+function subFoldForWrite(session: Session, key: string): SubagentFoldIndexes | undefined {
+  const current = session.state.fold.subFolds[key];
+  if (!current) return undefined;
+  if (!session.clonedSubFolds.has(key)) {
+    foldMapForWrite(session, "subFolds")[key] = { ...current, toolPaths: { ...current.toolPaths } };
+    session.clonedSubFolds.add(key);
+  }
+  return session.state.fold.subFolds[key];
 }
 
 function blockForWrite<T extends TimelineBlock>(session: Session, index: number): T {
@@ -433,7 +450,11 @@ function pushTaskInputBlock(session: Session, event: RawEvent): void {
   if (!parsed.success) return;
   closeThinking(session, eventTimestamp(event));
   session.state.fold.openContentIndex = null;
-  const block: TaskInputBlock = { kind: "task_input", id: nextBlockId(session), text: parsed.data.text };
+  const block: TaskInputBlock = {
+    kind: "task_input",
+    id: nextBlockId(session),
+    text: parsed.data.text,
+  };
   session.state.blocks.push(block);
   session.clonedBlocks.add(session.state.blocks.length - 1);
 }
@@ -729,7 +750,7 @@ function resolveInterrupt(
           sub,
           () => subBlockForWrite<ThinkingBlock>(session, blockIndex, subIndex),
           (item, name) => {
-            const subFold = subKey ? session.state.fold.subFolds[subKey] : undefined;
+            const subFold = subKey ? subFoldForWrite(session, subKey) : undefined;
             if (subFold) subFold.pendingRetool = { block: subIndex, item, name };
           },
         );
@@ -849,13 +870,15 @@ function ensureSubagentBlock(
   };
   session.state.blocks.push(block);
   const index = session.state.blocks.length - 1;
-  fold.subagentIndexByKey[key] = index;
-  fold.subFolds[key] = {
+  foldMapForWrite(session, "subagentIndexByKey")[key] = index;
+  foldMapForWrite(session, "subFolds")[key] = {
     openThinkingIndex: null,
     openContentIndex: null,
     toolPaths: {},
     pendingRetool: null,
   };
+  // A new object, owned by this session: no copy needed before writing to it.
+  session.clonedSubFolds.add(key);
   // Deliberately does NOT bump subagentCount: a block starts unspawned, and the
   // count tracks sub-agents that actually ran. See markSubagentSpawned.
   session.clonedBlocks.add(index);
@@ -1114,7 +1137,7 @@ function applyNestedTask(block: SubagentBlock, fold: TimelineFoldIndexes, key: s
 function applySubagentInnerEvent(session: Session, key: string, inner: RawEvent): void {
   const fold = session.state.fold;
   const parentIndex = fold.subagentIndexByKey[key];
-  const subFold = fold.subFolds[key];
+  const subFold = parentIndex === undefined ? undefined : subFoldForWrite(session, key);
   if (parentIndex === undefined || !subFold) return;
   const type = inner.type;
 
@@ -1335,7 +1358,7 @@ function applyEvent(session: Session, event: RawEvent): void {
 
     if (SOURCES_NAMES.has(name)) {
       foldSources(session, event.value);
-      attachToolSources(event.value, session.state.fold.toolPaths, (index) =>
+      attachToolSources(event.value, foldMapForWrite(session, "toolPaths"), (index) =>
         blockForWrite<ThinkingBlock>(session, index),
       );
       return;
@@ -1433,12 +1456,12 @@ function applyEvent(session: Session, event: RawEvent): void {
             ? String(inner.value?.metadata?.namespace ?? "")
             : "";
         if (beforeAgentNamespace) {
-          fold.taskIdRemap[wrapper.task_id] = beforeAgentNamespace;
+          foldMapForWrite(session, "taskIdRemap")[wrapper.task_id] = beforeAgentNamespace;
           key = beforeAgentNamespace;
         } else {
           key = fold.taskIdRemap[wrapper.task_id] || wrapper.task_id;
         }
-        if (nsKey) fold.namespaceToKey[nsKey] = key;
+        if (nsKey) foldMapForWrite(session, "namespaceToKey")[nsKey] = key;
       }
       const { block } = ensureSubagentBlock(session, key, eventTimestamp(event));
       // Receiving any event from inside the sub-agent is the proof it spawned —
@@ -1546,7 +1569,7 @@ function applyEvent(session: Session, event: RawEvent): void {
     applyToolEvent(
       session,
       event,
-      session.state.fold.toolPaths,
+      foldMapForWrite(session, "toolPaths"),
       (index) => blockForWrite<ThinkingBlock>(session, index),
       (ts) => ensureThinking(session, ts),
       () => session.state.fold.openThinkingIndex,
@@ -1602,9 +1625,10 @@ export function finalizeTimeline(state: RunTimeline, status: TimelineTerminalSta
   const session = openSession(state);
   closeThinking(session);
   session.state.fold.openContentIndex = null;
-  for (const [key, subFold] of Object.entries(session.state.fold.subFolds)) {
+  for (const key of Object.keys(session.state.fold.subFolds)) {
     const parentIndex = session.state.fold.subagentIndexByKey[key];
     if (parentIndex === undefined) continue;
+    const subFold = subFoldForWrite(session, key)!;
     if (subFold.openThinkingIndex !== null) {
       subBlockForWrite<ThinkingBlock>(session, parentIndex, subFold.openThinkingIndex);
       subFold.openThinkingIndex = null;
