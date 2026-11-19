@@ -53,6 +53,13 @@ import {
   useSidebar,
 } from "@/shared/ui/sidebar";
 import { Skeleton } from "@/shared/ui/skeleton";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/shared/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { NewChatIcon } from "@/shared/ui/new-chat-icon";
 import { AgentsIcon } from "@/shared/ui/agents-icon";
@@ -370,6 +377,89 @@ const SidebarListRow = React.forwardRef<
 });
 SidebarListRow.displayName = "SidebarListRow";
 
+// A conversation row's two menus ("⋯" and right-click) share one look, so they
+// read as the same menu. The items carry `focus:` beside `data-[highlighted]:`
+// so they replace the shared context-menu item's own focus fill instead of
+// stacking on it (a Radix menu's highlighted item is also the focused one).
+const ROW_MENU_CONTENT =
+  "z-50 w-48 rounded-lg border border-border bg-background p-1.5 text-sm text-foreground shadow-lg focus:outline-none";
+const ROW_MENU_ITEM =
+  "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm text-foreground transition-colors focus:bg-muted focus:text-foreground data-[highlighted]:bg-muted data-[highlighted]:text-foreground focus-visible:outline-none data-[highlighted]:outline-none";
+const ROW_MENU_ITEM_DESTRUCTIVE =
+  "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm text-destructive transition-colors focus:bg-destructive/10 focus:text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive focus-visible:outline-none data-[highlighted]:outline-none";
+const ROW_MENU_ICON = "flex h-7 w-7 items-center justify-center rounded-md bg-transparent";
+const ROW_MENU_SEPARATOR = "mx-0 my-1 h-px bg-border/60";
+
+/**
+ * A conversation's actions, rendered by both its row's "⋯" menu and its
+ * right-click menu so the two never drift apart. Each menu passes its own
+ * Radix Item and Separator (a dropdown item cannot live in a context menu).
+ */
+function ConversationActionItems({
+  isPinned,
+  isReported,
+  Item,
+  Separator,
+  onRename,
+  onTogglePin,
+  onArchive,
+  onReport,
+  onDelete,
+}: {
+  isPinned: boolean;
+  isReported: boolean;
+  // Optional props, as Radix declares them, so both menus' parts fit.
+  Item: React.ComponentType<{
+    onSelect?: (event: Event) => void;
+    className?: string;
+    children?: React.ReactNode;
+  }>;
+  Separator: React.ComponentType<{ className?: string }>;
+  onRename: () => void;
+  onTogglePin: () => void;
+  onArchive: () => void;
+  onReport: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <>
+      <Item onSelect={onRename} className={ROW_MENU_ITEM}>
+        <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
+          <Pencil size={15} />
+        </div>
+        <span>Rename</span>
+      </Item>
+      <Item onSelect={onTogglePin} className={ROW_MENU_ITEM}>
+        <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
+          {isPinned ? <PinOff size={15} /> : <Pin size={15} />}
+        </div>
+        <span>{isPinned ? "Unpin" : "Pin"}</span>
+      </Item>
+      <Item onSelect={onArchive} className={ROW_MENU_ITEM}>
+        <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
+          <Archive size={15} />
+        </div>
+        <span>Archive</span>
+      </Item>
+      {!isReported && (
+        <Item onSelect={onReport} className={ROW_MENU_ITEM}>
+          <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
+            <Flag size={15} />
+          </div>
+          <span>Report</span>
+        </Item>
+      )}
+      <Separator className={ROW_MENU_SEPARATOR} />
+      <Item onSelect={onDelete} className={ROW_MENU_ITEM_DESTRUCTIVE}>
+        <div className={cn(ROW_MENU_ICON, "text-destructive")}>
+          <Trash2 size={15} />
+        </div>
+        <span>Delete</span>
+      </Item>
+    </>
+  );
+}
+
 /** A list row's title: truncated, above the highlight, nudged right on hover. */
 function SidebarListRowTitle({ children }: { children: React.ReactNode }) {
   return (
@@ -463,6 +553,15 @@ export default function ChatSidebar({
   // one. With the feature off the backend sends nothing and this stays false.
   const showAccountSwitcher = accounts.length > 1 || (accounts.length > 0 && canAddAccount);
   const [openActionMenuId, setOpenActionMenuId] = React.useState<string | null>(null);
+  // The row whose right-click menu is open: it keeps the hover surface so the
+  // pointer-anchored menu still shows which chat it acts on.
+  const [contextMenuId, setContextMenuId] = React.useState<string | null>(null);
+  // Radix's context menu cannot be closed from outside (it has no `open`
+  // prop), so a dismissal from the shell remounts the menus by bumping this key.
+  const [contextMenuEpoch, setContextMenuEpoch] = React.useState(0);
+  // Set when Rename is picked from the right-click menu: its close must not
+  // hand focus back, or it would pull focus out of the rename field.
+  const contextRenameRef = React.useRef(false);
   const [renamingConversationId, setRenamingConversationId] = React.useState<string | null>(null);
   const [renameDraft, setRenameDraft] = React.useState("");
   const [isSubmittingRename, setIsSubmittingRename] = React.useState(false);
@@ -693,9 +792,15 @@ export default function ChatSidebar({
 
   React.useEffect(() => {
     onFloatingUiStateChange?.(
-      Boolean(openActionMenuId || renamingConversationId || profileMenuOpen),
+      Boolean(openActionMenuId || contextMenuId || renamingConversationId || profileMenuOpen),
     );
-  }, [onFloatingUiStateChange, openActionMenuId, renamingConversationId, profileMenuOpen]);
+  }, [
+    onFloatingUiStateChange,
+    openActionMenuId,
+    contextMenuId,
+    renamingConversationId,
+    profileMenuOpen,
+  ]);
 
   const lastDismissFloatingUiSignalRef = React.useRef(dismissFloatingUiSignal);
   React.useEffect(() => {
@@ -706,8 +811,14 @@ export default function ChatSidebar({
     lastDismissFloatingUiSignalRef.current = dismissFloatingUiSignal;
     setOpenActionMenuId(null);
     setProfileMenuOpen(false);
+    // Only remount when a right-click menu is actually open: the remount
+    // reaches every conversation row.
+    if (contextMenuId) {
+      setContextMenuId(null);
+      setContextMenuEpoch((epoch) => epoch + 1);
+    }
     handleCancelRename();
-  }, [dismissFloatingUiSignal, handleCancelRename]);
+  }, [contextMenuId, dismissFloatingUiSignal, handleCancelRename]);
 
   const canSubmitRename = renameDraft.trim().length > 0;
 
@@ -787,197 +898,199 @@ export default function ChatSidebar({
     const resolvedTitle = rawTitle || fallbackTitle;
     const isRenaming = renamingConversationId === conversation.id;
     const isActive = conversation.id === currentConversationId;
+    // A busy row shows a spinner instead of its "⋯" menu; the right-click menu
+    // follows it, so a running chat cannot be deleted or archived from either.
+    const isBusy = Boolean(conversation.isStreaming || conversation.hasActiveTasks);
+    const actionItemProps = {
+      isPinned: Boolean(conversation.isPinned),
+      isReported: Boolean(conversation.isReported),
+      onRename: () => handleStartRename(conversation.id, resolvedTitle),
+      onTogglePin: () => onTogglePinConversation?.(conversation),
+      onArchive: () => onArchiveConversation?.(conversation.id),
+      onReport: () => onReportConversation?.(conversation.id),
+      onDelete: () => onDeleteConversation(conversation.id),
+    };
 
     return (
       <MotionMenuItem key={conversation.id} data-motion="row" {...rowMotion(reduceMotion, index)}>
-        <SidebarListRow
-          isActive={isActive}
-          onClick={(event) => {
-            if (isRenaming) {
-              event.stopPropagation();
-              return;
-            }
-            handleConversationSelect(conversation);
-          }}
-          tooltip={{
-            children: (
-              <div className="flex max-w-xs flex-col gap-0.5">
-                <span className="text-sm font-medium">{resolvedTitle}</span>
-                {lastMessage && (
-                  <span
-                    className="text-xs text-muted-foreground leading-snug"
-                    style={{
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
-                    }}
-                  >
-                    {lastMessage}
-                  </span>
-                )}
-              </div>
-            ),
-          }}
+        <ContextMenu
+          key={contextMenuEpoch}
+          onOpenChange={(isOpen) =>
+            setContextMenuId((current) =>
+              isOpen ? conversation.id : current === conversation.id ? null : current,
+            )
+          }
         >
-          {isRenaming ? (
-            <div
-              ref={renameContainerRef}
-              className="relative z-[1] flex w-full items-center gap-2 rounded-xl border border-border/60 bg-background/80 px-2 py-1"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <textarea
-                ref={renameInputRef}
-                rows={1}
-                value={renameDraft}
-                onChange={(event) => setRenameDraft(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void handleSubmitRename();
-                  }
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    handleCancelRename();
-                  }
-                }}
-                className="h-5 min-h-[1.25rem] w-full resize-none overflow-hidden border-none bg-transparent px-1 py-0 text-sm font-medium leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
-                placeholder="Rename conversation"
-                spellCheck={false}
-              />
-              <button
-                type="button"
-                aria-label="Confirm rename"
+          {/* `contents`: the wrapper adds no box, so the row and its "⋯" stay
+              siblings (the action is placed by `peer-*` on the row). Disabled
+              while renaming, so the rename field keeps the browser's own menu. */}
+          <ContextMenuTrigger asChild disabled={isRenaming || isBusy}>
+            <div className="contents">
+              <SidebarListRow
+                isActive={isActive}
+                className={cn(
+                  contextMenuId === conversation.id &&
+                    "bg-[hsl(var(--hover-surface))] text-foreground",
+                )}
                 onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void handleSubmitRename();
+                  if (isRenaming) {
+                    event.stopPropagation();
+                    return;
+                  }
+                  handleConversationSelect(conversation);
                 }}
-                disabled={!canSubmitRename || isSubmittingRename}
-                className="grid size-7 flex-shrink-0 place-items-center rounded-full bg-primary text-primary-foreground shadow-md transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {isSubmittingRename ? (
-                  <Loader size={14} className="text-primary-foreground" />
-                ) : (
-                  <ArrowRight className="h-3.5 w-3.5" />
-                )}
-              </button>
-            </div>
-          ) : (
-            <SidebarListRowTitle>{resolvedTitle}</SidebarListRowTitle>
-          )}
-        </SidebarListRow>
-        {!isRenaming &&
-          (conversation.isStreaming || conversation.hasActiveTasks ? (
-            <SidebarMenuAction
-              aria-label={
-                conversation.isStreaming
-                  ? "Conversation is streaming"
-                  : "Background sub-agents are working"
-              }
-              onClick={(event) => event.stopPropagation()}
-              onMouseDown={(event) => event.stopPropagation()}
-              onPointerDown={(event) => event.stopPropagation()}
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:!bg-transparent hover:!text-muted-foreground active:!bg-transparent focus-visible:!bg-transparent focus-visible:text-foreground peer-data-[size=lg]/menu-button:!top-1/2 peer-data-[size=lg]/menu-button:-translate-y-1/2"
-            >
-              <Loader size={14} />
-            </SidebarMenuAction>
-          ) : (
-            <DropdownMenu.Root
-              open={openActionMenuId === conversation.id}
-              onOpenChange={(isOpen) => {
-                setOpenActionMenuId(isOpen ? conversation.id : null);
-              }}
-            >
-              <DropdownMenu.Trigger
-                asChild
-                {...touchMenuTrigger(() =>
-                  setOpenActionMenuId((current) =>
-                    current === conversation.id ? null : conversation.id,
+                tooltip={{
+                  children: (
+                    <div className="flex max-w-xs flex-col gap-0.5">
+                      <span className="text-sm font-medium">{resolvedTitle}</span>
+                      {lastMessage && (
+                        <span
+                          className="text-xs text-muted-foreground leading-snug"
+                          style={{
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                          }}
+                        >
+                          {lastMessage}
+                        </span>
+                      )}
+                    </div>
                   ),
-                )}
+                }}
               >
-                <SidebarMenuAction
-                  aria-label="Conversation actions"
-                  onClick={(event) => event.stopPropagation()}
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  showOnHover
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:!bg-transparent hover:!text-muted-foreground active:!bg-transparent focus-visible:!bg-transparent focus-visible:text-foreground peer-data-[size=lg]/menu-button:!top-1/2 peer-data-[size=lg]/menu-button:-translate-y-1/2"
-                >
-                  <MoreHorizontal size={14} />
-                </SidebarMenuAction>
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content
-                  side="right"
-                  sideOffset={8}
-                  align="end"
-                  className={`z-50 w-48 rounded-lg border border-border bg-background p-1.5 text-sm text-foreground shadow-lg focus:outline-none origin-[--radix-dropdown-menu-content-transform-origin] ${RADIX_MOTION.popover}`}
-                  onCloseAutoFocus={(event) => event.preventDefault()}
-                >
-                  <DropdownMenu.Item
-                    onSelect={() => {
-                      handleStartRename(conversation.id, resolvedTitle);
-                    }}
-                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm transition-colors data-[highlighted]:bg-muted data-[highlighted]:text-foreground focus-visible:outline-none data-[highlighted]:outline-none"
+                {isRenaming ? (
+                  <div
+                    ref={renameContainerRef}
+                    className="relative z-[1] flex w-full items-center gap-2 rounded-xl border border-border/60 bg-background/80 px-2 py-1"
+                    onClick={(event) => event.stopPropagation()}
                   >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-muted-foreground">
-                      <Pencil size={15} />
-                    </div>
-                    <span>Rename</span>
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    onSelect={() => {
-                      onTogglePinConversation?.(conversation);
-                    }}
-                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm transition-colors data-[highlighted]:bg-muted data-[highlighted]:text-foreground focus-visible:outline-none data-[highlighted]:outline-none"
-                  >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-muted-foreground">
-                      {conversation.isPinned ? <PinOff size={15} /> : <Pin size={15} />}
-                    </div>
-                    <span>{conversation.isPinned ? "Unpin" : "Pin"}</span>
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item
-                    onSelect={() => {
-                      onArchiveConversation?.(conversation.id);
-                    }}
-                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm transition-colors data-[highlighted]:bg-muted data-[highlighted]:text-foreground focus-visible:outline-none data-[highlighted]:outline-none"
-                  >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-muted-foreground">
-                      <Archive size={15} />
-                    </div>
-                    <span>Archive</span>
-                  </DropdownMenu.Item>
-                  {!conversation.isReported && (
-                    <DropdownMenu.Item
-                      onSelect={() => {
-                        onReportConversation?.(conversation.id);
+                    <textarea
+                      ref={renameInputRef}
+                      rows={1}
+                      value={renameDraft}
+                      onChange={(event) => setRenameDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" && !event.shiftKey) {
+                          event.preventDefault();
+                          void handleSubmitRename();
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          handleCancelRename();
+                        }
                       }}
-                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm transition-colors data-[highlighted]:bg-muted data-[highlighted]:text-foreground focus-visible:outline-none data-[highlighted]:outline-none"
+                      className="h-5 min-h-[1.25rem] w-full resize-none overflow-hidden border-none bg-transparent px-1 py-0 text-sm font-medium leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
+                      placeholder="Rename conversation"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Confirm rename"
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        void handleSubmitRename();
+                      }}
+                      disabled={!canSubmitRename || isSubmittingRename}
+                      className="grid size-7 flex-shrink-0 place-items-center rounded-full bg-primary text-primary-foreground shadow-md transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <div className="flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-muted-foreground">
-                        <Flag size={15} />
-                      </div>
-                      <span>Report</span>
-                    </DropdownMenu.Item>
-                  )}
-                  <DropdownMenu.Separator className="my-1 h-px bg-border/60" />
-                  <DropdownMenu.Item
-                    onSelect={() => {
-                      onDeleteConversation(conversation.id);
-                    }}
-                    className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm text-destructive transition-colors data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive focus-visible:outline-none data-[highlighted]:outline-none"
+                      {isSubmittingRename ? (
+                        <Loader size={14} className="text-primary-foreground" />
+                      ) : (
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <SidebarListRowTitle>{resolvedTitle}</SidebarListRowTitle>
+                )}
+              </SidebarListRow>
+              {!isRenaming &&
+                (isBusy ? (
+                  <SidebarMenuAction
+                    aria-label={
+                      conversation.isStreaming
+                        ? "Conversation is streaming"
+                        : "Background sub-agents are working"
+                    }
+                    onClick={(event) => event.stopPropagation()}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onPointerDown={(event) => event.stopPropagation()}
+                    className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:!bg-transparent hover:!text-muted-foreground active:!bg-transparent focus-visible:!bg-transparent focus-visible:text-foreground peer-data-[size=lg]/menu-button:!top-1/2 peer-data-[size=lg]/menu-button:-translate-y-1/2"
                   >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-transparent text-destructive">
-                      <Trash2 size={15} />
-                    </div>
-                    <span>Delete</span>
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-          ))}
+                    <Loader size={14} />
+                  </SidebarMenuAction>
+                ) : (
+                  <DropdownMenu.Root
+                    open={openActionMenuId === conversation.id}
+                    onOpenChange={(isOpen) => {
+                      setOpenActionMenuId(isOpen ? conversation.id : null);
+                    }}
+                  >
+                    <DropdownMenu.Trigger
+                      asChild
+                      {...touchMenuTrigger(() =>
+                        setOpenActionMenuId((current) =>
+                          current === conversation.id ? null : conversation.id,
+                        ),
+                      )}
+                    >
+                      <SidebarMenuAction
+                        aria-label="Conversation actions"
+                        onClick={(event) => event.stopPropagation()}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        onPointerDown={(event) => event.stopPropagation()}
+                        showOnHover
+                        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:!bg-transparent hover:!text-muted-foreground active:!bg-transparent focus-visible:!bg-transparent focus-visible:text-foreground peer-data-[size=lg]/menu-button:!top-1/2 peer-data-[size=lg]/menu-button:-translate-y-1/2"
+                      >
+                        <MoreHorizontal size={14} />
+                      </SidebarMenuAction>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content
+                        side="right"
+                        sideOffset={8}
+                        align="end"
+                        className={`${ROW_MENU_CONTENT} origin-[--radix-dropdown-menu-content-transform-origin] ${RADIX_MOTION.popover}`}
+                        onCloseAutoFocus={(event) => event.preventDefault()}
+                      >
+                        <ConversationActionItems
+                          {...actionItemProps}
+                          Item={DropdownMenu.Item}
+                          Separator={DropdownMenu.Separator}
+                        />
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
+                ))}
+            </div>
+          </ContextMenuTrigger>
+          {/* The same actions on right-click, opened at the pointer. */}
+          <ContextMenuContent
+            className={ROW_MENU_CONTENT}
+            aria-label={`Actions for ${resolvedTitle}`}
+            onCloseAutoFocus={(event) => {
+              // After Rename the field takes focus; otherwise focus goes back
+              // where it was, which keeps the menu usable from the keyboard.
+              if (contextRenameRef.current) {
+                contextRenameRef.current = false;
+                event.preventDefault();
+              }
+            }}
+          >
+            <ConversationActionItems
+              {...actionItemProps}
+              onRename={() => {
+                contextRenameRef.current = true;
+                actionItemProps.onRename();
+              }}
+              Item={ContextMenuItem}
+              Separator={ContextMenuSeparator}
+            />
+          </ContextMenuContent>
+        </ContextMenu>
       </MotionMenuItem>
     );
   };
