@@ -8,19 +8,21 @@
  * anchored on the table, open while the table holds the selection, the same
  * table transforms), adapted: no cell colours, borders, merge or split — a
  * markdown table cannot store them — and buttons a finger can hit on a
- * phone. It lives in the canvas feature, not in `shared/ui`, because its
- * commands (`lib/blockCommands.ts`) are the canvas's.
+ * phone, Phosphor icons like the canvas's other bars (a delete button turns
+ * the destructive colour on hover). It lives in the canvas feature, not in
+ * `shared/ui`, because its commands (`lib/blockCommands.ts`) are the canvas's.
  */
 import type { ReactNode } from "react";
 import type { TTableElement } from "platejs";
 import {
-  BetweenHorizontalEnd,
-  BetweenHorizontalStart,
-  BetweenVerticalEnd,
-  BetweenVerticalStart,
-  ListX,
-  Trash2,
-} from "lucide-react";
+  PiColumns,
+  PiColumnsPlusLeft,
+  PiColumnsPlusRight,
+  PiRows,
+  PiRowsPlusBottom,
+  PiRowsPlusTop,
+  PiTrash,
+} from "react-icons/pi";
 import {
   useEditorRef,
   useEditorSelector,
@@ -37,7 +39,7 @@ import { isSelectingBlocks, tableAction, type CanvasTableAction } from "../../li
 import { rememberSelection, restoreSelection } from "../../lib/selectionMemory";
 
 const button =
-  "flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:size-11 [&_svg]:size-4";
+  "flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:size-11 [&_svg]:size-4";
 
 function TableButton({
   action,
@@ -68,9 +70,7 @@ function TableButton({
             tableAction(editor, action);
           }}
           className={
-            destructive
-              ? `${button} hover:bg-destructive/10 hover:text-destructive`
-              : button
+            destructive ? `${button} hover:bg-destructive/10 hover:text-destructive` : button
           }
         >
           {children}
@@ -103,31 +103,30 @@ export function CanvasTableToolbar() {
     >
       <Group label="Row">
         <TableButton action="rowAbove" label="Insert row above">
-          <BetweenHorizontalStart />
+          <PiRowsPlusTop />
         </TableButton>
         <TableButton action="rowBelow" label="Insert row below">
-          <BetweenHorizontalEnd />
+          <PiRowsPlusBottom />
         </TableButton>
         <TableButton action="deleteRow" label="Delete row" destructive>
-          <ListX />
+          <PiRows />
         </TableButton>
       </Group>
       <Divider />
       <Group label="Column">
         <TableButton action="colLeft" label="Insert column left">
-          <BetweenVerticalStart />
+          <PiColumnsPlusLeft />
         </TableButton>
         <TableButton action="colRight" label="Insert column right">
-          <BetweenVerticalEnd />
+          <PiColumnsPlusRight />
         </TableButton>
         <TableButton action="deleteCol" label="Delete column" destructive>
-          {/* The row icon turned on its side: a column with a cross. */}
-          <ListX className="-rotate-90" />
+          <PiColumns />
         </TableButton>
       </Group>
       <Divider />
       <TableButton action="deleteTable" label="Delete table" destructive>
-        <Trash2 />
+        <PiTrash />
       </TableButton>
     </div>
   );

@@ -10,15 +10,15 @@
  * cells use the app's tokens.
  */
 import { useState } from "react";
-import { Table } from "lucide-react";
+import { PiTable } from "react-icons/pi";
 import { useEditorRef } from "platejs/react";
 
 import { cn } from "@/shared/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 import { insertCanvasTable } from "../../lib/blockCommands";
 import { rememberSelection, restoreSelection } from "../../lib/selectionMemory";
+import { CanvasHint } from "./CanvasHint";
 
 const SIZE = 6;
 
@@ -41,22 +41,17 @@ export function CanvasTablePicker({ triggerClassName }: { triggerClassName: stri
         if (next) setHover({ rows: 3, cols: 3 });
       }}
     >
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <PopoverTrigger
-            aria-label="Table"
-            aria-haspopup="dialog"
-            onPointerDown={() => rememberSelection(editor)}
-            onMouseDown={(event) => event.preventDefault()}
-            className={triggerClassName}
-          >
-            <Table />
-          </PopoverTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          Table
-        </TooltipContent>
-      </Tooltip>
+      <CanvasHint label="Table" side="top">
+        <PopoverTrigger
+          aria-label="Table"
+          aria-haspopup="dialog"
+          onPointerDown={() => rememberSelection(editor)}
+          onMouseDown={(event) => event.preventDefault()}
+          className={triggerClassName}
+        >
+          <PiTable />
+        </PopoverTrigger>
+      </CanvasHint>
       <PopoverContent
         side="top"
         align="center"
@@ -108,7 +103,10 @@ export function CanvasTablePicker({ triggerClassName }: { triggerClassName: stri
             );
           })}
         </div>
-        <p className="mt-2 text-center text-xs tabular-nums text-muted-foreground" aria-live="polite">
+        <p
+          className="mt-2 text-center text-xs tabular-nums text-muted-foreground"
+          aria-live="polite"
+        >
           {hover.rows} × {hover.cols}
         </p>
       </PopoverContent>

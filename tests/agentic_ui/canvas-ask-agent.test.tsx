@@ -33,7 +33,7 @@ const { api, passage, coarse, orbSpot } = vi.hoisted(() => ({
     listDocumentComments: vi.fn(),
   },
   passage: { current: null as null | Record<string, unknown> },
-  // The pill's Ask agent is touch-only; the panel tests drive it as a phone.
+  // The panel tests drive the pill's Ask agent as a phone (no caret orb).
   coarse: { current: true },
   // The orb at the caret's spot (its idle wait and measuring are pinned in
   // canvas-selection-bar.test.tsx); null: no orb.
@@ -387,7 +387,8 @@ describe("Ask agent in the canvas", () => {
     expect(menu).toHaveAttribute("aria-label", "Selection actions");
     // The presets are not in the bar itself: they live in the Ask panel.
     expect(within(menu).queryByText("Shorter")).toBeNull();
-    fireEvent.click(within(menu).getByText("Ask agent"));
+    // Icon-only: the orb button is named by its label.
+    fireEvent.click(menu.querySelector<HTMLElement>('button[aria-label="Ask agent"]')!);
     const input = await within(menu).findByPlaceholderText("Ask the agent to change this…");
     for (const label of ["Shorter", "Longer", "Formal", "Simpler", "Polish"]) {
       expect(within(menu).getByText(label)).toBeInTheDocument();
@@ -430,6 +431,8 @@ describe("Ask agent in the canvas", () => {
 
   it("with unsaved edits asks first: Cancel sends nothing, Save and send saves then sends on the new version", async () => {
     const onAskAgent = vi.fn().mockResolvedValue(true);
+    // A mouse: the pill keeps its block tools (Table) beside Ask agent.
+    coarse.current = false;
     renderCanvas({ onAskAgent });
     await screen.findByRole("heading", { level: 1, name: "The brief" });
 
@@ -465,6 +468,8 @@ describe("Ask agent in the canvas", () => {
 
   it("a failed save sends nothing", async () => {
     const onAskAgent = vi.fn().mockResolvedValue(true);
+    // A mouse: the pill keeps its block tools (Table) beside Ask agent.
+    coarse.current = false;
     api.saveDocumentVersion.mockRejectedValue(new Error("down"));
     renderCanvas({ onAskAgent });
     await screen.findByRole("heading", { level: 1, name: "The brief" });
@@ -495,23 +500,35 @@ describe("Ask agent in the canvas", () => {
     expect(onAskAgent).not.toHaveBeenCalled();
   });
 
-  it("the pill's Ask agent shows only on touch, only with a selection, and only with a conversation", async () => {
-    // Touch, nothing selected: not there.
+  it("the pill's Ask agent is always there while editing, says why with nothing to act on, and needs a conversation", async () => {
+    // Nothing selected and no caret: there, but it says what it needs.
     passage.current = null;
     const { rerender } = renderCanvas({ onAskAgent: vi.fn() });
     await screen.findByRole("heading", { level: 1, name: "The brief" });
-    expect(screen.queryByRole("button", { name: "Ask agent" })).not.toBeInTheDocument();
+    const pill = screen.getByRole("toolbar", { name: "Formatting" });
+    expect(within(pill).getByRole("button", { name: "Ask agent" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    openAsk();
+    expect(
+      await screen.findByText("Select some text, or put the caret in a paragraph"),
+    ).toBeInTheDocument();
     // No conversation to send into: never.
     rerender({ onAskAgent: null });
-    expect(screen.queryByRole("button", { name: "Ask agent" })).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: "Ask agent" })).not.toBeInTheDocument(),
+    );
   });
 
-  it("with a mouse the pill has no Ask agent: the floating menu over the selection is the way in", async () => {
+  it("with a mouse the pill has Ask agent too, beside the floating menu over the selection", async () => {
     coarse.current = false;
     renderCanvas({ onAskAgent: vi.fn() });
     await screen.findByRole("heading", { level: 1, name: "The brief" });
     const pill = screen.getByRole("toolbar", { name: "Formatting" });
-    expect(within(pill).queryByRole("button", { name: "Ask agent" })).not.toBeInTheDocument();
+    expect(within(pill).getByRole("button", { name: "Ask agent" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
     expect(document.querySelector("[data-canvas-selection-menu]")).not.toBeNull();
   });
 

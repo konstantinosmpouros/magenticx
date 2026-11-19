@@ -5,24 +5,24 @@
  *
  * Adapted from Plate's registry `block-context-menu` (same actions, same
  * BlockSelection transforms), but opened from a ⋮⋮ handle beside the block
- * on a desktop (`CanvasBlockHandle`) and from the toolbar's Block button
+ * on a desktop (`CanvasBlockHandle`) and from the pill's ⋯ More menu
  * everywhere, instead of a right-click menu: a phone has no right click, and
  * the registry turns its menu off on touch. The registry's context menu
  * needs `@radix-ui/react-context-menu`; this is the app's dropdown, so no
  * second Radix layer stack comes in.
  */
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  Copy,
-  GripVertical,
-  Repeat2,
-  Trash2,
-} from "lucide-react";
+  PiArrowDown,
+  PiArrowUp,
+  PiArrowsClockwise,
+  PiCaretLeft,
+  PiCaretRight,
+  PiCheck,
+  PiCopy,
+  PiDotsSixVertical,
+  PiTrash,
+} from "react-icons/pi";
 import { BlockMenuPlugin, BlockSelectionPlugin } from "@platejs/selection/react";
 import { useEditorRef } from "platejs/react";
 import type { SlateEditor } from "platejs";
@@ -70,9 +70,10 @@ function refocus(editor: SlateEditor) {
  * focus is in the menu the editor may drop its block selection (a selection
  * change outside the editor clears it), and the menu must still act on the
  * blocks it was opened for. Selected blocks are selected again after the
- * action.
+ * action. `leading` rows (the pill's ⋯ menu: lists, code block) come first,
+ * above a separator, in the main view only.
  */
-export function CanvasBlockMenuItems() {
+export function CanvasBlockMenuItems({ leading }: { leading?: ReactNode }) {
   const editor = useEditorRef();
   const [{ ids, asBlocks }] = useState(() => {
     // A tap may have collapsed the text selection: put it back first.
@@ -101,7 +102,7 @@ export function CanvasBlockMenuItems() {
     >
       <span className="flex-1">{item.label}</span>
       {count === 1 && item.kind === kind ? (
-        <Check className="text-primary" aria-label="Current" />
+        <PiCheck className="text-primary" aria-label="Current" />
       ) : null}
     </DropdownMenuItem>
   ));
@@ -116,7 +117,7 @@ export function CanvasBlockMenuItems() {
             setView("main");
           }}
         >
-          <ChevronLeft aria-hidden="true" />
+          <PiCaretLeft aria-hidden="true" />
           Turn into
         </DropdownMenuItem>
         <DropdownMenuSeparator />
@@ -127,11 +128,17 @@ export function CanvasBlockMenuItems() {
 
   return (
     <>
+      {leading ? (
+        <>
+          {leading}
+          <DropdownMenuSeparator />
+        </>
+      ) : null}
       <DropdownMenuItem
         className={row}
         onSelect={run((targets) => duplicateBlocks(editor, targets, asBlocks))}
       >
-        <Copy aria-hidden="true" />
+        <PiCopy aria-hidden="true" />
         Duplicate
       </DropdownMenuItem>
       <DropdownMenuItem
@@ -139,7 +146,7 @@ export function CanvasBlockMenuItems() {
         disabled={!canUp}
         onSelect={run((targets) => moveBlocks(editor, "up", targets, asBlocks))}
       >
-        <ArrowUp aria-hidden="true" />
+        <PiArrowUp aria-hidden="true" />
         Move up
       </DropdownMenuItem>
       <DropdownMenuItem
@@ -147,7 +154,7 @@ export function CanvasBlockMenuItems() {
         disabled={!canDown}
         onSelect={run((targets) => moveBlocks(editor, "down", targets, asBlocks))}
       >
-        <ArrowDown aria-hidden="true" />
+        <PiArrowDown aria-hidden="true" />
         Move down
       </DropdownMenuItem>
       {touch ? (
@@ -158,14 +165,14 @@ export function CanvasBlockMenuItems() {
             setView("turnInto");
           }}
         >
-          <Repeat2 aria-hidden="true" />
+          <PiArrowsClockwise aria-hidden="true" />
           <span className="flex-1">Turn into</span>
-          <ChevronRight className="text-muted-foreground" aria-hidden="true" />
+          <PiCaretRight className="text-muted-foreground" aria-hidden="true" />
         </DropdownMenuItem>
       ) : (
         <DropdownMenuSub>
           <DropdownMenuSubTrigger className={row}>
-            <Repeat2 className="size-4" aria-hidden="true" />
+            <PiArrowsClockwise className="size-4" aria-hidden="true" />
             Turn into
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent className="w-48">{kinds}</DropdownMenuSubContent>
@@ -178,20 +185,25 @@ export function CanvasBlockMenuItems() {
         disabled={count === 0}
         onSelect={run((targets) => deleteBlocks(editor, targets))}
       >
-        <Trash2 aria-hidden="true" />
+        <PiTrash aria-hidden="true" />
         Delete {plural}
       </DropdownMenuItem>
     </>
   );
 }
 
-/** The menu's content, shared by the handle and the toolbar button. */
+/** The menu's content, shared by the handle and the pill's ⋯ menu. */
 export function CanvasBlockMenuContent({
   side,
   align,
+  leading,
+  label,
 }: {
   side: "top" | "bottom" | "left" | "right";
   align: "start" | "center" | "end";
+  /** Rows above the block actions (see `CanvasBlockMenuItems`). */
+  leading?: ReactNode;
+  label?: string;
 }) {
   const editor = useEditorRef();
   return (
@@ -199,12 +211,13 @@ export function CanvasBlockMenuContent({
       side={side}
       align={align}
       className="w-52"
+      aria-label={label}
       onCloseAutoFocus={(event) => {
         event.preventDefault();
         refocus(editor);
       }}
     >
-      <CanvasBlockMenuItems />
+      <CanvasBlockMenuItems leading={leading} />
     </DropdownMenuContent>
   );
 }
@@ -256,7 +269,7 @@ export function CanvasBlockHandle({ id }: { id: string }) {
             "group-hover/block:opacity-100 data-[state=open]:bg-muted data-[state=open]:opacity-100 motion-reduce:transition-none",
           )}
         >
-          <GripVertical className="pointer-events-none size-4" aria-hidden="true" />
+          <PiDotsSixVertical className="pointer-events-none size-4" aria-hidden="true" />
         </DropdownMenuTrigger>
       </CanvasHint>
       <CanvasBlockMenuContent side="bottom" align="start" />

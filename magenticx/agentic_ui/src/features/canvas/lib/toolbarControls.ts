@@ -13,15 +13,21 @@ import { BlockSelectionPlugin } from "@platejs/selection/react";
 import { isSelectingBlocks } from "./blockCommands";
 import { rememberSelection } from "./selectionMemory";
 
-/** What every control of the pill and the selection bar looks like (hover, focus, pressed, open). */
+/**
+ * What every control of the pill and the selection bar looks like, Claude
+ * Docs' quiet icon buttons: a rounded square, the icon in the muted text
+ * colour (Phosphor regular, 16px with a mouse, 18px on touch), a muted fill
+ * on hover / open, and a soft primary tint while it is on (a mark, the
+ * current list or text style — `aria-pressed` or `data-active`).
+ */
 const TOOL_BASE =
-  "flex shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors duration-150 [touch-action:manipulation] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-35 aria-pressed:bg-primary/12 aria-pressed:text-primary data-[state=open]:bg-muted [&_svg]:size-[18px] [@media(pointer:fine)]:[&_svg]:size-4";
+  "flex shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 motion-reduce:transition-none [touch-action:manipulation] hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-35 data-[state=open]:bg-muted data-[state=open]:text-foreground aria-pressed:bg-primary/12 aria-pressed:text-primary data-[active]:bg-primary/12 data-[active]:text-primary [&_svg]:size-[18px] [@media(pointer:fine)]:[&_svg]:size-4";
 
 /** An icon button of the pill or the selection bar: 32px with a mouse, 44px on touch. */
 export const CANVAS_TOOL_BUTTON = `${TOOL_BASE} size-9 [@media(pointer:coarse)]:size-11 [@media(pointer:fine)]:size-8`;
 
-/** A menu button with an icon and a ▾ (the list menu): the same height, as wide as it needs. */
-export const CANVAS_TOOL_MENU_BUTTON = `${TOOL_BASE} h-9 gap-0.5 px-1.5 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:fine)]:h-8`;
+/** A menu button with an icon and a small ▾ (text style, list): the same height, as wide as it needs. */
+export const CANVAS_TOOL_MENU_BUTTON = `${TOOL_BASE} h-9 gap-px pl-1.5 pr-1 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 [@media(pointer:fine)]:h-8 [&_svg+svg]:!size-2.5 [&_svg+svg]:opacity-70`;
 
 /**
  * Marks the menus and popovers the formatting controls open (portalled to the

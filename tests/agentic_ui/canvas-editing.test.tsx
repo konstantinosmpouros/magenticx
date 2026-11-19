@@ -31,7 +31,8 @@ import { CanvasDocumentSavedSchema, CanvasStaleBaseSchema } from "@/shared/lib/s
 import type { CanvasDocumentVersion, CanvasSaveResult, CanvasSaveState } from "@/shared/lib/types";
 import { SaveController } from "@/features/canvas/lib/saveController";
 import { diffDocuments } from "@/features/canvas/lib/documentDiff";
-import { normalizeLinkUrl } from "@/features/canvas/lib/editorCommands";
+import { inQuote, normalizeLinkUrl, toggleQuote } from "@/features/canvas/lib/editorCommands";
+import { createCanvasEditor } from "@/features/canvas/lib/editorKit";
 import { markdownToValue, valueToMarkdown } from "@/features/canvas/lib/markdown";
 import { useCanvasEditing } from "@/features/canvas/hooks/useCanvasEditing";
 import { CanvasConflictDialog } from "@/features/canvas/components/canvas_parts/CanvasConflictDialog";
@@ -403,6 +404,22 @@ describe("toolbar rules", () => {
     expect(normalizeLinkUrl("javascript:alert(1)")).toBeNull();
     expect(normalizeLinkUrl("data:text/html,x")).toBeNull();
     expect(normalizeLinkUrl("   ")).toBeNull();
+  });
+
+  it("Quote keeps the caret on the same text, in and out", () => {
+    const doc = "# T\n\nSome **bold** words.\n\n## Next\n";
+    const editor = createCanvasEditor(markdownToValue(doc));
+    // "wo|rds", in the leaf after the bold one.
+    editor.tf.select({ path: [1, 2], offset: 3 });
+    const beforeCaret = () =>
+      editor.api.string({ anchor: editor.api.start([1])!, focus: editor.selection!.anchor });
+    toggleQuote(editor);
+    expect(inQuote(editor)).toBe(true);
+    expect(beforeCaret()).toBe("Some bold wo");
+    toggleQuote(editor);
+    expect(inQuote(editor)).toBe(false);
+    expect(beforeCaret()).toBe("Some bold wo");
+    expect(valueToMarkdown(editor.children as never)).toBe(doc);
   });
 
   it("writes checklists, quotes and an empty table as clean markdown", () => {

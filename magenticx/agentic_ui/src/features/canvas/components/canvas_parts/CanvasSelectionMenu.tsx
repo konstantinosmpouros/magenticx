@@ -1,8 +1,10 @@
 /**
  * The selection bar (plan 44 §3, Phases 4.3–4.4): select text with a mouse
- * and a small bar floats above it, like Claude Docs' —
+ * and a small bar floats above it, like Claude Docs' — icon-only, compact,
+ * small group gaps instead of heavy dividers, a tooltip with the name and
+ * shortcut on every button:
  *
- *   Comment · (orb) Ask agent | Tt▾  B  I  S  {} | list▾  link
+ *   comment · (orb) | Aa▾  B  I  S  {} | list▾  link
  *
  * **Comment** opens a small composer and starts a thread on the passage
  * (editing or reading: a comment changes nothing in the document). **Ask
@@ -24,7 +26,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { MessageSquarePlus } from "lucide-react";
+import { PiChatCircle } from "react-icons/pi";
 import { RangeApi } from "platejs";
 import { useEditorReadOnly, useEditorRef, useEditorSelector } from "platejs/react";
 import {
@@ -50,7 +52,7 @@ import { useSelectedPassage } from "../../hooks/useSelectedPassage";
 import { passageProblem } from "../../lib/askAgent";
 import { showAskHighlight } from "../../lib/askHighlight";
 import { captureAnchor, type CanvasAnchorCapture } from "../../lib/commentAnchors";
-import { FORMAT_LAYER_ATTR } from "../../lib/toolbarControls";
+import { CANVAS_TOOL_BUTTON, FORMAT_LAYER_ATTR } from "../../lib/toolbarControls";
 import { CanvasAskCard } from "./CanvasAskPanel";
 import { CanvasCommentForm } from "./CanvasCommentForm";
 import { LinkButton, ListMenu, MarkButtons, TextStyleMenu } from "./CanvasFormatControls";
@@ -63,10 +65,10 @@ type Held =
   | { kind: "ask"; passage: CanvasAskPassage }
   | { kind: "comment"; passage: CanvasAskPassage; capture: CanvasAnchorCapture | null };
 
-const textButton =
-  "flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium text-foreground/90 transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-not-allowed aria-disabled:opacity-45";
-
-const Divider = () => <span aria-hidden="true" className="mx-1 h-5 w-px shrink-0 bg-border" />;
+/** A group break: a short hairline with a little air, not a heavy rule. */
+const Divider = () => (
+  <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 rounded-full bg-border/80" />
+);
 
 export function CanvasSelectionMenu({
   ask = null,
@@ -191,15 +193,20 @@ export function CanvasSelectionMenu({
       );
   } else if (held?.kind === "ask") {
     content = (
-      <CanvasAskCard className="w-[min(24rem,calc(100vw-2rem))] p-1" onSend={send} onClose={close} />
+      <CanvasAskCard
+        className="w-[min(24rem,calc(100vw-2rem))] p-1"
+        onSend={send}
+        onClose={close}
+      />
     );
   } else {
     content = (
       <>
         {comment ? (
-          <CanvasHint label="Comment on the selection" side="top">
+          <CanvasHint label="Comment" side="top">
             <button
               type="button"
+              aria-label="Comment"
               onPointerDown={holdFocus}
               onMouseDown={holdFocus}
               onClick={() =>
@@ -209,34 +216,36 @@ export function CanvasSelectionMenu({
                   capture: captureAnchor(editor, target.range),
                 })
               }
-              className={textButton}
+              className={CANVAS_TOOL_BUTTON}
             >
-              <MessageSquarePlus className="size-4 text-muted-foreground" aria-hidden="true" />
-              Comment
+              <PiChatCircle aria-hidden="true" />
             </button>
           </CanvasHint>
         ) : null}
         {askHere && ask ? (
-          <CanvasHint label={askBlocked ?? "Ask the agent to change this"} side="top">
+          <CanvasHint label={askBlocked ?? "Ask agent"} side="top">
             <button
               type="button"
+              aria-label="Ask agent"
               aria-disabled={askBlocked ? true : undefined}
               onPointerDown={holdFocus}
               onMouseDown={holdFocus}
               onClick={() => {
                 if (!askBlocked) setHeld({ kind: "ask", passage: target });
               }}
-              className={textButton}
+              className={cn(
+                CANVAS_TOOL_BUTTON,
+                "aria-disabled:cursor-not-allowed aria-disabled:opacity-45",
+              )}
             >
               <Orb size={18} />
-              Ask agent
             </button>
           </CanvasHint>
         ) : null}
         {formatHere ? (
           <>
             {comment || askHere ? <Divider /> : null}
-            <TextStyleMenu variant="glyph" />
+            <TextStyleMenu />
             <MarkButtons />
             <Divider />
             <ListMenu />
@@ -260,7 +269,7 @@ export function CanvasSelectionMenu({
         if (event.key === "Escape") close();
       }}
       className={cn(
-        "z-50 flex max-w-[min(44rem,calc(100vw-1rem))] items-center gap-0.5 border border-border/70 bg-popover p-1 text-popover-foreground shadow-lg shadow-foreground/5 animate-in fade-in-0 zoom-in-95 duration-150 motion-reduce:animate-none",
+        "z-50 flex max-w-[min(44rem,calc(100vw-1rem))] items-center gap-0.5 border border-border/70 bg-popover p-1 text-popover-foreground shadow-lg shadow-foreground/10 animate-in fade-in-0 zoom-in-95 duration-150 motion-reduce:animate-none",
         held ? "rounded-2xl" : "rounded-xl",
       )}
     >

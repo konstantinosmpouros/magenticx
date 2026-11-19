@@ -1,13 +1,14 @@
 /**
- * Comment on a touch screen (plan 44, Phase 4.4), where there is no floating
- * selection menu: a Comment button shown only while text is selected — in
- * the pill toolbar beside Ask agent while editing, and on its own in a small
- * bar at the bottom while reading (a comment needs no editing). It acts on
- * the selection as it was when the button was pressed (a tap may collapse
- * it) and opens the composer in a popover above.
+ * Comment from the bottom of the document (plan 44, Phase 4.4): an icon
+ * button in the pill while editing (always there, like Claude Docs'; with
+ * nothing selected its popover says to select text first), and on a touch
+ * screen, while reading, a small bar with Comment alone shown while text is
+ * selected (a comment needs no editing). It acts on the selection as it was
+ * when the button was pressed (a tap may collapse it) and opens the composer
+ * in a popover above.
  */
 import { useEffect, useRef, useState } from "react";
-import { MessageSquarePlus } from "lucide-react";
+import { PiChatCircle } from "react-icons/pi";
 import type { TRange } from "platejs";
 import { useEditorRef } from "platejs/react";
 
@@ -20,6 +21,7 @@ import { selectedPassage } from "../../lib/askAgent";
 import { showAskHighlight } from "../../lib/askHighlight";
 import { captureAnchor, type CanvasAnchorCapture } from "../../lib/commentAnchors";
 import { rememberSelection, restoreSelection } from "../../lib/selectionMemory";
+import { CANVAS_TOOL_BUTTON } from "../../lib/toolbarControls";
 import { CanvasCommentForm } from "./CanvasCommentForm";
 import { CanvasHint } from "./CanvasHint";
 
@@ -28,10 +30,13 @@ const keepSelection = (event: React.MouseEvent) => event.preventDefault();
 export function CanvasCommentButton({
   comment,
   onHold,
+  iconOnly = false,
 }: {
   comment: CanvasCommentControl;
   /** Keeps the button shown from the tap until its popover closes. */
   onHold: (held: boolean) => void;
+  /** The pill's icon button; else a labelled button (the reading bar). */
+  iconOnly?: boolean;
 }) {
   const editor = useEditorRef();
   const [open, setOpen] = useState(false);
@@ -72,10 +77,14 @@ export function CanvasCommentButton({
             pressed.current = selectedPassage(editor);
           }}
           onMouseDown={keepSelection}
-          className="flex h-9 shrink-0 items-center gap-1.5 rounded-full pl-2.5 pr-3 text-[13px] font-semibold text-foreground/85 transition-colors duration-150 [touch-action:manipulation] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted [@media(pointer:coarse)]:h-11 [@media(pointer:fine)]:h-8 [&_svg]:size-4"
+          className={
+            iconOnly
+              ? CANVAS_TOOL_BUTTON
+              : "flex h-9 shrink-0 items-center gap-1.5 rounded-full pl-2.5 pr-3 text-[13px] font-semibold text-foreground/85 transition-colors duration-150 motion-reduce:transition-none [touch-action:manipulation] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted [@media(pointer:coarse)]:h-11 [@media(pointer:fine)]:h-8 [&_svg]:size-[18px]"
+          }
         >
-          <MessageSquarePlus aria-hidden="true" />
-          Comment
+          <PiChatCircle aria-hidden="true" />
+          {iconOnly ? null : "Comment"}
         </PopoverTrigger>
       </CanvasHint>
       <PopoverContent

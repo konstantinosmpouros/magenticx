@@ -102,21 +102,26 @@ src/
                    #   CanvasExportPanel (version picker, Word / PDF / Markdown rows, Copy as Markdown, unsaved note); CanvasDocumentView, the Plate
                    #   editor — editable at the latest version, read-only at an earlier one;
                    #   CanvasDocBar (≡, Find, undo / redo, the 💬 count, the Editing / Viewing menu); CanvasToolbar, the floating pill
-                   #   toolbar adapted from Plate's registry (keeps the selection on touch, rises
-                   #   above a phone's keyboard; its first buttons are Ask agent and Comment, on touch);
-                   #   CanvasFormatControls (the formatting controls the pill and the selection
-                   #   bar share: text style, the four marks, lists, list menu, link); CanvasSelectionMenu
-                   #   (the desktop's floating selection bar, `@platejs/floating` like Plate's
-                   #   registry floating-toolbar: Comment, Ask agent (the orb), text style, B I S
-                   #   code, list menu, link; Comment alone while reading); CanvasCaretOrb (the app's
+                   #   toolbar adapted from Plate's registry (block tools, icon-only: Aa▾, table,
+                   #   checklist, quote, ⋯ More (lists, code block, block actions), comment, and a
+                   #   filled Ask agent (selection or the caret's block); on touch with a selection
+                   #   the marks + link replace the block tools; keeps the selection on touch, rises
+                   #   above a phone's keyboard);
+                   #   CanvasFormatControls (the controls the pill and the selection bar share:
+                   #   text style, the four marks, checklist, list menu + ListMenuItems, link);
+                   #   CanvasSelectionMenu (the desktop's floating selection bar, icon-only,
+                   #   `@platejs/floating` like Plate's registry floating-toolbar: comment, Ask
+                   #   agent (the orb) | Aa▾ B I S code | list▾ link; Comment alone while reading).
+                   #   Canvas icons are Phosphor regular (`react-icons/pi`, imported one by one); CanvasCaretOrb (the app's
                    #   orb at the caret's line after an idle wait: Ask agent for that block);
                    #   CanvasComments (the comment threads: side panel / phone sheet, replies,
                    #   resolve / reopen, edit / delete, detached, Resolved (n)); CanvasCommentForm
-                   #   (the composer); CanvasCommentButton (Comment on touch: in the pill, and a
-                   #   bar while reading); CanvasAskPanel (CanvasAskCard: the compact
+                   #   (the composer); CanvasCommentButton (the pill's comment icon, and on touch a
+                   #   Comment bar while reading); CanvasAskPanel (CanvasAskCard: the compact
                    #   "Ask the agent to change this…" input with the presets as chips, shared by
                    #   the bar, the orb and the pill's popover); CanvasTablePicker (the size grid); CanvasBlockMenu
-                   #   (the ⋮⋮ handle + block menu: Delete / Duplicate / Move / Turn into);
+                   #   (the ⋮⋮ handle + block menu: Delete / Duplicate / Move / Turn into, also the
+                   #   lower half of the pill's ⋯ menu);
                    #   CanvasTableElement (a table + its floating row / column / delete toolbar);
                    #   CanvasSaveStatus (+ CanvasAgentEditingStatus while Ask agent's run goes);
                    #   CanvasUnsavedDialog (Save / Discard / Cancel; Save and send / Cancel

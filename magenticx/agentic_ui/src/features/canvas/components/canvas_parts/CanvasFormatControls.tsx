@@ -12,24 +12,26 @@
  *
  * Every control keeps the editor's selection (`lib/toolbarControls.ts`,
  * `lib/selectionMemory.ts`); with blocks selected, marks and styles apply to
- * all of them.
+ * all of them. Icon-only, like Claude Docs' bars: Phosphor regular icons
+ * (`react-icons/pi`, imported one by one so the lazy canvas chunk keeps only
+ * these), each with a tooltip naming it and its shortcut.
  */
 import { useRef, useState, type ReactNode } from "react";
+import type { IconType } from "react-icons";
 import {
-  Bold,
-  Check,
-  ChevronDown,
-  Code,
-  Italic,
-  Link2,
-  List,
-  ListChecks,
-  ListOrdered,
-  Strikethrough,
-  Type,
-  Unlink,
-  type LucideIcon,
-} from "lucide-react";
+  PiCaretDown,
+  PiCheck,
+  PiCode,
+  PiLinkBreak,
+  PiLinkSimple,
+  PiListBullets,
+  PiListChecks,
+  PiListNumbers,
+  PiTextAa,
+  PiTextB,
+  PiTextItalic,
+  PiTextStrikethrough,
+} from "react-icons/pi";
 import { KEYS } from "platejs";
 import {
   useEditorRef,
@@ -65,12 +67,7 @@ import {
   turnInto,
   type CanvasBlockKind,
 } from "../../lib/blockCommands";
-import {
-  applyLink,
-  normalizeLinkUrl,
-  removeLink,
-  selectedLinkUrl,
-} from "../../lib/editorCommands";
+import { applyLink, normalizeLinkUrl, removeLink, selectedLinkUrl } from "../../lib/editorCommands";
 import { rememberSelection, restoreSelection } from "../../lib/selectionMemory";
 import { modKeyLabel } from "../../lib/shortcuts";
 import {
@@ -151,50 +148,23 @@ export function MarkButtons() {
   return (
     <>
       <MarkButton nodeType={KEYS.bold} label="Bold" keys={`${mod}B`}>
-        <Bold />
+        <PiTextB />
       </MarkButton>
       <MarkButton nodeType={KEYS.italic} label="Italic" keys={`${mod}I`}>
-        <Italic />
+        <PiTextItalic />
       </MarkButton>
       <MarkButton nodeType={KEYS.strikethrough} label="Strikethrough" keys={`${mod}Shift+X`}>
-        <Strikethrough />
+        <PiTextStrikethrough />
       </MarkButton>
       <MarkButton nodeType={KEYS.code} label="Code" keys={`${mod}E`}>
-        <Code />
+        <PiCode />
       </MarkButton>
     </>
   );
 }
 
-/**
- * Lists: Plate's list toggle on the text selection; with blocks selected,
- * every selected block becomes an item (turn-into), since the toggle reads
- * only the text selection.
- */
-function ListButton({
-  nodeType,
-  label,
-  children,
-}: {
-  nodeType: typeof KEYS.ul | typeof KEYS.ol;
-  label: string;
-  children: ReactNode;
-}) {
-  const editor = useEditorRef();
-  const state = useListToolbarButtonState({ nodeType });
-  const { props } = useListToolbarButton(state);
-  return (
-    <ToolButton
-      label={label}
-      pressed={props.pressed}
-      onClick={() => (isSelectingBlocks(editor) ? turnInto(editor, nodeType) : props.onClick())}
-    >
-      {children}
-    </ToolButton>
-  );
-}
-
-function TodoButton() {
+/** Checklist: Plate's to-do toggle (the pill has it as its own button). */
+export function TodoButton() {
   const editor = useEditorRef();
   const state = useIndentTodoToolBarButtonState({ nodeType: KEYS.listTodo });
   const { props } = useIndentTodoToolBarButton(state);
@@ -206,99 +176,105 @@ function TodoButton() {
         isSelectingBlocks(editor) ? turnInto(editor, KEYS.listTodo) : props.onClick()
       }
     >
-      <ListChecks />
+      <PiListChecks />
     </ToolButton>
   );
 }
 
-/** The pill's three list buttons side by side. */
-export function ListButtons() {
+type ListKind = typeof KEYS.ul | typeof KEYS.ol | typeof KEYS.listTodo;
+type ListToggle = { pressed: boolean; toggle: () => void };
+
+const LIST_KINDS: { kind: ListKind; label: string; icon: IconType }[] = [
+  { kind: KEYS.ul, label: "Bulleted list", icon: PiListBullets },
+  { kind: KEYS.ol, label: "Numbered list", icon: PiListNumbers },
+  { kind: KEYS.listTodo, label: "Checklist", icon: PiListChecks },
+];
+
+/** Which list the selection is in, and each kind's toggle (Plate's list hooks). */
+function useListToggles(): Record<ListKind, ListToggle> {
+  const ul = useListToolbarButton(useListToolbarButtonState({ nodeType: KEYS.ul })).props;
+  const ol = useListToolbarButton(useListToolbarButtonState({ nodeType: KEYS.ol })).props;
+  const todo = useIndentTodoToolBarButton(
+    useIndentTodoToolBarButtonState({ nodeType: KEYS.listTodo }),
+  ).props;
+  return {
+    [KEYS.ul]: { pressed: Boolean(ul.pressed), toggle: ul.onClick },
+    [KEYS.ol]: { pressed: Boolean(ol.pressed), toggle: ol.onClick },
+    [KEYS.listTodo]: { pressed: Boolean(todo.pressed), toggle: todo.onClick },
+  } as Record<ListKind, ListToggle>;
+}
+
+/**
+ * The list kinds as menu items, a check on the current one; picking the
+ * current one turns the list back into text. Rendered inside a menu's
+ * content, so it mounts as the menu opens and takes its targets then (the
+ * menu takes the focus, the blocks stay put), as `CanvasBlockMenuItems`
+ * does. Shared by the selection bar's list menu and the pill's ⋯ menu.
+ */
+export function ListMenuItems({ kinds }: { kinds?: ListKind[] }) {
+  const editor = useEditorRef();
+  const toggles = useListToggles();
+  const [targets] = useState(() => {
+    restoreSelection(editor);
+    const taken = { ids: idsOf(targetBlocks(editor)), asBlocks: isSelectingBlocks(editor) };
+    // Kept for the pick: a menu item's select may come after the blur.
+    rememberSelection(editor);
+    return taken;
+  });
+
+  const pick = (kind: ListKind) => {
+    const { pressed, toggle } = toggles[kind];
+    if (targets.asBlocks) {
+      turnInto(editor, pressed ? KEYS.p : kind, blocksById(editor, targets.ids), true);
+      return;
+    }
+    restoreSelection(editor);
+    toggle();
+  };
+
   return (
     <>
-      <ListButton nodeType={KEYS.ul} label="Bulleted list">
-        <List />
-      </ListButton>
-      <ListButton nodeType={KEYS.ol} label="Numbered list">
-        <ListOrdered />
-      </ListButton>
-      <TodoButton />
+      {LIST_KINDS.filter((item) => !kinds || kinds.includes(item.kind)).map((item) => (
+        <DropdownMenuItem
+          key={item.kind}
+          onSelect={() => pick(item.kind)}
+          className="gap-2 [@media(pointer:coarse)]:min-h-11"
+        >
+          <item.icon className="size-4 text-muted-foreground" aria-hidden="true" />
+          <span className="flex-1">{item.label}</span>
+          {toggles[item.kind].pressed ? (
+            <PiCheck className="size-4 text-primary" aria-label="Current" />
+          ) : null}
+        </DropdownMenuItem>
+      ))}
     </>
   );
 }
 
 /**
  * The selection bar's list menu (one ▾ button for the three lists): the
- * current kind's icon on the trigger, each kind a menu item with a check on
- * the current one; picking the current one turns the list back into text.
+ * current kind's icon on the trigger, tinted while the selection is in a
+ * list; the kinds as menu items (`ListMenuItems`).
  */
 export function ListMenu({ side = "top" }: { side?: Side }) {
   const editor = useEditorRef();
-  const ul = useListToolbarButton(useListToolbarButtonState({ nodeType: KEYS.ul })).props;
-  const ol = useListToolbarButton(useListToolbarButtonState({ nodeType: KEYS.ol })).props;
-  const todo = useIndentTodoToolBarButton(
-    useIndentTodoToolBarButtonState({ nodeType: KEYS.listTodo }),
-  ).props;
-  // Taken as the menu opens: the menu takes the focus, the blocks stay put.
-  const targets = useRef<{ ids: string[]; asBlocks: boolean } | null>(null);
-
-  const kinds: {
-    kind: CanvasBlockKind;
-    label: string;
-    icon: LucideIcon;
-    pressed: boolean;
-    toggle: () => void;
-  }[] = [
-    { kind: KEYS.ul, label: "Bulleted list", icon: List, pressed: ul.pressed, toggle: ul.onClick },
-    {
-      kind: KEYS.ol,
-      label: "Numbered list",
-      icon: ListOrdered,
-      pressed: ol.pressed,
-      toggle: ol.onClick,
-    },
-    {
-      kind: KEYS.listTodo,
-      label: "Checklist",
-      icon: ListChecks,
-      pressed: Boolean(todo.pressed),
-      toggle: todo.onClick,
-    },
-  ];
-  const current = kinds.find((item) => item.pressed) ?? null;
-  const Icon = current?.icon ?? List;
-
-  const pick = (item: (typeof kinds)[number]) => {
-    const taken = targets.current;
-    if (taken?.asBlocks) {
-      turnInto(editor, item.pressed ? KEYS.p : item.kind, blocksById(editor, taken.ids), true);
-      return;
-    }
-    restoreSelection(editor);
-    item.toggle();
-  };
+  const toggles = useListToggles();
+  const current = LIST_KINDS.find((item) => toggles[item.kind].pressed) ?? null;
+  const Icon = current?.icon ?? PiListBullets;
 
   return (
-    <DropdownMenu
-      modal={false}
-      onOpenChange={(open) => {
-        if (!open) return;
-        restoreSelection(editor);
-        targets.current = { ids: idsOf(targetBlocks(editor)), asBlocks: isSelectingBlocks(editor) };
-        // Kept for the pick: a menu item's select may come after the blur.
-        rememberSelection(editor);
-      }}
-    >
+    <DropdownMenu modal={false}>
       <CanvasHint label={current ? current.label : "List"} side="top">
         <DropdownMenuTrigger
           // No preventDefault on pointerdown: Radix opens the menu on it.
           onPointerDown={() => rememberSelection(editor)}
           onMouseDown={keepSelection}
           aria-label={current ? `List: ${current.label}` : "List"}
-          aria-pressed={current ? true : undefined}
+          data-active={current ? "" : undefined}
           className={CANVAS_TOOL_MENU_BUTTON}
         >
           <Icon aria-hidden="true" />
-          <ChevronDown className="!size-3 opacity-70" aria-hidden="true" />
+          <PiCaretDown aria-hidden="true" />
         </DropdownMenuTrigger>
       </CanvasHint>
       <DropdownMenuContent
@@ -311,17 +287,7 @@ export function ListMenu({ side = "top" }: { side?: Side }) {
           refocus(editor);
         }}
       >
-        {kinds.map((item) => (
-          <DropdownMenuItem
-            key={item.kind}
-            onSelect={() => pick(item)}
-            className="gap-2 [@media(pointer:coarse)]:min-h-11"
-          >
-            <item.icon className="size-4 text-muted-foreground" aria-hidden="true" />
-            <span className="flex-1">{item.label}</span>
-            {item.pressed ? <Check className="size-4 text-primary" aria-label="Current" /> : null}
-          </DropdownMenuItem>
-        ))}
+        <ListMenuItems />
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -331,20 +297,15 @@ export function ListMenu({ side = "top" }: { side?: Side }) {
 const TEXT_STYLES = CANVAS_BLOCK_KINDS.slice(0, 4);
 
 /**
- * Text / Title / Heading / Subheading. The trigger shows the current style's
- * name (`label`), a T icon (`icon`, a narrow pill) or the Tт glyph (`glyph`,
- * the selection bar).
+ * Text / Title / Heading / Subheading: an Aa icon and a small ▾ (both bars),
+ * tinted while the block is a title or a heading; the current style is in
+ * its name and tooltip, and checked in the menu.
  */
-export function TextStyleMenu({
-  variant = "label",
-  side = "top",
-}: {
-  variant?: "label" | "icon" | "glyph";
-  side?: Side;
-}) {
+export function TextStyleMenu({ side = "top" }: { side?: Side }) {
   const editor = useEditorRef();
   const style = useEditorSelector((ed) => currentBlockKind(ed), []);
   const label = CANVAS_BLOCK_KINDS.find((item) => item.kind === style)?.label ?? "Text";
+  const heading = style === KEYS.h1 || style === KEYS.h2 || style === KEYS.h3;
   // The targets are taken as the menu opens (see CanvasBlockMenuItems).
   const targets = useRef<{ ids: string[]; asBlocks: boolean } | null>(null);
   const pick = (kind: CanvasBlockKind) => {
@@ -352,31 +313,6 @@ export function TextStyleMenu({
     if (!taken) return;
     turnInto(editor, kind, blocksById(editor, taken.ids), taken.asBlocks);
   };
-  const trigger = (
-    <DropdownMenuTrigger
-      // No preventDefault here: Radix opens the menu on this pointerdown.
-      onPointerDown={() => rememberSelection(editor)}
-      onMouseDown={keepSelection}
-      aria-label={`Text style: ${label}`}
-      className={cn(
-        "flex h-9 shrink-0 items-center gap-1 rounded-full text-[13px] font-medium text-foreground transition-colors duration-150 [touch-action:manipulation] hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted [@media(pointer:coarse)]:h-11 [@media(pointer:fine)]:h-8",
-        variant === "glyph" ? "px-2" : "pl-3 pr-2 [@media(pointer:fine)]:pl-2.5",
-      )}
-    >
-      {variant === "icon" ? (
-        <Type className="size-4 text-muted-foreground" aria-hidden="true" />
-      ) : variant === "glyph" ? (
-        <span aria-hidden="true" className="font-serif text-[15px] font-semibold leading-none">
-          T<span className="text-[11px]">t</span>
-        </span>
-      ) : (
-        <span className="w-[5.5rem] truncate text-left [@media(pointer:fine)]:w-[4.75rem]">
-          {label}
-        </span>
-      )}
-      <ChevronDown className="size-3 text-muted-foreground" aria-hidden="true" />
-    </DropdownMenuTrigger>
-  );
   return (
     <DropdownMenu
       modal={false}
@@ -386,13 +322,19 @@ export function TextStyleMenu({
         targets.current = { ids: idsOf(targetBlocks(editor)), asBlocks: isSelectingBlocks(editor) };
       }}
     >
-      {variant === "label" ? (
-        trigger
-      ) : (
-        <CanvasHint label={`Text style: ${label}`} side="top">
-          {trigger}
-        </CanvasHint>
-      )}
+      <CanvasHint label={`Text style: ${label}`} side="top">
+        <DropdownMenuTrigger
+          // No preventDefault here: Radix opens the menu on this pointerdown.
+          onPointerDown={() => rememberSelection(editor)}
+          onMouseDown={keepSelection}
+          aria-label={`Text style: ${label}`}
+          data-active={heading ? "" : undefined}
+          className={CANVAS_TOOL_MENU_BUTTON}
+        >
+          <PiTextAa aria-hidden="true" />
+          <PiCaretDown aria-hidden="true" />
+        </DropdownMenuTrigger>
+      </CanvasHint>
       <DropdownMenuContent
         {...layer}
         side={side}
@@ -420,7 +362,7 @@ export function TextStyleMenu({
               {item.label}
             </span>
             {item.kind === style ? (
-              <Check className="size-4 text-primary" aria-label="Current" />
+              <PiCheck className="size-4 text-primary" aria-label="Current" />
             ) : null}
           </DropdownMenuItem>
         ))}
@@ -468,7 +410,7 @@ export function LinkButton({ side = "top" }: { side?: Side }) {
           onMouseDown={keepSelection}
           className={CANVAS_TOOL_BUTTON}
         >
-          <Link2 />
+          <PiLinkSimple />
         </PopoverTrigger>
       </CanvasHint>
       <PopoverContent
@@ -518,7 +460,7 @@ export function LinkButton({ side = "top" }: { side?: Side }) {
                   removeLink(editor);
                 }}
               >
-                <Unlink className="size-4" aria-hidden="true" />
+                <PiLinkBreak className="size-4" aria-hidden="true" />
                 Remove
               </Button>
             ) : null}

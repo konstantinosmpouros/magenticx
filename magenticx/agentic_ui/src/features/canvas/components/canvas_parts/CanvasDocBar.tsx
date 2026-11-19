@@ -9,17 +9,18 @@
  * scrolls (sticky), on the panel's own background so the text slides under
  * it cleanly.
  */
+import type { IconType } from "react-icons";
 import {
-  Check,
-  ChevronDown,
-  Eye,
-  List,
-  MessageSquare,
-  PencilLine,
-  Redo2,
-  Search,
-  Undo2,
-} from "lucide-react";
+  PiArrowClockwise,
+  PiArrowCounterClockwise,
+  PiCaretDown,
+  PiChatCircle,
+  PiCheck,
+  PiEye,
+  PiListDashes,
+  PiMagnifyingGlass,
+  PiPencilSimpleLine,
+} from "react-icons/pi";
 import { useEditorRef, useEditorSelector } from "platejs/react";
 
 import type { CanvasMode } from "@/shared/lib/types";
@@ -37,9 +38,14 @@ import { CanvasHint } from "./CanvasHint";
 const pill =
   "flex h-8 items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium text-muted-foreground [@media(pointer:coarse)]:h-10";
 
-const MODES: { mode: CanvasMode; label: string; hint: string; Icon: typeof Eye }[] = [
-  { mode: "editing", label: "Editing", hint: "Edit the document directly", Icon: PencilLine },
-  { mode: "viewing", label: "Viewing", hint: "Read without changing it", Icon: Eye },
+const MODES: { mode: CanvasMode; label: string; hint: string; Icon: IconType }[] = [
+  {
+    mode: "editing",
+    label: "Editing",
+    hint: "Edit the document directly",
+    Icon: PiPencilSimpleLine,
+  },
+  { mode: "viewing", label: "Viewing", hint: "Read without changing it", Icon: PiEye },
 ];
 
 export function CanvasDocBar({
@@ -89,7 +95,7 @@ export function CanvasDocBar({
               outlineOpen && "bg-muted text-foreground",
             )}
           >
-            <List className="size-[18px]" />
+            <PiListDashes className="size-[18px] shrink-0" />
           </button>
         </CanvasHint>
       ) : null}
@@ -105,7 +111,7 @@ export function CanvasDocBar({
             findOpen && "bg-muted text-foreground",
           )}
         >
-          <Search className="size-[18px]" />
+          <PiMagnifyingGlass className="size-[18px] shrink-0" />
         </button>
       </CanvasHint>
       {showUndoRedo ? <UndoRedo /> : null}
@@ -124,7 +130,7 @@ export function CanvasDocBar({
               commentCount > 0 && "text-foreground/85",
             )}
           >
-            <MessageSquare className="size-[18px]" aria-hidden="true" />
+            <PiChatCircle className="size-[18px] shrink-0" aria-hidden="true" />
             {commentCount > 0 ? commentCount : null}
           </button>
         </CanvasHint>
@@ -144,7 +150,7 @@ export function CanvasDocBar({
             >
               <current.Icon className="size-4" aria-hidden="true" />
               {current.label}
-              <ChevronDown className="size-3.5" aria-hidden="true" />
+              <PiCaretDown className="size-3" aria-hidden="true" />
             </DropdownMenuTrigger>
           </CanvasHint>
           <DropdownMenuContent align="end" className="w-60">
@@ -160,7 +166,7 @@ export function CanvasDocBar({
                   <span className="text-xs text-muted-foreground">{hint}</span>
                 </span>
                 {value === mode ? (
-                  <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-label="Current" />
+                  <PiCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-label="Current" />
                 ) : null}
               </DropdownMenuItem>
             ))}
@@ -171,7 +177,7 @@ export function CanvasDocBar({
           className={cn(pill, commentCount === null && "ml-auto")}
           title="Earlier versions are read-only"
         >
-          <Eye className="size-4" aria-hidden="true" />
+          <PiEye className="size-4" aria-hidden="true" />
           Viewing
         </span>
       )}
@@ -191,11 +197,17 @@ function UndoRedo() {
   const canRedo = useEditorSelector((ed) => ed.history.redos.length > 0, []);
   const mod = modKeyLabel();
   const items = [
-    { label: "Undo", keys: `${mod}Z`, Icon: Undo2, enabled: canUndo, run: () => editor.undo() },
+    {
+      label: "Undo",
+      keys: `${mod}Z`,
+      Icon: PiArrowCounterClockwise,
+      enabled: canUndo,
+      run: () => editor.undo(),
+    },
     {
       label: "Redo",
       keys: isApplePlatform() ? "⇧⌘Z" : "Ctrl+Y",
-      Icon: Redo2,
+      Icon: PiArrowClockwise,
       enabled: canRedo,
       run: () => editor.redo(),
     },
@@ -213,7 +225,7 @@ function UndoRedo() {
             onClick={run}
             className={historyButton}
           >
-            <Icon className="size-[18px]" />
+            <Icon className="size-[18px] shrink-0" />
           </button>
         </CanvasHint>
       ))}

@@ -167,3 +167,13 @@ export function blockPassage(editor: SlateEditor, index: number): CanvasAskPassa
   if (!text) return null;
   return { text, headingPath: headingPathAt(editor, index), range: structuredClone(range) };
 }
+
+/**
+ * The whole block the caret is in, as a passage (plan 44 §3): what the
+ * pill's Ask agent acts on when nothing is selected — the same block the orb
+ * at the caret offers. Null with a selection, no caret or an empty block.
+ */
+export function caretPassage(editor: SlateEditor): CanvasAskPassage | null {
+  const index = caretBlockIndex(editor);
+  return index === null ? null : blockPassage(editor, index);
+}

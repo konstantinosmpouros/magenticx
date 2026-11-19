@@ -6,14 +6,17 @@ import { useRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * The selection bar and the orb at the caret (plan 44 §3, the Claude Docs
- * comparison).
+ * The selection bar, the pill and the orb at the caret (plan 44 §3, the
+ * Claude Docs comparison).
  *
  * Pinned on a real canvas editor (Plate, the canvas plugins) with a real
- * Slate selection: the bar's Bold, text style, list and link apply to the
- * selection; Comment opens the composer; Ask agent opens the panel with the
+ * Slate selection: the bar is icon-only (every button named, no text label);
+ * its Bold, text style, list and link apply to the selection and show their
+ * active state; Comment opens the composer; Ask agent opens the panel with the
  * presets inside it (none in the bar itself); while reading the bar is
- * Comment alone. The orb: which block a caret offers (none for a selection,
+ * Comment alone. The pill: block tools only with a mouse (no marks), the
+ * marks and link on touch while text is selected, the ⋯ menu's lists, code
+ * block and block actions, and Ask agent on the caret's whole block. The orb: which block a caret offers (none for a selection,
  * selected blocks or an empty line), the block's passage, and through the
  * component — it shows after the idle wait with a caret, hides on typing and
  * on a selection, and its click asks about the whole block, the request built
@@ -25,8 +28,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * is pinned to a fixed spot.
  */
 
-const { lineCenter } = vi.hoisted(() => ({ lineCenter: { current: 12 as number | null } }));
-vi.mock("@/features/canvas/hooks/useCoarsePointer", () => ({ useCoarsePointer: () => false }));
+const { lineCenter, coarse } = vi.hoisted(() => ({
+  lineCenter: { current: 12 as number | null },
+  coarse: { current: false },
+}));
+vi.mock("@/features/canvas/hooks/useCoarsePointer", () => ({
+  useCoarsePointer: () => coarse.current,
+}));
 vi.mock("@/features/canvas/lib/caretOrb", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/features/canvas/lib/caretOrb")>();
   return { ...actual, caretLineCenter: () => lineCenter.current };
@@ -34,10 +42,12 @@ vi.mock("@/features/canvas/lib/caretOrb", async (importOriginal) => {
 
 import { CanvasCaretOrb } from "@/features/canvas/components/canvas_parts/CanvasCaretOrb";
 import { CanvasSelectionMenu } from "@/features/canvas/components/canvas_parts/CanvasSelectionMenu";
+import { CanvasToolbar } from "@/features/canvas/components/canvas_parts/CanvasToolbar";
 import {
   blockPassage,
   buildCanvasEdit,
   caretBlockIndex,
+  caretPassage,
 } from "@/features/canvas/lib/askAgent";
 import { selectBlocks } from "@/features/canvas/lib/blockCommands";
 import { createCanvasEditor } from "@/features/canvas/lib/editorKit";
@@ -65,12 +75,14 @@ function Doc({
   ask,
   comment,
   orb = false,
+  pill = false,
 }: {
   editor: Editor;
   readOnly?: boolean;
   ask: CanvasAskControl | null;
   comment: CanvasCommentControl | null;
   orb?: boolean;
+  pill?: boolean;
 }) {
   const column = useRef<HTMLDivElement>(null);
   return (
@@ -81,6 +93,7 @@ function Doc({
           {orb && ask ? <CanvasCaretOrb ask={ask} columnRef={column} /> : null}
         </div>
         <CanvasSelectionMenu ask={readOnly ? null : ask} comment={comment} />
+        {pill ? <CanvasToolbar ask={ask} comment={comment} /> : null}
       </Plate>
     </TooltipProvider>
   );
@@ -121,9 +134,11 @@ describe("the selection bar", () => {
     editor = createCanvasEditor(markdownToValue(DOC));
     ask = makeAsk();
     comment = makeComment();
+    coarse.current = false;
   });
 
-  const selectIntro = () => act(() => editor.tf.select({ anchor: at([1, 0]), focus: at([1, 0], 5) }));
+  const selectIntro = () =>
+    act(() => editor.tf.select({ anchor: at([1, 0]), focus: at([1, 0], 5) }));
 
   it("shows Comment, Ask agent, text style, the four marks, lists and link — and no presets", async () => {
     render(<Doc editor={editor} ask={ask} comment={comment} />);
@@ -144,8 +159,14 @@ describe("the selection bar", () => {
       "Link",
     ]);
     // Markdown keeps neither: never offered.
-    expect(within(bar()).queryByRole("button", { name: /underline|colou?r/i, hidden: true })).toBeNull();
+    expect(
+      within(bar()).queryByRole("button", { name: /underline|colou?r/i, hidden: true }),
+    ).toBeNull();
     expect(within(bar()).queryByText("Shorter")).toBeNull();
+    // Icon-only: no button carries a text label (the names are aria-labels).
+    for (const button of within(bar()).getAllByRole("button", { hidden: true })) {
+      expect(button.textContent?.trim()).toBe("");
+    }
   });
 
   it("Bold marks the selected text and keeps the selection", async () => {
@@ -161,10 +182,13 @@ describe("the selection bar", () => {
   it("the text style menu turns the block into a heading", async () => {
     render(<Doc editor={editor} ask={ask} comment={comment} />);
     selectIntro();
-    openMenu(await waitFor(() => barButton("Text style: Text")));
+    expect(await waitFor(() => barButton("Text style: Text"))).not.toHaveAttribute("data-active");
+    openMenu(barButton("Text style: Text"));
     fireEvent.click(await screen.findByRole("menuitem", { name: "Heading" }));
     expect((editor.children[1] as TElement).type).toBe("h2");
     expect(NodeApi.string(editor.children[1])).toBe("Intro text here.");
+    // The trigger names the style and is tinted while it is a heading.
+    await waitFor(() => expect(barButton("Text style: Heading")).toHaveAttribute("data-active"));
   });
 
   it("the list menu makes the block a bulleted list, and the trigger then says so", async () => {
@@ -179,7 +203,7 @@ describe("the selection bar", () => {
     ]);
     fireEvent.click(screen.getByRole("menuitem", { name: "Bulleted list" }));
     expect((editor.children[1] as TElement).listStyleType).toBe("disc");
-    await waitFor(() => expect(barButton("List: Bulleted list")).toBeInTheDocument());
+    await waitFor(() => expect(barButton("List: Bulleted list")).toHaveAttribute("data-active"));
   });
 
   it("Link links the selected text (web addresses only)", async () => {
@@ -232,8 +256,137 @@ describe("the selection bar", () => {
     await waitFor(() => bar());
     const names = within(bar())
       .getAllByRole("button", { hidden: true })
-      .map((button) => button.textContent?.trim());
+      .map((button) => button.getAttribute("aria-label"));
     expect(names).toEqual(["Comment"]);
+  });
+});
+
+describe("the pill at the bottom", () => {
+  let editor: Editor;
+  let ask: CanvasAskControl;
+  let comment: CanvasCommentControl;
+
+  beforeEach(() => {
+    editor = createCanvasEditor(markdownToValue(DOC));
+    ask = makeAsk();
+    comment = makeComment();
+    coarse.current = false;
+  });
+
+  const pill = () => screen.getByRole("toolbar", { name: "Formatting" });
+  const pillNames = () =>
+    within(pill())
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+
+  it("with a mouse: block tools only, icon-only, and a filled Ask agent at the end", () => {
+    render(<Doc editor={editor} ask={ask} comment={comment} pill />);
+    expect(pillNames()).toEqual([
+      "Text style: Text",
+      "Table",
+      "Checklist",
+      "Quote",
+      "More",
+      "Comment",
+      "Ask agent",
+    ]);
+    // The marks and link live in the selection bar (their shortcuts still work).
+    for (const name of ["Bold", "Italic", "Strikethrough", "Code", "Link"]) {
+      expect(within(pill()).queryByRole("button", { name })).toBeNull();
+    }
+    // Ask agent is the one button with a text label.
+    expect(within(pill()).getByRole("button", { name: "Ask agent" })).toHaveTextContent(
+      "Ask agent",
+    );
+  });
+
+  it("on touch, with text selected, the marks and link take the block tools' place", async () => {
+    coarse.current = true;
+    render(<Doc editor={editor} ask={ask} comment={comment} pill />);
+    expect(pillNames()).not.toContain("Bold");
+    await act(async () => editor.tf.select({ anchor: at([1, 0]), focus: at([1, 0], 5) }));
+    await waitFor(() =>
+      expect(pillNames()).toEqual([
+        "Text style: Text",
+        "Bold",
+        "Italic",
+        "Strikethrough",
+        "Code",
+        "Link",
+        "More",
+        "Comment",
+        "Ask agent",
+      ]),
+    );
+    const bold = within(pill()).getByRole("button", { name: "Bold" });
+    fireEvent.pointerDown(bold, { button: 0, pointerType: "touch" });
+    fireEvent.click(bold);
+    const leaf = (editor.children[1] as TElement).children[0] as { text: string; bold?: boolean };
+    expect(leaf).toMatchObject({ text: "Intro", bold: true });
+    await waitFor(() =>
+      expect(within(pill()).getByRole("button", { name: "Bold" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+  });
+
+  it("the ⋯ menu holds the lists, the code block and the block actions", async () => {
+    render(<Doc editor={editor} ask={ask} comment={comment} pill />);
+    await act(async () => editor.tf.select(at([1, 0], 3)));
+    fireEvent.keyDown(within(pill()).getByRole("button", { name: "More" }), { key: "Enter" });
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((item) => item.textContent?.trim())).toEqual([
+      "Bulleted list",
+      "Numbered list",
+      "Code block",
+      "Duplicate",
+      "Move up",
+      "Move down",
+      "Turn into",
+      "Delete block",
+    ]);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Numbered list" }));
+    expect((editor.children[1] as TElement).listStyleType).toBe("decimal");
+  });
+
+  it("Ask agent with only a caret asks about the caret's whole block", async () => {
+    render(<Doc editor={editor} ask={ask} comment={comment} pill />);
+    await act(async () => editor.tf.select(at([3, 0], 4)));
+    const trigger = within(pill()).getByRole("button", { name: "Ask agent" });
+    await waitFor(() => expect(trigger).not.toHaveAttribute("aria-disabled"));
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.click(trigger);
+    expect(await screen.findByText("Ask about this paragraph")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Polish" }));
+    await waitFor(() => expect(ask.onAsk).toHaveBeenCalledTimes(1));
+    expect(ask.onAsk).toHaveBeenCalledWith({
+      passage: expect.objectContaining({
+        text: "Ship it soon.",
+        headingPath: ["The brief", "Scope"],
+      }),
+      instruction: "Polish the wording",
+      preset: "polish",
+    });
+  });
+
+  it("Ask agent with nothing to act on stays focusable and says why", async () => {
+    render(<Doc editor={editor} ask={ask} comment={comment} pill />);
+    const trigger = within(pill()).getByRole("button", { name: "Ask agent" });
+    expect(trigger).toHaveAttribute("aria-disabled", "true");
+    fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
+    fireEvent.click(trigger);
+    expect(
+      await screen.findByText("Select some text, or put the caret in a paragraph"),
+    ).toBeInTheDocument();
+    expect(ask.onAsk).not.toHaveBeenCalled();
+  });
+
+  it("the caret's passage: its whole block, none with a selection", () => {
+    editor.tf.select(at([3, 0], 2));
+    expect(caretPassage(editor)).toMatchObject({ text: "Ship it soon." });
+    editor.tf.select({ anchor: at([3, 0]), focus: at([3, 0], 4) });
+    expect(caretPassage(editor)).toBeNull();
   });
 });
 
