@@ -26,6 +26,15 @@ from typing import Any, Callable, Optional
 from harness.conversation_files import ConversationFiles
 from harness.tools.ask_user import build_ask_user_tool
 from harness.tools.builtins import builtin_hitl_defaults
+from harness.tools.canvas_comments import (
+    ADD_TOOL_NAME,
+    LIST_TOOL_NAME,
+    REPLY_TOOL_NAME,
+    CommentWriteBudget,
+    build_add_comment_tool,
+    build_list_comments_tool,
+    build_reply_to_comment_tool,
+)
 from harness.tools.charts import build_render_chart_tool
 from harness.tools.create_skill import build_create_skill_tool
 from harness.tools.forget import build_forget_tool
@@ -62,6 +71,22 @@ class NativeToolContext:
     # task never asks the user anything: only the orchestrator may pause on a
     # question, so ``ask_user`` is not even attached to a task run.
     async_task_id: Optional[str] = None
+    # The run's conversation has at least one canvas document (plan 44 v2):
+    # probed by the agent at build time from the same version rows the
+    # per-turn canvas note reads. Gates the comment tools.
+    has_canvas_documents: bool = False
+    # The run's comment-write budget, shared by the two comment writes. The
+    # agent instance owns it (one per run), so every context it builds — the
+    # builtins and any `{native: …}` reference — counts against the same cap.
+    comment_writes: Optional[CommentWriteBudget] = None
+
+    @property
+    def comments_available(self) -> bool:
+        """The comment tools' gate: a user's conversation with canvas documents, not a background task."""
+        return bool(
+            self.user_id and self.conversation_id and self.has_canvas_documents
+            and self.comment_writes is not None and not self.async_task_id
+        )
 
 
 @dataclass(frozen=True)
@@ -109,6 +134,12 @@ def register_native_tool(defn: NativeToolDef) -> NativeToolDef:
 #   render_chart           → attached whenever there is a conversation to draw into
 #   ask_user               → attached to an interactive conversation run (never
 #                            gated; refuses inside a sub-agent)
+#   list_comments, reply_to_comment, add_comment
+#                          → attached when the conversation has a canvas document
+#                            and the run is not a background task (not gated;
+#                            the two writes are bounded to 10 per run instead,
+#                            the read is not counted). There is no resolve
+#                            tool: the user resolves a thread.
 
 register_native_tool(
     NativeToolDef(
@@ -224,6 +255,55 @@ register_native_tool(
         # conversation, and a run the user is actually watching.
         builder=lambda ctx: (
             build_ask_user_tool() if ctx.conversation_id and ctx.interactive and not ctx.async_task_id else None
+        ),
+    )
+)
+
+
+# The canvas comment tools (plan 44 v2). Not HITL-gated: a comment is not a
+# document edit and nothing leaves the conversation; the per-run write budget
+# bounds the writes instead. The `comments_available` gate guarantees the
+# budget and the conversation are there. The read comes first: it is what the
+# agent reaches for before answering a thread it cannot see in the note.
+register_native_tool(
+    NativeToolDef(
+        name=LIST_TOOL_NAME,
+        description="Read the comment threads (open, resolved or all) on the conversation's canvas documents.",
+        auto_attach=True,
+        # Read-only, so not counted against the write budget; it shares the
+        # writes' gate so the three always come and go together.
+        builder=lambda ctx: (
+            build_list_comments_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id))
+            if ctx.comments_available
+            else None
+        ),
+    )
+)
+
+register_native_tool(
+    NativeToolDef(
+        name=REPLY_TOOL_NAME,
+        description="Reply in a comment thread on one of the conversation's canvas documents.",
+        auto_attach=True,
+        builder=lambda ctx: (
+            build_reply_to_comment_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id),
+                                        budget=ctx.comment_writes)
+            if ctx.comments_available and ctx.comment_writes is not None
+            else None
+        ),
+    )
+)
+
+register_native_tool(
+    NativeToolDef(
+        name=ADD_TOOL_NAME,
+        description="Leave a comment (an assumption or a question) on a passage of a canvas document.",
+        auto_attach=True,
+        builder=lambda ctx: (
+            build_add_comment_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id),
+                                   run_id=ctx.run_id, budget=ctx.comment_writes)
+            if ctx.comments_available and ctx.comment_writes is not None
+            else None
         ),
     )
 )

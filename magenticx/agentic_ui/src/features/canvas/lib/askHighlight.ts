@@ -8,10 +8,13 @@
  * in the document's value or its rendering, so it can't mark the document
  * unsaved or fight the find highlight. Where the API is missing the passage
  * just isn't tinted — nothing else depends on it.
+ *
+ * The same tint, under its own name (`canvas-writing`), marks the block the
+ * agent is writing right now (plan 44 v2), so the two never clear each other.
  */
 import type { SlateEditor, TRange } from "platejs";
 
-const NAME = "canvas-ask";
+type HighlightName = "canvas-ask" | "canvas-writing";
 
 const registry = (): HighlightRegistry | null =>
   typeof CSS !== "undefined" && "highlights" in CSS && typeof Highlight !== "undefined"
@@ -19,7 +22,11 @@ const registry = (): HighlightRegistry | null =>
     : null;
 
 /** Tint `range` of the document; returns the function that removes it. */
-export function showAskHighlight(editor: SlateEditor, range: TRange): () => void {
+export function showAskHighlight(
+  editor: SlateEditor,
+  range: TRange,
+  name: HighlightName = "canvas-ask",
+): () => void {
   const highlights = registry();
   if (!highlights) return () => {};
   let dom: Range | null = null;
@@ -31,8 +38,8 @@ export function showAskHighlight(editor: SlateEditor, range: TRange): () => void
   }
   if (!dom) return () => {};
   const highlight = new Highlight(dom);
-  highlights.set(NAME, highlight);
+  highlights.set(name, highlight);
   return () => {
-    if (highlights.get(NAME) === highlight) highlights.delete(NAME);
+    if (highlights.get(name) === highlight) highlights.delete(name);
   };
 }

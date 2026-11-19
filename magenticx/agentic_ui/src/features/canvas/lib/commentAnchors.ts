@@ -130,8 +130,11 @@ function sharedLength(a: string, b: string, fromEnd: boolean): number {
 
 /**
  * Where an anchor's quote is in `text`: the occurrence whose surroundings
- * share the most with the stored prefix and suffix (the first one on a tie),
- * or null when the quote is not there at all (detached).
+ * share the most with the stored prefix and suffix (the first one on a tie).
+ * When the quote itself is gone — the passage was rewritten, typically by the
+ * agent answering the comment — the thread follows the rewrite: the text now
+ * between the same surroundings (`locateByContext`). Null (detached) only
+ * when neither finds it.
  */
 export function locateAnchor(text: string, anchor: CanvasCommentAnchor): CanvasAnchorPlacement {
   const { quote } = anchor;
@@ -144,7 +147,63 @@ export function locateAnchor(text: string, anchor: CanvasCommentAnchor): CanvasA
       sharedLength(before, anchor.prefix, true) + sharedLength(after, anchor.suffix, false);
     if (!best || score > best.score) best = { start: at, score };
   }
-  return best ? { start: best.start, end: best.start + quote.length } : null;
+  return best ? { start: best.start, end: best.start + quote.length } : locateByContext(text, anchor);
+}
+
+/** The ends of the stored context tried, longest first: long enough to be unique, short enough to survive an edit nearby. */
+const CONTEXT_PROBES = [48, 24, 12];
+/** A side of the context shorter than this is too common to anchor on (unless it is the document's edge). */
+const MIN_CONTEXT_CHARS = 6;
+
+/**
+ * The rewritten passage: the text between the end of the stored prefix and
+ * the start of the stored suffix, both found again in `text`. A side that was
+ * empty when the comment was made is the document's edge. The span must stay
+ * plausible for a rewrite of the quote (at most three times as long, plus a
+ * paragraph's worth), and the whitespace at its edges (block breaks) is left
+ * out, so the passage starts and ends on words.
+ */
+function locateByContext(text: string, anchor: CanvasCommentAnchor): CanvasAnchorPlacement {
+  // With no context at all there is nothing to follow the rewrite by.
+  if (!anchor.prefix.trim() && !anchor.suffix.trim()) return null;
+  const maxSpan = anchor.quote.length * 3 + 600;
+  const startsAt = (): number[] => {
+    if (!anchor.prefix) return [0];
+    for (const size of CONTEXT_PROBES) {
+      const tail = anchor.prefix.slice(-size);
+      if (tail.trim().length < MIN_CONTEXT_CHARS) continue;
+      const found: number[] = [];
+      for (let at = text.indexOf(tail); at !== -1; at = text.indexOf(tail, at + 1)) {
+        found.push(at + tail.length);
+      }
+      if (found.length > 0) return found;
+    }
+    return [];
+  };
+  const endBefore = (from: number): number | null => {
+    if (!anchor.suffix) return text.length - from <= maxSpan ? text.length : null;
+    for (const size of CONTEXT_PROBES) {
+      const head = anchor.suffix.slice(0, size);
+      if (head.trim().length < MIN_CONTEXT_CHARS) continue;
+      const at = text.indexOf(head, from);
+      if (at !== -1 && at - from <= maxSpan) return at;
+    }
+    return null;
+  };
+
+  let best: { start: number; end: number } | null = null;
+  for (const from of startsAt()) {
+    const to = endBefore(from);
+    if (to === null) continue;
+    // Words only: the block breaks and spaces at the edges stay outside.
+    const slice = text.slice(from, to);
+    const start = from + (slice.length - slice.trimStart().length);
+    const end = to - (slice.length - slice.trimEnd().length);
+    if (end <= start) continue;
+    // The tightest span wins: the surroundings closest together.
+    if (!best || end - start < best.end - best.start) best = { start, end };
+  }
+  return best;
 }
 
 /** The editor range of a placement found in `index`; null when it no longer maps. */

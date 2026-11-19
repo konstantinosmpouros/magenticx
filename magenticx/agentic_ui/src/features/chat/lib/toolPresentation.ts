@@ -1,5 +1,6 @@
 import type { BundledLanguage } from "shiki";
 
+import { canvasDocumentTitle } from "@/shared/lib/canvasDocuments";
 import { toolLabel } from "@/shared/lib/consts";
 import type { SubagentRunStatus } from "@/shared/lib/types";
 
@@ -92,6 +93,12 @@ const TITLES: Record<string, (args: ToolArgs | null) => string | null> = {
     return filter && filter !== "all" ? `List ${filter} background tasks` : "List background tasks";
   },
   cancel_async_task: () => "Stop a background task",
+  // Canvas comments (plan 44 v2): the document by its canvas title. A reply
+  // names it only where the thread can be found (`replyToCommentTitle`).
+  reply_to_comment: () => replyToCommentTitle(),
+  list_comments: (a) => listCommentsTitle(str(a, "path"), str(a, "status")),
+  add_comment: (a) =>
+    str(a, "path") ? `Commented on ${canvasDocumentTitle(str(a, "path"))}` : null,
 };
 
 /**
@@ -334,6 +341,123 @@ export const isRoutineSuccess = (name: string, result: string | undefined): bool
 };
 
 // ---------------------------------------------------------------------------
+// Canvas comments (plan 44 v2): reply_to_comment / add_comment
+// ---------------------------------------------------------------------------
+
+/** The agent's comment tools, which render as comment cards rather than JSON. */
+export const isCommentTool = (name: string): boolean =>
+  name === "reply_to_comment" || name === "add_comment";
+
+/** "Replied to a comment", plus the document's title when the thread is known. */
+export const replyToCommentTitle = (path?: string | null): string =>
+  path ? `Replied to a comment on ${canvasDocumentTitle(path)}` : "Replied to a comment";
+
+export type CommentToolOutcome = { ok: true } | { ok: false; reason: string };
+
+/**
+ * A comment tool's result: its routine success sentence, or the `Could not …`
+ * refusal the agents service writes (harness/tools/canvas_comments/tool.py).
+ * Null for anything else — the view shows that text as a plain note.
+ */
+export const parseCommentToolResult = (result: string | undefined): CommentToolOutcome | null => {
+  const text = result?.trim();
+  if (!text) return null;
+  if (/^Could not (reply|comment)\b/.test(text)) return { ok: false, reason: text };
+  if (text.startsWith("Replied in the thread") || text.startsWith("Added the comment")) {
+    return { ok: true };
+  }
+  return null;
+};
+
+// The one read, list_comments. Its result is the plain-text listing whose
+// format is stated once, in the agents service's
+// harness/tools/canvas_comments/listing.py (module docstring); this parser
+// follows it and returns null for anything it does not recognise.
+
+export const LIST_COMMENTS_TOOL = "list_comments";
+
+export type CommentListStatus = "open" | "resolved" | "all";
+
+const listStatus = (value: string): CommentListStatus =>
+  value === "resolved" || value === "all" ? value : "open";
+
+/** "Read the comments on brief", plus " · resolved" / " · all" when it was not the open ones. */
+export const listCommentsTitle = (path?: string | null, status?: string | null): string => {
+  const which = listStatus(status ?? "");
+  const base = path ? `Read the comments on ${canvasDocumentTitle(path)}` : "Read the comments";
+  return which === "open" ? base : `${base} · ${which}`;
+};
+
+export type ListedCommentThread = {
+  /** The document the thread is on. */
+  path: string;
+  resolved: boolean;
+  quote: string;
+  /** Who wrote the first comment: the user, or the agent. */
+  author: "user" | "agent";
+  /** The first comment, on one line as the listing gives it. */
+  body: string;
+};
+
+export type CommentListing = {
+  status: CommentListStatus;
+  shown: number;
+  total: number;
+  threads: ListedCommentThread[];
+};
+
+const LISTING_HEADER = /^Canvas comments — (open|resolved|all) threads: showing (\d+) of (\d+)\.$/;
+const LISTING_DOCUMENT = /^- `[^`]*` — (.+)$/;
+const LISTING_THREAD = /^\[thread [^\]]*\] \[(open|resolved(?: by (?:user|you))?)\] «(.*?)» — (user|you): (.*)$/;
+
+/** The listing escapes `<canvas_` in the user's text (fence_safe); show it as written. */
+const unfence = (text: string): string => text.replace(/&lt;(\/?)canvas_/g, "<$1canvas_");
+
+/** A `list_comments` result, or null when it is not the listing (a refusal, a changed format). */
+export const parseCommentListing = (result: string | undefined): CommentListing | null => {
+  const lines = (result ?? "").trim().split("\n");
+  const head = LISTING_HEADER.exec(lines[0] ?? "");
+  if (!head) return null;
+  const threads: ListedCommentThread[] = [];
+  let path = "";
+  for (const line of lines.slice(1)) {
+    const document = LISTING_DOCUMENT.exec(line);
+    if (document) {
+      path = document[1];
+      continue;
+    }
+    const thread = LISTING_THREAD.exec(line);
+    if (!thread) continue;
+    threads.push({
+      path,
+      resolved: thread[1] !== "open",
+      quote: unfence(thread[2]),
+      author: thread[3] === "you" ? "agent" : "user",
+      body: unfence(thread[4]),
+    });
+  }
+  return { status: listStatus(head[1]), shown: Number(head[2]), total: Number(head[3]), threads };
+};
+
+/** "3 open threads", "1 resolved thread", "5 threads", "4 of 30 threads", "No open threads". */
+export const commentListingSummary = (listing: CommentListing): string => {
+  const kind = listing.status === "all" ? "" : `${listing.status} `;
+  if (listing.total === 0) return `No ${kind}threads`;
+  const noun = listing.total === 1 ? "thread" : "threads";
+  const count = listing.shown < listing.total ? `${listing.shown} of ${listing.total}` : `${listing.total}`;
+  return `${count} ${kind}${noun}`;
+};
+
+/** A `list_comments` refusal (`Could not list comments: …`), or null. */
+export const commentListingRefusal = (result: string | undefined): string | null => {
+  const text = result?.trim() ?? "";
+  return text.startsWith("Could not list comments") ? text : null;
+};
+
+/** A passage on one line, for a muted «…» quote under the title. */
+export const oneLinePassage = (text: string): string => text.replace(/\s+/g, " ").trim();
+
+// ---------------------------------------------------------------------------
 // Background tasks (plan 41): deepagents' check / list results
 // ---------------------------------------------------------------------------
 
@@ -477,6 +601,11 @@ export const toolMeta = (
       const list = parseTaskList(result);
       return list ? plural(list.length, "task") : undefined;
     }
+    case "reply_to_comment":
+    case "add_comment":
+      return parseCommentToolResult(result)?.ok === false ? "not posted" : undefined;
+    case LIST_COMMENTS_TOOL:
+      return commentListingRefusal(result) ? "not read" : undefined;
     case "view_image": {
       const region = asToolArgs(a?.region);
       return region && typeof region.width === "number" && typeof region.height === "number"

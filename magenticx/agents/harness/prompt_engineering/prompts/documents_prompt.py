@@ -13,6 +13,10 @@ never a rewrite that would throw their changes away. The turn tells the agent
 what the user changed (the per-turn note, ``harness.canvas``); this says what
 to do about it.
 
+Plan 44 v2 adds how to treat the user's **comments** — their instructions on
+a passage, answered with the comment tools — but only when those tools are
+attached (``has_canvas_comments``: the conversation has a canvas document).
+
 This is the one statement of the rule — the platform verbs section only says
 how to present a file. Gated on a conversation (the mounts and
 ``present_artifact`` exist only with one); the named-format line depends on the
@@ -21,6 +25,7 @@ sandbox, since without ``execute`` no real Office file or PDF can be built.
 from __future__ import annotations
 
 from harness.prompt_engineering.context import PromptContext
+from harness.tools.canvas_comments import MAX_COMMENT_WRITES_PER_RUN
 
 _HEADER = "## Documents, Files and the Chat"
 
@@ -57,16 +62,44 @@ _RULES = """\
   you changed instead of repeating the document. A document you changed does
   not need presenting again; present it again only when the user asks for it."""
 
+#: Plan 44 v2 — only when the comment tools are attached (``has_canvas_comments``).
+_COMMENTS = f"""\
+### Comments on canvas documents
+
+The user leaves comments on passages of a canvas document; each turn lists
+the open threads with their ids. A comment is the user's instruction about
+that passage.
+- To see resolved threads, or more than the turn lists, read them with
+  `list_comments` (`status`: open, resolved or all; `path` for one document).
+- Act on a thread when you work on its document, or when the turn asks you
+  to. Then answer it with `reply_to_comment` — one or two sentences on what
+  you changed, or why you did not.
+- You never resolve a thread; the user does, once the passage reads as they
+  wanted. There is no tool for it, so do not say you resolved or closed one.
+- Use `add_comment` sparingly, while drafting or editing, to flag an
+  assumption you made or ask a question about one specific passage. Quote the
+  passage's words exactly as they read in the document, without markdown
+  marks. Never use comments to chat, to summarise your work, or for anything
+  you would say in the reply.
+- At most {MAX_COMMENT_WRITES_PER_RUN} comment writes per turn."""
+
 
 def documents_prompt(context: PromptContext) -> str:
-    """The document routing rule for this run. Empty without a conversation."""
+    """The document routing rule for this run. Empty without a conversation.
+
+    With the canvas comment tools attached (plan 44 v2), a block on how to
+    treat comments follows the rules.
+    """
     if not context.has_conversation:
         return ""
     if context.sandbox_enabled:
         named = _NAMED_FORMAT_SANDBOX.format(skill=_SKILL if context.has_platform_skills else "")
     else:
         named = _NAMED_FORMAT_NO_SANDBOX
-    return f"{_HEADER}\n\n{_INTRO}\n\n{named}\n{_RULES}"
+    text = f"{_HEADER}\n\n{_INTRO}\n\n{named}\n{_RULES}"
+    if context.has_canvas_comments:
+        text = f"{text}\n\n{_COMMENTS}"
+    return text
 
 
 __all__ = ["documents_prompt"]

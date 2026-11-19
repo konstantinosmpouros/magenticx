@@ -376,7 +376,7 @@ describe("comments in the canvas", () => {
     expect(screen.queryByRole("dialog", { name: "Comment" })).not.toBeInTheDocument();
   });
 
-  it("shows a line's thread with its replies in the card, and the others under the top mark", async () => {
+  it("shows a line's thread with its replies in the card, and the others behind the document row's button", async () => {
     api.listDocumentComments.mockResolvedValue([
       comment(),
       comment({ id: "r1", parentId: "c1", anchor: null, body: "Agreed.", author: "agent" }),
@@ -409,16 +409,15 @@ describe("comments in the canvas", () => {
     // Only that line's thread is in its card.
     expect(within(card).queryByText("Old note")).not.toBeInTheDocument();
 
-    // The detached thread and the resolved one: the top mark (2).
+    // The detached thread and the resolved one: the document row's button (2).
     fireEvent.click(
-      await screen.findByRole("button", { name: "2 more comments: on changed text or resolved" }),
+      await screen.findByRole("button", { name: "2 resolved or detached comments" }),
     );
-    const others = await screen.findByRole("dialog", { name: "Other comments" });
+    const others = await screen.findByRole("dialog", { name: "Resolved and detached comments" });
     const gone = threadCard(others, "A passage that is gone");
     expect(within(gone).getByText(/Detached/)).toBeInTheDocument();
-    const folded = within(others).getByRole("button", { name: "Resolved (1)" });
-    expect(within(others).queryByText("Done")).not.toBeInTheDocument();
-    fireEvent.click(folded);
+    // Resolved threads are listed straight away, under a plain heading.
+    expect(within(others).getByRole("heading", { name: "Resolved (1)" })).toBeInTheDocument();
     expect(within(others).getByText("Done")).toBeInTheDocument();
     expect(within(others).getByText(/Resolved by you/)).toBeInTheDocument();
   });
@@ -433,10 +432,12 @@ describe("comments in the canvas", () => {
     const card = await openCard();
     const thread = () => threadCard(card, "Intro text.");
 
-    fireEvent.click(within(thread()).getByRole("button", { name: "Reply…" }));
-    const field = within(thread()).getByLabelText("Reply to the thread");
+    // The reply box is the card's pinned footer, not part of the thread.
+    expect(within(thread()).queryByRole("button", { name: "Reply…" })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: "Reply…" }));
+    const field = within(card).getByLabelText("Reply to the thread");
     fireEvent.change(field, { target: { value: "On it." } });
-    fireEvent.click(within(thread()).getByRole("button", { name: "Reply" }));
+    fireEvent.click(within(card).getByRole("button", { name: "Reply" }));
     await waitFor(() =>
       expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", {
         path: PATH,
@@ -468,10 +469,9 @@ describe("comments in the canvas", () => {
       expect(screen.queryByRole("button", { name: /on this line/ })).not.toBeInTheDocument(),
     );
     fireEvent.click(
-      await screen.findByRole("button", { name: "1 more comment: on changed text or resolved" }),
+      await screen.findByRole("button", { name: "1 resolved or detached comment" }),
     );
-    const others = await screen.findByRole("dialog", { name: "Other comments" });
-    fireEvent.click(within(others).getByRole("button", { name: "Resolved (1)" }));
+    const others = await screen.findByRole("dialog", { name: "Resolved and detached comments" });
     fireEvent.click(within(others).getByRole("button", { name: "Reopen" }));
     expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "c1", {
       status: "open",

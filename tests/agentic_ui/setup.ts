@@ -2,6 +2,7 @@
 // global type augmentation, which cannot be `await import()`-ed; it only
 // registers matchers on `expect`, so it is harmless under the node env too.
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from "vitest";
 
 /**
  * Vitest setup, shared by every JS test in this folder.
@@ -41,4 +42,20 @@ if (hasDom) {
       disconnect() {}
     } as unknown as typeof ResizeObserver;
   }
+}
+
+if (hasDom) {
+  // The canvas remembers the mode picked from its menu, and what was
+  // reviewed, in localStorage (plan 44, Phase 4.6). A test that picks
+  // Viewing must not open the next test's document for reading.
+  afterEach(() => {
+    try {
+      const storage = window.localStorage;
+      const keys: string[] = [];
+      for (let index = 0; index < storage.length; index += 1) keys.push(storage.key(index) ?? "");
+      for (const key of keys) if (key.startsWith("mx_canvas_")) storage.removeItem(key);
+    } catch {
+      // No storage in this environment: nothing was remembered.
+    }
+  });
 }

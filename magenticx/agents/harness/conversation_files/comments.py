@@ -22,8 +22,21 @@ take the last slot: :data:`MAX_THREADS_PER_DOCUMENT` threads per document and
 
 The agent reads the **open** threads at the start of each turn
 (:meth:`DocumentCommentStore.open_threads`, rendered by
-:mod:`harness.canvas.notes`). v1 has no tool to resolve one; the
-``author = 'agent'`` and ``resolved_by = 'agent'`` values are there for v2.
+:mod:`harness.canvas.notes`), each with its id. Since plan 44 v2 comments are
+the user's instruction channel and the agent answers them with its comment
+tools (``harness/tools/canvas_comments``), which write through the
+``agent_*`` methods here: :meth:`~DocumentCommentStore.agent_reply` (a reply
+under an open thread) and :meth:`~DocumentCommentStore.agent_thread` (a new
+thread on a quote found in the latest version's canvas text, :mod:`.anchors`).
+They share the limits, the per-document lock and the encryption of the user's
+writes; the bridge's check of a comment-started canvas edit reads one thread
+with :meth:`~DocumentCommentStore.get_comment`. The agent's one read tool,
+``list_comments``, reads open and/or resolved threads on demand with
+:meth:`~DocumentCommentStore.list_threads` (one statement).
+
+The agent never resolves a thread — the user does (:meth:`update_comment`).
+``resolved_by = 'agent'`` and an agent's resolution note survive only on rows
+written before that rule; the schema still allows them, so they read as before.
 
 The DDL lives in :mod:`.store`, beside the versions the comments name; its
 fork copy, reap and purge include them.
@@ -37,6 +50,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from core.logging import get_logger
+from harness.conversation_files.anchors import anchor_for
 from harness.conversation_files.versions import DocumentNotFound, DocumentVersionStore
 
 logger = get_logger(__name__)
@@ -53,8 +67,6 @@ MAX_BODY_CHARS = 4000
 #: The anchor's quoted passage, and the context kept either side of it.
 MAX_QUOTE_CHARS = 2000
 MAX_CONTEXT_CHARS = 200
-#: A resolution note (v2: the agent's "done — shortened it").
-MAX_RESOLUTION_NOTE_CHARS = 1000
 #: Every comment of one document: the threads and all their replies.
 MAX_COMMENTS_PER_DOCUMENT = MAX_THREADS_PER_DOCUMENT * (1 + MAX_REPLIES_PER_THREAD)
 
@@ -65,6 +77,13 @@ MAX_COMMENTS_PER_DOCUMENT = MAX_THREADS_PER_DOCUMENT * (1 + MAX_REPLIES_PER_THRE
 TURN_MAX_DOCUMENTS = 10
 TURN_MAX_THREADS = 20
 TURN_MAX_REPLIES = 10
+#: What one ``list_comments`` call reads, at most (the agent's read tool):
+#: threads across the conversation (or one document). Replies per thread are
+#: :data:`TURN_MAX_REPLIES`, the same as the note.
+LIST_MAX_THREADS = 50
+
+#: Which threads a listing reads: ``all`` is both.
+ThreadFilter = Literal["open", "resolved", "all"]
 
 _SCOPE = "conversation_id = %(conversation_id)s AND user_id = %(user_id)s"
 _COLUMNS = (
@@ -82,6 +101,18 @@ class InvalidComment(ValueError):
     an edit of someone else's comment, an empty body, an over-long field."""
 
     code = "invalid_comment"
+
+
+class ThreadNotOpen(InvalidComment):
+    """The thread is resolved: the agent only answers an open one."""
+
+    code = "thread_not_open"
+
+
+class QuoteNotFound(InvalidComment):
+    """The agent's quote is not in the canvas text of the document's latest version."""
+
+    code = "quote_not_found"
 
 
 class CommentLimitReached(InvalidComment):
@@ -121,14 +152,38 @@ class DocumentComment:
 
 @dataclass(frozen=True)
 class OpenThread:
-    """An open thread as the turn's note shows it: its passage, its comment, its replies."""
+    """An open thread as the turn's note shows it: its id, its passage, its comment, its replies."""
 
+    #: The thread's id — what the agent's comment tools take.
+    id: str
     quote: str
     body: str
     author: CommentAuthor
+    #: The newest :data:`TURN_MAX_REPLIES` replies, oldest first (newest last).
     replies: list[tuple[CommentAuthor, str]] = field(default_factory=list)
-    #: Replies past :data:`TURN_MAX_REPLIES`, not read.
+    #: Earlier replies, before the ones shown, not read.
     more_replies: int = 0
+
+
+@dataclass(frozen=True)
+class ListedThread(OpenThread):
+    """A thread as the agent's ``list_comments`` reads it: an :class:`OpenThread` plus where it is and its state."""
+
+    path: str = ""
+    status: CommentStatus = "open"
+    #: Who resolved it — the user, or (on rows from before the agent lost
+    #: that power) the agent; None while open.
+    resolved_by: CommentAuthor | None = None
+
+
+@dataclass(frozen=True)
+class ThreadListing:
+    """What one ``list_comments`` call read: the newest matching threads, and how many match in all."""
+
+    #: Newest first, at most the call's limit.
+    threads: list[ListedThread]
+    #: Every matching thread, including those past the limit.
+    total: int
 
 
 @dataclass(frozen=True)
@@ -224,8 +279,10 @@ class DocumentCommentStore(DocumentVersionStore):
 
         Documents with the most recent open thread first, at most
         :data:`TURN_MAX_DOCUMENTS`; of each, the :data:`TURN_MAX_THREADS`
-        newest open threads, shown oldest first; of each thread, its first
-        :data:`TURN_MAX_REPLIES` replies. Empty when nothing is open.
+        newest open threads, shown oldest first; of each thread, its
+        :data:`TURN_MAX_REPLIES` newest replies, shown oldest first — the
+        newest reply is where a user asks the agent something. Empty when
+        nothing is open.
         """
         params = {"user_id": user_id, "conversation_id": conversation_id, "documents": TURN_MAX_DOCUMENTS,
                   "threads": TURN_MAX_THREADS, "replies": TURN_MAX_REPLIES}
@@ -252,10 +309,10 @@ class DocumentCommentStore(DocumentVersionStore):
             cur = await conn.execute(
                 "SELECT parent_id, cipher, body, author, total FROM ("
                 "SELECT parent_id, cipher, body, author, "
-                "row_number() OVER (PARTITION BY parent_id ORDER BY created_at, id) AS n, "
+                "row_number() OVER (PARTITION BY parent_id ORDER BY created_at DESC, id DESC) AS n, "
                 "count(*) OVER (PARTITION BY parent_id) AS total "
                 f"FROM conversation_file_comments WHERE {_SCOPE} AND parent_id = ANY(%(ids)s)) r "
-                "WHERE n <= %(replies)s ORDER BY parent_id, n",
+                "WHERE n <= %(replies)s ORDER BY parent_id, n DESC",
                 {**params, "ids": [row["id"] for row in threads]},
             )
             replies = await cur.fetchall()
@@ -274,6 +331,7 @@ class DocumentCommentStore(DocumentVersionStore):
             anchor = json.loads(self._open(row["cipher"], row["anchor"]))
             shown = by_thread.get(key, [])
             documents[-1].threads.append(OpenThread(
+                id=key,
                 quote=str(anchor.get("quote", "")),
                 body=self._open(row["cipher"], row["body"]),
                 author=row["author"],
@@ -281,6 +339,65 @@ class DocumentCommentStore(DocumentVersionStore):
                 more_replies=max(0, totals.get(key, 0) - len(shown)),
             ))
         return documents
+
+    async def list_threads(
+        self, user_id: str, conversation_id: str, *, path: str | None, status: ThreadFilter, limit: int,
+    ) -> ThreadListing:
+        """The conversation's threads (or one document's) in ``status``, for the agent's read tool.
+
+        **One statement**: the newest ``limit`` matching threads (capped at
+        :data:`LIST_MAX_THREADS`) with the total that match, and of each its
+        :data:`TURN_MAX_REPLIES` newest replies (oldest first) and how many it
+        has — a lateral join on the replies' index, so no query per thread.
+        Read-only; scoped like every read.
+        """
+        params = {
+            "user_id": user_id, "conversation_id": conversation_id, "path": path,
+            "status": None if status == "all" else status,
+            "threads": max(1, min(int(limit), LIST_MAX_THREADS)), "replies": TURN_MAX_REPLIES,
+        }
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                "WITH threads AS ("
+                "SELECT id, path, cipher, anchor, body, author, status, resolved_by, created_at, "
+                "count(*) OVER () AS total "
+                f"FROM conversation_file_comments WHERE {_SCOPE} AND parent_id IS NULL "
+                "AND (%(path)s::text IS NULL OR path = %(path)s::text) "
+                "AND (%(status)s::text IS NULL OR status = %(status)s::text) "
+                "ORDER BY created_at DESC, id DESC LIMIT %(threads)s) "
+                "SELECT t.id, t.path, t.cipher, t.anchor, t.body, t.author, t.status, t.resolved_by, t.total, "
+                "r.authors, r.ciphers, r.bodies, r.reply_total "
+                "FROM threads t LEFT JOIN LATERAL ("
+                "SELECT array_agg(author ORDER BY created_at, id) AS authors, "
+                "array_agg(cipher ORDER BY created_at, id) AS ciphers, "
+                "array_agg(body ORDER BY created_at, id) AS bodies, max(reply_total) AS reply_total "
+                "FROM (SELECT author, cipher, body, created_at, id, count(*) OVER () AS reply_total "
+                "FROM conversation_file_comments c WHERE c.conversation_id = %(conversation_id)s "
+                "AND c.user_id = %(user_id)s AND c.parent_id = t.id "
+                "ORDER BY created_at DESC, id DESC LIMIT %(replies)s) newest) r ON true "
+                "ORDER BY t.created_at DESC, t.id DESC",
+                params,
+            )
+            rows = await cur.fetchall()
+        threads: list[ListedThread] = []
+        for row in rows:
+            anchor = json.loads(self._open(row["cipher"], row["anchor"]))
+            replies = [
+                (author, self._open(cipher, body))
+                for author, cipher, body in zip(row["authors"] or [], row["ciphers"] or [], row["bodies"] or [])
+            ]
+            threads.append(ListedThread(
+                id=str(row["id"]),
+                quote=str(anchor.get("quote", "")),
+                body=self._open(row["cipher"], row["body"]),
+                author=row["author"],
+                replies=replies,
+                more_replies=max(0, int(row["reply_total"] or 0) - len(replies)),
+                path=row["path"],
+                status=row["status"],
+                resolved_by=row["resolved_by"],
+            ))
+        return ThreadListing(threads=threads, total=int(rows[0]["total"]) if rows else 0)
 
     # -- writes --------------------------------------------------------------
     async def add_comment(
@@ -313,34 +430,81 @@ class DocumentCommentStore(DocumentVersionStore):
                 parent_id = _comment_id(parent_id)
                 await self._check_reply(conn, scope, parent_id)
             else:
-                cur = await conn.execute(
-                    f"SELECT count(*) AS n FROM conversation_file_comments WHERE {_SCOPE} "
-                    "AND path = %(path)s AND parent_id IS NULL",
-                    scope,
-                )
-                if int((await cur.fetchone())["n"]) >= MAX_THREADS_PER_DOCUMENT:
-                    raise CommentLimitReached(
-                        "thread_limit", f"A document holds at most {MAX_THREADS_PER_DOCUMENT} comment threads.")
-            cipher, sealed_body = self._seal(body)
-            sealed_anchor = None
-            if anchor is not None:
-                anchor_cipher, sealed_anchor = self._seal(json.dumps(
-                    {"quote": anchor.quote, "prefix": anchor.prefix, "suffix": anchor.suffix}, ensure_ascii=False))
-                if anchor_cipher != cipher:  # one cipher column for the row's fields
-                    raise RuntimeError("The file cipher changed between two fields of one comment.")
-            cur = await conn.execute(
-                "INSERT INTO conversation_file_comments "
-                "(id, user_id, conversation_id, path, version, parent_id, cipher, anchor, body, author, status) "
-                "VALUES (%(id)s, %(user_id)s, %(conversation_id)s, %(path)s, %(version)s, %(parent_id)s, "
-                "%(cipher)s, %(anchor)s, %(body)s, %(author)s, %(status)s) "
-                f"RETURNING {_COLUMNS}",
-                {**scope, "id": uuid.uuid4(), "version": version, "parent_id": parent_id, "cipher": cipher,
-                 "anchor": sealed_anchor, "body": sealed_body, "author": author,
-                 "status": "open" if parent_id is None else None},
-            )
-            comment = self._comment(await cur.fetchone())
+                await self._check_thread_room(conn, scope)
+            comment = await self._insert(conn, scope, version=version, parent_id=parent_id, anchor=anchor,
+                                         body=body, author=author)
         logger.info("document_comment_added", "Added a comment to a canvas document",
                     reply=parent_id is not None, author=author)
+        return comment
+
+    async def get_comment(self, user_id: str, conversation_id: str, comment_id: str) -> DocumentComment:
+        """One comment of this conversation, or :class:`CommentNotFound`.
+
+        What the bridge's check of a comment-started canvas edit reads: the
+        thread must exist here, be a thread, be open and sit on the document
+        the edit names. Scoped like every read, so another conversation's (or
+        user's) id is simply not found.
+        """
+        async with self._pool.connection() as conn:
+            cur = await conn.execute(
+                f"SELECT {_COLUMNS} FROM conversation_file_comments WHERE {_SCOPE} AND id = %(id)s",
+                {"user_id": user_id, "conversation_id": conversation_id, "id": _comment_id(comment_id)},
+            )
+            row = await cur.fetchone()
+        if row is None:
+            raise CommentNotFound(comment_id)
+        return self._comment(row)
+
+    # -- the agent's writes (plan 44 v2) ---------------------------------------
+    async def agent_reply(self, user_id: str, conversation_id: str, thread_id: str, *, body: str) -> DocumentComment:
+        """The agent's reply under an **open** thread of this conversation.
+
+        Recorded on the document's latest version (the one the agent worked
+        on). :class:`CommentNotFound` when the conversation has no such
+        comment; :class:`InvalidComment` when it is a reply, not a thread;
+        :class:`ThreadNotOpen` when it is resolved; :class:`CommentLimitReached`
+        at the thread's reply cap.
+        """
+        _check_body(body)
+        async with self._pool.connection() as conn, conn.transaction():
+            thread = await self._locked_thread(conn, user_id, conversation_id, thread_id)
+            scope = {"user_id": user_id, "conversation_id": conversation_id, "path": thread["path"]}
+            await self._check_reply(conn, scope, str(thread["id"]))
+            version = await self._latest_version(conn, scope)
+            comment = await self._insert(conn, scope, version=version, parent_id=str(thread["id"]), anchor=None,
+                                         body=body, author="agent")
+        logger.info("document_comment_added", "Added a comment to a canvas document", reply=True, author="agent")
+        return comment
+
+    async def agent_thread(
+        self, user_id: str, conversation_id: str, path: str, *, quote: str, body: str
+    ) -> DocumentComment:
+        """A new thread by the agent on ``quote`` in the document's **latest** version.
+
+        The quote is found in that version's canvas text — the markdown as the
+        canvas reads it (:func:`~harness.conversation_files.anchors.anchor_for`)
+        — and stored with the context around it, read in the same transaction
+        as the insert, so the anchor and the version always agree.
+        :class:`DocumentNotFound` when the document has no version;
+        :class:`QuoteNotFound` when the quote is not in it;
+        :class:`CommentLimitReached` at the document's thread cap.
+        """
+        _check_body(body)
+        scope = {"user_id": user_id, "conversation_id": conversation_id, "path": path}
+        async with self._pool.connection() as conn, conn.transaction():
+            await self._lock_comments(conn, conversation_id, path)
+            latest = await self._read_version(conn, user_id, conversation_id, path, None)
+            if latest is None:
+                raise DocumentNotFound(path)
+            found = anchor_for(latest.content or "", quote)
+            if found is None:
+                raise QuoteNotFound("That quote is not in the document; copy the words exactly as they read.")
+            anchor = CommentAnchor(quote=found.quote, prefix=found.prefix, suffix=found.suffix)
+            _check_anchor(anchor)
+            await self._check_thread_room(conn, scope)
+            comment = await self._insert(conn, scope, version=latest.version, parent_id=None, anchor=anchor,
+                                         body=body, author="agent")
+        logger.info("document_comment_added", "Added a comment to a canvas document", reply=False, author="agent")
         return comment
 
     async def update_comment(
@@ -429,6 +593,79 @@ class DocumentCommentStore(DocumentVersionStore):
         return deleted
 
     # -- internals -----------------------------------------------------------
+    async def _insert(
+        self, conn: Any, scope: dict[str, Any], *, version: int, parent_id: str | None,
+        anchor: CommentAnchor | None, body: str, author: CommentAuthor,
+    ) -> DocumentComment:
+        """Insert one comment, its text sealed under one cipher, inside the caller's transaction."""
+        cipher, sealed_body = self._seal(body)
+        sealed_anchor = None
+        if anchor is not None:
+            anchor_cipher, sealed_anchor = self._seal(json.dumps(
+                {"quote": anchor.quote, "prefix": anchor.prefix, "suffix": anchor.suffix}, ensure_ascii=False))
+            if anchor_cipher != cipher:  # one cipher column for the row's fields
+                raise RuntimeError("The file cipher changed between two fields of one comment.")
+        cur = await conn.execute(
+            "INSERT INTO conversation_file_comments "
+            "(id, user_id, conversation_id, path, version, parent_id, cipher, anchor, body, author, status) "
+            "VALUES (%(id)s, %(user_id)s, %(conversation_id)s, %(path)s, %(version)s, %(parent_id)s, "
+            "%(cipher)s, %(anchor)s, %(body)s, %(author)s, %(status)s) "
+            f"RETURNING {_COLUMNS}",
+            {**scope, "id": uuid.uuid4(), "version": version, "parent_id": parent_id, "cipher": cipher,
+             "anchor": sealed_anchor, "body": sealed_body, "author": author,
+             "status": "open" if parent_id is None else None},
+        )
+        return self._comment(await cur.fetchone())
+
+    async def _check_thread_room(self, conn: Any, scope: dict[str, Any]) -> None:
+        """Below the document's thread cap, under the caller's lock."""
+        cur = await conn.execute(
+            f"SELECT count(*) AS n FROM conversation_file_comments WHERE {_SCOPE} "
+            "AND path = %(path)s AND parent_id IS NULL",
+            scope,
+        )
+        if int((await cur.fetchone())["n"]) >= MAX_THREADS_PER_DOCUMENT:
+            raise CommentLimitReached(
+                "thread_limit", f"A document holds at most {MAX_THREADS_PER_DOCUMENT} comment threads.")
+
+    async def _latest_version(self, conn: Any, scope: dict[str, Any]) -> int:
+        """The document's latest version number (a thread's document always has one: the FK)."""
+        cur = await conn.execute(
+            f"SELECT max(version) AS v FROM conversation_file_versions WHERE {_SCOPE} AND path = %(path)s",
+            scope,
+        )
+        row = await cur.fetchone()
+        if row is None or row["v"] is None:
+            raise DocumentNotFound(scope["path"])
+        return int(row["v"])
+
+    async def _locked_thread(self, conn: Any, user_id: str, conversation_id: str, thread_id: str) -> dict[str, Any]:
+        """An open thread of this conversation, under its document's comment lock and ``FOR UPDATE``.
+
+        The path is read first (it names the lock), then the row again under
+        the lock, so a concurrent resolve or delete is seen before acting.
+        Must run inside the caller's transaction.
+        """
+        params = {"user_id": user_id, "conversation_id": conversation_id, "id": _comment_id(thread_id)}
+        cur = await conn.execute(
+            f"SELECT path FROM conversation_file_comments WHERE {_SCOPE} AND id = %(id)s", params)
+        found = await cur.fetchone()
+        if found is None:
+            raise CommentNotFound(thread_id)
+        await self._lock_comments(conn, conversation_id, found["path"])
+        cur = await conn.execute(
+            f"SELECT {_COLUMNS} FROM conversation_file_comments WHERE {_SCOPE} AND id = %(id)s FOR UPDATE",
+            params,
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise CommentNotFound(thread_id)
+        if row["parent_id"] is not None:
+            raise InvalidComment("That is a reply; answer its thread instead.")
+        if row["status"] != "open":
+            raise ThreadNotOpen("That comment thread is resolved.")
+        return row
+
     async def _check_reply(self, conn: Any, scope: dict[str, Any], parent_id: str) -> None:
         """A reply's thread: a thread (not a reply) of this document, below its reply cap."""
         cur = await conn.execute(
@@ -458,11 +695,11 @@ class DocumentCommentStore(DocumentVersionStore):
 
 
 __all__ = [
+    "LIST_MAX_THREADS",
     "MAX_BODY_CHARS",
     "MAX_CONTEXT_CHARS",
     "MAX_QUOTE_CHARS",
     "MAX_REPLIES_PER_THREAD",
-    "MAX_RESOLUTION_NOTE_CHARS",
     "MAX_THREADS_PER_DOCUMENT",
     "CommentAnchor",
     "CommentLimitReached",
@@ -471,5 +708,10 @@ __all__ = [
     "DocumentCommentStore",
     "DocumentOpenThreads",
     "InvalidComment",
+    "ListedThread",
     "OpenThread",
+    "QuoteNotFound",
+    "ThreadFilter",
+    "ThreadListing",
+    "ThreadNotOpen",
 ]

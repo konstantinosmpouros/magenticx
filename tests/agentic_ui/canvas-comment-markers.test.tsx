@@ -2,13 +2,19 @@
 /**
  * The comment marks in the canvas's right margin (plan 44, Phase 4.4): one
  * mark per line where commented passages start, its count the threads on
- * that line, a click opening the card of that line's threads, and the top
- * mark holding the threads with no line.
+ * that line, a click opening the card of that line's threads; the document
+ * row's button holding the threads with no line (plan 44 v2: not in the
+ * margin any more); and the caret orb kept clear of a mark on its line.
  */
+import { useState } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { CanvasCommentMarkers } from "@/features/canvas/components/canvas_parts/CanvasCommentMarkers";
+import {
+  CanvasCommentMarkers,
+  CanvasOtherCommentsButton,
+} from "@/features/canvas/components/canvas_parts/CanvasCommentMarkers";
+import { orbClearOfMarks } from "@/features/canvas/lib/caretOrb";
 import { measureCommentMarkers } from "@/features/canvas/lib/commentMarkers";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 
@@ -59,7 +65,6 @@ describe("CanvasCommentMarkers", () => {
           onOpen={onOpen}
           onClose={onClose}
           renderThreads={(ids) => <p>threads {ids.join(",")}</p>}
-          others={{ count: 3, render: () => <p>the others</p> }}
         />
       </TooltipProvider>,
     );
@@ -88,12 +93,9 @@ describe("CanvasCommentMarkers", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("opens the threads with no line from the top mark", () => {
+  it("has no mark for the threads with no line in the margin any more", () => {
     renderMarks(null);
-    fireEvent.click(
-      screen.getByRole("button", { name: "3 more comments: on changed text or resolved" }),
-    );
-    expect(screen.getByRole("dialog", { name: "Other comments" })).toHaveTextContent("the others");
+    expect(screen.queryByRole("button", { name: /resolved or detached/ })).not.toBeInTheDocument();
   });
 
   it("renders nothing without marks", () => {
@@ -104,9 +106,78 @@ describe("CanvasCommentMarkers", () => {
         onOpen={() => {}}
         onClose={() => {}}
         renderThreads={() => null}
-        others={null}
       />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+});
+
+describe("CanvasOtherCommentsButton (the document row)", () => {
+  function Row({ count }: { count: number }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <TooltipProvider>
+        <CanvasOtherCommentsButton
+          others={{ count, render: () => <p>the others</p>, open, onOpenChange: setOpen }}
+        />
+      </TooltipProvider>
+    );
+  }
+
+  it("shows the count and opens the card of the resolved and detached threads", () => {
+    render(<Row count={3} />);
+    const button = screen.getByRole("button", { name: "3 resolved or detached comments" });
+    expect(button).toHaveTextContent("3");
+    fireEvent.click(button);
+    expect(screen.getByRole("dialog", { name: "Resolved and detached comments" })).toHaveTextContent(
+      "the others",
+    );
+  });
+
+  it("is absent with none", () => {
+    const { container } = render(<Row count={0} />);
+    expect(container).toBeEmptyDOMElement();
+    const none = render(<CanvasOtherCommentsButton others={null} />);
+    expect(none.container).toBeEmptyDOMElement();
+  });
+});
+
+describe("the caret orb stays clear of a margin mark", () => {
+  /** A column 600px wide at x=100, a scroller showing `visible` px, and marks at those tops. */
+  function layout(marks: { top: number; right?: number }[], visible: number) {
+    const scroller = document.createElement("div");
+    scroller.setAttribute("data-canvas-scroller", "");
+    Object.defineProperty(scroller, "clientWidth", { value: visible });
+    scroller.getBoundingClientRect = () => ({ left: 0, top: 0 }) as DOMRect;
+    const column = document.createElement("div");
+    column.getBoundingClientRect = () => ({ left: 100, top: 0, right: 700 }) as DOMRect;
+    for (const mark of marks) {
+      const node = document.createElement("button");
+      node.setAttribute("data-canvas-comment-mark", "");
+      const right = 100 + (mark.right ?? 640);
+      node.getBoundingClientRect = () =>
+        ({ top: mark.top, bottom: mark.top + 20, left: right - 34, right }) as DOMRect;
+      column.appendChild(node);
+    }
+    scroller.appendChild(column);
+    document.body.appendChild(scroller);
+    return column;
+  }
+
+  it("keeps its spot when no mark is on its line", () => {
+    expect(orbClearOfMarks(layout([{ top: 200 }], 900), 50)).toEqual({ top: 50, left: null });
+  });
+
+  it("sits right of the mark when the margin shows room for both", () => {
+    // The mark's right edge is at 640 in the column; the scroller shows 800px from x=0.
+    expect(orbClearOfMarks(layout([{ top: 40 }], 900), 50)).toEqual({ top: 50, left: 644 });
+  });
+
+  it("goes under the mark (and the one under it) in a narrow margin", () => {
+    const column = layout([{ top: 40 }, { top: 66 }], 760);
+    const place = orbClearOfMarks(column, 50);
+    expect(place.left).toBeNull();
+    // Under the second mark (bottom 86): 86 + 4 + 14.
+    expect(place.top).toBe(104);
   });
 });

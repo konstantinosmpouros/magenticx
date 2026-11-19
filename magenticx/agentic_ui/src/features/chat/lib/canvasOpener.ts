@@ -18,6 +18,8 @@ export type CanvasOpener = (
   options?: {
     /** From an Ask agent card: shine what the agent changed after this version. */
     shineAfterVersion?: number;
+    /** From a card sent with `@agent` (plan 44 v2): open this comment thread's card too. */
+    commentId?: string;
   },
 ) => void;
 

@@ -9,12 +9,20 @@
  * coupling. Phase 4.2 edits with the same kit (the toolbar in
  * `CanvasToolbar` drives these plugins), plus block selection
  * (`block-selection-kit`: drag over the margin, Esc, Ctrl/Cmd+A, the ⋮⋮
- * handle) and the canvas's Backspace / Delete rules (`editorDelete.ts`); the
- * review plugins (comments, suggestions) arrive with their phases (4.4, 4.6).
+ * handle) and the canvas's Backspace / Delete rules (`editorDelete.ts`).
+ * Comments are painted over the text (Highlight API), not plugins; Suggesting
+ * mode (4.6) adds one leaf plugin, `canvasSuggestion`, which only draws the
+ * marks of a review's value (`lib/suggestions.ts`) — no such value is ever
+ * serialized, so it has no counterpart in `canvasBasePlugins`.
  */
 import { createElement } from "react";
 import { isHotkey, KEYS, type Value } from "platejs";
-import { createPlateEditor, ParagraphPlugin, type RenderNodeWrapper } from "platejs/react";
+import {
+  createPlateEditor,
+  createPlatePlugin,
+  ParagraphPlugin,
+  type RenderNodeWrapper,
+} from "platejs/react";
 import {
   BlockquotePlugin,
   BoldPlugin,
@@ -60,11 +68,13 @@ import {
 } from "@/shared/ui/plate/table-node";
 
 import { CanvasBlockFrame } from "../components/canvas_parts/CanvasBlockFrame";
+import { CanvasSuggestionLeaf } from "../components/canvas_parts/CanvasSuggestionLeaf";
 import { CanvasTableElement } from "../components/canvas_parts/CanvasTableElement";
 import { canvasViewPlugin } from "./canvasView";
 import { canvasDeletePlugin } from "./editorDelete";
 import { canvasMarkdownPlugin } from "./markdown";
 import { canvasPastePlugin } from "./pasteCleanup";
+import { SUGGESTION_KEY, suggestionMark } from "./suggestions";
 
 export const findPlugin = FindReplacePlugin.configure({
   options: { search: "" },
@@ -82,9 +92,16 @@ const canvasBlockFrame: RenderNodeWrapper = ({ path, element }) => {
   if (path.length !== 1) return;
   const index = path[0];
   const id = typeof element.id === "string" ? element.id : undefined;
+  const suggestion = suggestionMark(element);
   return ({ children }) =>
-    createElement(CanvasBlockFrame, { index, id, type: element.type, children });
+    createElement(CanvasBlockFrame, { index, id, type: element.type, suggestion, children });
 };
+
+/** Inserted / deleted words of a review (Suggesting mode); whole blocks are the frame's. */
+const suggestionPlugin = createPlatePlugin({
+  key: SUGGESTION_KEY,
+  node: { isLeaf: true, component: CanvasSuggestionLeaf },
+});
 
 export const canvasEditorPlugins = [
   ParagraphPlugin.withComponent(ParagraphElement),
@@ -154,6 +171,7 @@ export const canvasEditorPlugins = [
     },
   }),
   findPlugin,
+  suggestionPlugin,
   canvasMarkdownPlugin,
   canvasViewPlugin.configure({ render: { aboveNodes: canvasBlockFrame } }),
   canvasPastePlugin,

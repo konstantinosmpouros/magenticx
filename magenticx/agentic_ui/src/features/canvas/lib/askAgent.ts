@@ -133,6 +133,8 @@ export function buildCanvasEdit({
     headingPath: draft.passage.headingPath.map(clean).filter(Boolean),
     instruction: clean(draft.instruction).trim().slice(0, CANVAS_EDIT_LIMITS.instruction),
     ...(draft.preset ? { preset: draft.preset } : {}),
+    // Asked from a comment (`@agent`, plan 44 v2): the thread's id.
+    ...(draft.commentId ? { commentId: draft.commentId } : {}),
   };
 }
 

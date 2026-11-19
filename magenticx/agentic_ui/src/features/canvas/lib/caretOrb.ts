@@ -50,3 +50,54 @@ export function blockNoun(node: TElement | undefined): string {
   if (node.type === KEYS.table) return "table";
   return "paragraph";
 }
+
+/** The orb's box (px): `size-7`. */
+const ORB_SIZE = 28;
+/** The gap kept between the orb and a comment mark. */
+const ORB_GAP = 4;
+
+/**
+ * Where the orb goes so it never covers a comment's margin mark (plan 44
+ * v2): its spot unchanged when no mark is on its line; else just right of
+ * the mark when the scroller shows that much margin; else under the mark
+ * (and under any mark below that one). `left` is px from the column's left,
+ * null to keep the default (just outside the column's right edge).
+ */
+export function orbClearOfMarks(
+  column: HTMLElement,
+  top: number,
+): { top: number; left: number | null } {
+  const box = column.getBoundingClientRect();
+  const marks = Array.from(column.querySelectorAll<HTMLElement>("[data-canvas-comment-mark]"))
+    .map((mark) => {
+      const rect = mark.getBoundingClientRect();
+      return {
+        top: rect.top - box.top,
+        bottom: rect.bottom - box.top,
+        right: rect.right - box.left,
+      };
+    })
+    .filter((mark) => mark.bottom > mark.top)
+    .sort((a, b) => a.top - b.top);
+  const hits = (center: number) =>
+    marks.find(
+      (mark) =>
+        center + ORB_SIZE / 2 > mark.top - ORB_GAP && center - ORB_SIZE / 2 < mark.bottom + ORB_GAP,
+    );
+  const onLine = hits(top);
+  if (!onLine) return { top, left: null };
+
+  const scroller = column.closest<HTMLElement>("[data-canvas-scroller]");
+  const visibleRight = scroller
+    ? scroller.getBoundingClientRect().left + scroller.clientWidth - box.left
+    : Number.POSITIVE_INFINITY;
+  const besideLeft = onLine.right + ORB_GAP;
+  if (besideLeft + ORB_SIZE <= visibleRight - ORB_GAP) return { top, left: besideLeft };
+
+  // No room beside it: under the mark, and under whatever mark is there next.
+  let below = onLine.bottom + ORB_GAP + ORB_SIZE / 2;
+  for (let next = hits(below); next; next = hits(below)) {
+    below = next.bottom + ORB_GAP + ORB_SIZE / 2;
+  }
+  return { top: below, left: null };
+}

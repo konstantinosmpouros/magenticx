@@ -12,7 +12,12 @@ conversation's canvas documents, and the instruction). Pinned here:
 * it is stored on the user message (``messages.canvas_edit``), comes back on
   ``MessageOut`` (an unreadable stored value is null, never a failed load),
   rides the run context in snake_case only when set, and a fork keeps it;
-* the migration chain has one head, ``0050_message_canvas_edit``.
+* the migration chain has one head, ``0050_message_canvas_edit``;
+* plan 44 v2: ``commentId`` (the thread a comment-started edit came from) is
+  a canonical UUID; the start also asks the agents service for that comment
+  and refuses — 422 ``invalid_canvas_edit`` — a missing comment, a reply, a
+  resolved thread or one on another document; the run context carries it as
+  ``comment_id`` only when set.
 """
 from __future__ import annotations
 
@@ -55,6 +60,7 @@ def _edit(**overrides: Any) -> dict[str, Any]:
         "headingPath": ["2. Scope", "Out of scope"],
         "instruction": "Make it shorter",
         "preset": "shorter",
+        "commentId": None,
     }
     edit.update(overrides)
     return edit
@@ -139,6 +145,10 @@ def test_a_user_message_takes_a_canvas_edit():
     {"headingPath": [""]},
     {"preset": "louder"},
     {"extra": "field"},
+    {"commentId": "not-a-uuid"},
+    {"commentId": "6F1C2A3B-0000-4000-8000-000000000001"},   # not the canonical (lowercase) form
+    {"commentId": "6f1c2a3b000040008000000000000001"},       # not hyphenated
+    {"commentId": ""},
 ])
 def test_an_invalid_canvas_edit_is_refused(overrides):
     with pytest.raises(ValidationError):
@@ -234,6 +244,109 @@ async def test_an_unreachable_agents_service_is_a_503(
                 db=db, user=seeded_user, payload=_send(seeded_agent, conversation_id, answer_id, _edit())
             )
     assert refused.value.status_code == 503
+
+
+# -- plan 44 v2: an edit started from a comment thread -----------------------------
+
+THREAD = "6f1c2a3b-0000-4000-8000-000000000001"
+
+
+def _comment_path(user_id: str, conversation_id: str, comment_id: str = THREAD) -> str:
+    return f"/users/{user_id}/conversations/{conversation_id}/documents/comments/{comment_id}"
+
+
+def _comment(**overrides: Any) -> httpx.Response:
+    comment = {
+        "id": THREAD, "path": BRIEF, "version": 4, "parent_id": None,
+        "anchor": {"quote": "The exact selected text.", "prefix": "", "suffix": ""},
+        "body": "@agent make it shorter", "author": "user", "status": "open", "resolved_by": None,
+        "resolution_note": None, "created_at": WHEN, "updated_at": WHEN,
+    }
+    comment.update(overrides)
+    return httpx.Response(200, json=comment)
+
+
+async def test_a_comment_started_edit_checks_the_thread_and_stores_its_id(
+    agent_lookup, agents_service, session_factory, seeded_user, seeded_agent
+):
+    conversation_id, answer_id = await _answered_conversation(session_factory, seeded_user, seeded_agent)
+    agents_service.on("GET", _versions_path(seeded_user.id, conversation_id), _history(latest=4))
+    agents_service.on("GET", _comment_path(seeded_user.id, conversation_id), _comment())
+
+    async with session_factory() as db:
+        response = await start_inference_flow(
+            db=db, user=seeded_user,
+            payload=_send(seeded_agent, conversation_id, answer_id, _edit(commentId=THREAD, preset=None)),
+        )
+
+    [call] = agents_service.called("GET", _comment_path(seeded_user.id, conversation_id))
+    assert call.headers.get("x-internal-proxy-secret")
+    user_message = await _user_message_of(session_factory, response.message.id)
+    assert user_message.canvas_edit["commentId"] == THREAD
+    assert MessageOut.model_validate(user_message).canvasEdit.commentId == THREAD
+
+
+@pytest.mark.parametrize("reply", [
+    httpx.Response(404, json={"detail": "No such document or comment."}),   # not in this conversation
+    _comment(parent_id="6f1c2a3b-0000-4000-8000-000000000002"),           # a reply, not a thread
+    _comment(status="resolved", resolved_by="user"),                        # not open
+    _comment(path="/conversation/output/other.md"),                         # another document
+])
+async def test_a_comment_started_edit_on_a_thread_that_is_not_open_here_is_a_422(
+    agent_lookup, agents_service, session_factory, seeded_user, seeded_agent, reply
+):
+    conversation_id, answer_id = await _answered_conversation(session_factory, seeded_user, seeded_agent)
+    agents_service.on("GET", _versions_path(seeded_user.id, conversation_id), _history(latest=4))
+    agents_service.on("GET", _comment_path(seeded_user.id, conversation_id), reply)
+
+    async with session_factory() as db:
+        with pytest.raises(HTTPException) as refused:
+            await start_inference_flow(
+                db=db, user=seeded_user,
+                payload=_send(seeded_agent, conversation_id, answer_id, _edit(commentId=THREAD)),
+            )
+        await db.rollback()
+    assert refused.value.status_code == 422
+    assert refused.value.detail == {"code": "invalid_canvas_edit",
+                                    "message": "That comment thread is not open on this document."}
+    async with session_factory() as db:
+        rows = (await db.execute(
+            select(MessageTable).where(MessageTable.conversation_id == conversation_id)
+        )).scalars().all()
+    assert len(rows) == 2  # the question and the answer only
+
+
+async def test_a_comment_check_the_agents_service_cannot_answer_is_a_503(
+    agent_lookup, agents_service, session_factory, seeded_user, seeded_agent
+):
+    conversation_id, answer_id = await _answered_conversation(session_factory, seeded_user, seeded_agent)
+    agents_service.on("GET", _versions_path(seeded_user.id, conversation_id), _history(latest=4))
+
+    def down(request):
+        raise httpx.ConnectError("agents down", request=request)
+
+    agents_service.on("GET", _comment_path(seeded_user.id, conversation_id), down)
+    async with session_factory() as db:
+        with pytest.raises(HTTPException) as refused:
+            await start_inference_flow(
+                db=db, user=seeded_user,
+                payload=_send(seeded_agent, conversation_id, answer_id, _edit(commentId=THREAD)),
+            )
+    assert refused.value.status_code == 503
+
+
+async def test_a_plain_ask_agent_edit_never_asks_for_a_comment(
+    agent_lookup, agents_service, session_factory, seeded_user, seeded_agent
+):
+    conversation_id, answer_id = await _answered_conversation(session_factory, seeded_user, seeded_agent)
+    agents_service.on("GET", _versions_path(seeded_user.id, conversation_id), _history(latest=4))
+
+    async with session_factory() as db:
+        await start_inference_flow(
+            db=db, user=seeded_user, payload=_send(seeded_agent, conversation_id, answer_id, _edit())
+        )
+
+    assert [c.url.path for c in agents_service.calls] == [_versions_path(seeded_user.id, conversation_id)]
 
 
 async def test_a_new_conversation_cannot_carry_a_canvas_edit(agent_lookup, agents_service, session_factory,
@@ -350,6 +463,15 @@ def test_the_run_context_carries_it_in_snake_case():
         "path": BRIEF, "version": 4, "selection": "The exact selected text.",
         "heading_path": ["2. Scope", "Out of scope"], "instruction": "Make it shorter", "preset": "shorter",
     }}
+
+
+def test_the_run_context_carries_the_comment_id_only_when_set():
+    with_thread = canvas_edit_context(SimpleNamespace(canvas_edit=_edit(commentId=THREAD)))
+    assert with_thread["canvas_edit"]["comment_id"] == THREAD
+    assert "comment_id" not in canvas_edit_context(SimpleNamespace(canvas_edit=_edit()))["canvas_edit"]
+    # A stored value from before v2 (no key at all) reads back the same way.
+    stored = {k: v for k, v in _edit().items() if k != "commentId"}
+    assert "comment_id" not in canvas_edit_context(SimpleNamespace(canvas_edit=stored))["canvas_edit"]
 
 
 def test_the_run_context_has_no_key_without_one():

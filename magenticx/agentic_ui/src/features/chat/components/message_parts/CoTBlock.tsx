@@ -21,11 +21,14 @@ import {
 import { toolIcon } from "@/shared/lib/consts";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
+  asToolArgs,
   parseToolArgs,
+  replyToCommentTitle,
   toolMeta,
   toolTitle,
   toolTitleHint,
 } from "@/features/chat/lib/toolPresentation";
+import { useCommentThreadRef } from "@/features/chat/hooks/useCommentThreadRef";
 import {
   finalCoTTitle,
   liveCoTTitle,
@@ -121,8 +124,13 @@ const TimelineToolItem = memo(
     const serverId = useWorkspaceStore(
       (s) => s.availableTools.find((t) => t.toolName === tool.name)?.serverId || undefined,
     );
+    // A reply names its document where the conversation knows the thread.
+    const replyThreadId = tool.name === "reply_to_comment" ? asToolArgs(args)?.thread_id : null;
+    const replyThread = useCommentThreadRef(typeof replyThreadId === "string" ? replyThreadId : null);
     // "Read report.csv" rather than `read_file`; the full path on hover.
-    const title = toolTitle(tool.name, args, serverId);
+    const title = replyThread
+      ? replyToCommentTitle(replyThread.path)
+      : toolTitle(tool.name, args, serverId);
     const titleHint = toolTitleHint(tool.name, args);
     const meta =
       tool.state === "output-error" ? undefined : toolMeta(tool.name, args, tool.result, serverId);

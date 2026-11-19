@@ -17,6 +17,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 
 import { useCoarsePointer } from "../../hooks/useCoarsePointer";
 import { useSelectedPassage } from "../../hooks/useSelectedPassage";
+import { keepOpenForMention } from "../../lib/agentMention";
 import { selectedPassage } from "../../lib/askAgent";
 import { showAskHighlight } from "../../lib/askHighlight";
 import { captureAnchor, type CanvasAnchorCapture } from "../../lib/commentAnchors";
@@ -92,6 +93,7 @@ export function CanvasCommentButton({
         align="start"
         collisionPadding={12}
         className="w-[min(22rem,calc(100vw-1.5rem))] p-2"
+        onEscapeKeyDown={keepOpenForMention}
         onOpenAutoFocus={(event) => {
           if (target?.capture?.kind !== "anchor") event.preventDefault();
         }}
@@ -105,7 +107,10 @@ export function CanvasCommentButton({
         {target?.capture?.kind === "anchor" ? (
           <CanvasCommentForm
             label="Comment on the selected text"
-            placeholder="Add a comment…"
+            placeholder={
+              comment?.mentions ? "Comment, or @agent to ask the agent…" : "Add a comment…"
+            }
+            mentions={Boolean(comment?.mentions)}
             onSubmit={(body) => {
               const anchor = target.capture?.kind === "anchor" ? target.capture.anchor : null;
               pending.current = anchor ? () => comment.onCreate(anchor, body) : null;

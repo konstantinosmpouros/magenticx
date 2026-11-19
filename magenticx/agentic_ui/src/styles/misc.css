@@ -42,6 +42,13 @@
   background-color: hsl(var(--primary) / 0.18);
 }
 
+/* The block the agent is writing right now (plan 44 v2), painted by
+   features/canvas/lib/askHighlight.ts under its own name; the accent bar in
+   the margin says it too (colour is not the only cue). */
+::highlight(canvas-writing) {
+  background-color: hsl(var(--primary) / 0.1);
+}
+
 /* Comment threads' passages in the canvas (plan 44, Phase 4.4), painted by
    features/canvas/lib/commentHighlight.ts: every open thread's passage with a
    warm tint and an underline (colour is not the only cue), the thread being

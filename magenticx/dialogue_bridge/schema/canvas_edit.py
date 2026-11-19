@@ -9,11 +9,18 @@ it, the instruction and the preset. It is a user-only field like ``command``
 reads, and carried to the agents service's run context, which turns it into a
 scoped instruction for that turn only.
 
+Plan 44 v2: the same message is sent when the user writes ``@agent`` in a
+canvas comment. ``commentId`` then names the comment **thread** (always the
+thread, even when the ``@agent`` text was a reply) — a canonical UUID, checked
+with the agents service before anything commits (utils/canvas_edit.py) and
+carried to the run, where the agent answers and resolves that thread.
+
 Everything in it is the user's text. The bounds here are the contract's and
 are enforced server-side; the agents service validates the run context again
 and only ever puts the text into the model as quoted data.
 """
 import re
+import uuid
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -51,6 +58,22 @@ class _CanvasEdit(BaseModel):
     headingPath: list[str] = Field(default_factory=list, max_length=CANVAS_EDIT_HEADINGS_MAX)
     instruction: str = Field(min_length=1, max_length=CANVAS_EDIT_INSTRUCTION_MAX_CHARS)
     preset: CanvasEditPreset | None = None
+    #: The comment thread the request came from (plan 44 v2); null for Ask agent.
+    commentId: str | None = Field(None, max_length=36)
+
+    @field_validator("commentId")
+    @classmethod
+    def _thread_id(cls, value: str | None) -> str | None:
+        # Canonical form only (lowercase, hyphenated): the agents service puts
+        # the id into the model's instruction verbatim, and stores compare it.
+        if value is not None:
+            try:
+                canonical = str(uuid.UUID(value))
+            except ValueError as exc:
+                raise ValueError("commentId is not a comment id.") from exc
+            if canonical != value:
+                raise ValueError("commentId is not a canonical comment id.")
+        return value
 
 
 class CanvasEditIn(_CanvasEdit):

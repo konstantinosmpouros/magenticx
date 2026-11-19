@@ -113,6 +113,17 @@ async def list_document_comments(user_id: str, conversation_id: str, path: str) 
     return _validated(response, DocumentCommentsOut, operation="document_comments")
 
 
+async def get_document_comment(user_id: str, conversation_id: str, comment_id: str) -> DocumentCommentOut:
+    """One comment of the conversation (a 404 when it has none with that id).
+
+    Used by the canvas-edit check (plan 44 v2) to confirm the thread a
+    comment-started edit names.
+    """
+    response = await _request("GET", f"{_comments_url(user_id, conversation_id)}/{comment_id}",
+                              operation="document_comment_get")
+    return _validated(response, DocumentCommentOut, operation="document_comment_get")
+
+
 async def add_document_comment(user_id: str, conversation_id: str, payload: DocumentCommentIn) -> DocumentCommentOut:
     """The user's new thread or reply."""
     response = await _request("POST", _comments_url(user_id, conversation_id), operation="document_comment_add",

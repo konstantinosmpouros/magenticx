@@ -1794,9 +1794,13 @@ export const InferenceStartOrQueueSchema = z.record(z.unknown()).transform((raw)
  * user message asks the agent to change, in the canvas document `path` at
  * `version`, under `headingPath` (outermost first). The message's `content`
  * is the instruction too. The bounds are the bridge's (`MessageIn.canvasEdit`).
+ * `commentId` (plan 44 v2) is the comment thread an `@agent` comment sent it
+ * from — always the thread, never a reply; absent for a plain Ask agent.
  */
 export const CANVAS_EDIT_PRESETS = ["shorter", "longer", "formal", "simpler", "polish"] as const;
 export type CanvasEditPreset = (typeof CANVAS_EDIT_PRESETS)[number];
+/** A canonical UUID (a comment thread's id), as the bridge validates `canvasEdit.commentId`. */
+const CANVAS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const CANVAS_EDIT_LIMITS = {
   selection: 8000,
   instruction: 2000,
@@ -1828,6 +1832,8 @@ export const toCanvasEdit = (raw: unknown) => {
     return null;
   const headings = atField(record, "headingPath", "heading_path");
   const preset = record.preset;
+  // Plan 44 v2: the comment thread an `@agent` request came from (its UUID).
+  const commentId = atField(record, "commentId", "comment_id");
   return {
     path,
     version,
@@ -1839,6 +1845,9 @@ export const toCanvasEdit = (raw: unknown) => {
     instruction,
     ...(typeof preset === "string" && (CANVAS_EDIT_PRESETS as readonly string[]).includes(preset)
       ? { preset: preset as CanvasEditPreset }
+      : {}),
+    ...(typeof commentId === "string" && CANVAS_UUID.test(commentId)
+      ? { commentId: commentId.toLowerCase() }
       : {}),
   };
 };

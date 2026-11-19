@@ -25,6 +25,8 @@ import { cn } from "@/shared/lib/utils";
 import type { TimelineToolExecution } from "@/shared/lib/types";
 import {
   asToolArgs,
+  isCommentTool,
+  LIST_COMMENTS_TOOL,
   isMcpTool,
   isRoutineSuccess,
   languageForPath,
@@ -42,6 +44,7 @@ import {
 } from "@/features/chat/lib/toolPresentation";
 import { toTitleCase } from "@/features/inference";
 import type { SubagentRunStatus } from "@/shared/lib/types";
+import { CommentListingView, CommentToolArgsView, CommentToolResultView } from "./CommentToolViews";
 import { McpResultView } from "./McpToolViews";
 import { SourceCards } from "./SourceCards";
 import { STATUS_META } from "./subagentStatus";
@@ -171,6 +174,10 @@ export const ToolCallArgsView = ({
   /** From the tool catalog; set for MCP tools. */
   serverId?: string;
 }) => {
+  // Canvas comments read as comments, never as JSON — even while streaming.
+  if (isCommentTool(tool.name)) return <CommentToolArgsView tool={tool} args={rawArgs} />;
+  // Reading the comments: the title names the document and which threads.
+  if (tool.name === LIST_COMMENTS_TOOL) return null;
   const args = asToolArgs(rawArgs);
   if (isGenericStep(tool, args)) {
     return rawArgs !== null && rawArgs !== undefined && !toolIsBare(tool.name) ? <ToolInput input={rawArgs} /> : null;
@@ -285,6 +292,8 @@ export const ToolCallResultView = ({
   );
   // A search step's pages (plan 42), whatever the tool: cards, not the result.
   if (tool.sources?.length && tool.state !== "output-error") return <SourceCards sources={tool.sources} />;
+  if (isCommentTool(tool.name)) return <CommentToolResultView tool={tool} args={rawArgs} />;
+  if (tool.name === LIST_COMMENTS_TOOL) return <CommentListingView tool={tool} />;
   if (isGenericStep(tool, args) || result === undefined) return result === undefined ? null : generic;
   const a = args as ToolArgs;
   if (isMcpTool(tool.name, serverId)) return <McpResultView tool={tool} />;

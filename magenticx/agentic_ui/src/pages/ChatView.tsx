@@ -20,7 +20,9 @@ import { useSlashCommands } from "@/features/chat/hooks/useSlashCommands";
 import { Loader } from "@/shared/ui/shadcn-io/loader";
 import { CanvasDock } from "@/features/canvas/components/CanvasDock";
 import { useCanvasRoute } from "@/features/canvas/hooks/useCanvasRoute";
+import { agentWritingIn } from "@/features/canvas/lib/agentWriting";
 import { requestCanvasShine } from "@/features/canvas/lib/pendingShine";
+import { requestCanvasThread } from "@/features/canvas/lib/pendingThread";
 import { findCanvasFile } from "@/features/canvas/lib/canvasFile";
 import { CanvasOpenerContext, type CanvasOpener } from "@/features/chat/lib/canvasOpener";
 import { keepInView } from "@/features/chat/lib/keepInView";
@@ -170,6 +172,7 @@ export default function ChatView() {
     (path, anchor, options) => {
       if (options?.shineAfterVersion !== undefined)
         requestCanvasShine({ path, afterVersion: options.shineAfterVersion });
+      if (options?.commentId) requestCanvasThread({ path, commentId: options.commentId });
       keepInView(anchor, () => openCanvasPath(path));
     },
     [openCanvasPath],
@@ -187,6 +190,18 @@ export default function ChatView() {
     [conversationMessages, canvasPath],
   );
   const { openFilePreview } = attachmentPreview;
+  // The run writing the open document right now (plan 44 v2): its own
+  // edit_file / write_file call on that path, from the live timeline. Kept
+  // as a string so the canvas re-renders only when it changes, not per token.
+  const liveTimeline = isCurrentConversationBusy ? (activeConversationRun?.timeline ?? null) : null;
+  const agentWritingKey = useMemo(
+    () => (canvasPath ? JSON.stringify(agentWritingIn(liveTimeline, canvasPath)) : "null"),
+    [liveTimeline, canvasPath],
+  );
+  const agentWriting = useMemo(
+    () => JSON.parse(agentWritingKey) as ReturnType<typeof agentWritingIn>,
+    [agentWritingKey],
+  );
 
   const slash = useSlashCommands({
     userId,
@@ -216,6 +231,7 @@ export default function ChatView() {
                 onAskAgent:
                   currentConversation?.id === canvasConversationId ? handleSendCanvasEdit : null,
                 runActive: isCurrentConversationBusy,
+                agentWriting,
                 onSelectPath: canvas.switchTo,
                 onClose: canvas.close,
                 onPreviewFile: canvasFile

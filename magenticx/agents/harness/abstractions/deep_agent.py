@@ -39,6 +39,7 @@ from harness.prompt_engineering import (
 from harness.prompt_engineering.prompts.capabilities_prompt import delegating_subagent_prompt
 from harness.tools.ask_user import ASK_USER_TOOL_NAME
 from harness.tools.gates import resolve_interrupt_on, strip_reserved_names, trust_level
+from harness.tools.canvas_comments import CommentWriteBudget
 from harness.tools.registry import NativeToolContext, build_auto_attach_tools
 from harness.middlewares import (
     ConfigurableSummarizationMiddleware,
@@ -52,7 +53,7 @@ from harness.middlewares import (
     exclude_stock_summarization,
     find_summarizer,
 )
-from harness.conversation_files import ConversationFiles, ConversationFileStore
+from harness.conversation_files import ConversationFiles, ConversationFileStore, DocumentVersionStore
 from harness.filesystem import (
     build_workspace_backend,
     filesystem_middleware,
@@ -60,7 +61,7 @@ from harness.filesystem import (
     resolve_branch_thread_id,
     workspace_write_deny,
 )
-from harness.memory import get_memory_pool
+from harness.memory import get_memory_pool, has_memory_pool
 from harness.sources import has_extractor
 from utils.mcp_tools import is_mcp_tool
 from core.logging import get_logger
@@ -209,6 +210,13 @@ class DeepAgent(BaseAgent, ABC):
     # A background task's node of the tree (plan 41), set per instance by the
     # task runner; the class default keeps an ordinary run's build unchanged.
     async_task_node: Optional[TaskNode] = None
+
+    # The canvas comment tools (plan 44 v2): whether this run's conversation
+    # has a canvas document — probed in ensure_built(), since the registry's
+    # builders are synchronous — and the run's comment-write budget, created
+    # per instance on first use (``comment_writes``), so one per run.
+    has_canvas_documents: bool = False
+    _comment_writes: Optional[CommentWriteBudget] = None
 
 
     def __init__(self, *, config: Optional[Mapping[str, Any]] = None) -> None:
@@ -409,6 +417,12 @@ class DeepAgent(BaseAgent, ABC):
         * ``ask_user`` (clarifying questions, a HITL pause) additionally needs
           an interactive run — ``interactive`` in the context, false for a
           scheduled task's run, where nobody would ever answer.
+        * ``list_comments`` / ``reply_to_comment`` / ``add_comment`` (plan 44 v2) need a
+          conversation that has a canvas document (``has_canvas_documents``,
+          probed in ``ensure_built``) and a run that is not a background
+          task; the two writes share ``comment_writes`` (the read is not
+          counted). The agent never resolves a
+          thread — the user does.
         """
         ctx = self.context or {}
         user_id = ctx.get("user_id")
@@ -432,6 +446,8 @@ class DeepAgent(BaseAgent, ABC):
                 files=self.conversation_files if ctx.get("conversation_id") else None,
                 interactive=self.interactive,
                 async_task_id=self.async_task_id,
+                has_canvas_documents=self.has_canvas_documents,
+                comment_writes=self.comment_writes,
             )
         )
 
@@ -619,6 +635,12 @@ class DeepAgent(BaseAgent, ABC):
             has_ask_user=(
                 bool(ctx.get("user_id") and ctx.get("conversation_id"))
                 and self.interactive
+                and self.async_task_id is None
+            ),
+            # The comment tools' own gate (``NativeToolContext.comments_available``).
+            has_canvas_comments=(
+                bool(ctx.get("user_id") and ctx.get("conversation_id"))
+                and self.has_canvas_documents
                 and self.async_task_id is None
             ),
             has_reference=self._has_reference,
@@ -1145,6 +1167,7 @@ class DeepAgent(BaseAgent, ABC):
         if self.agent is not None:
             return
         logger.info("deep_agent_build_started", "Deep agent build started", agent_slug=self.name)
+        self.has_canvas_documents = await self._probe_canvas_documents()
         if self.checkpointer is None:
             self.checkpointer = MemorySaver()
         self.skills_paths   = self.load_skills()
@@ -1160,6 +1183,38 @@ class DeepAgent(BaseAgent, ABC):
             has_subagents=self.sub_agents is not None,
         )
 
+
+
+    @property
+    def comment_writes(self) -> CommentWriteBudget:
+        """This run's comment-write budget, shared by every context the agent builds tools from."""
+        if self._comment_writes is None:
+            self._comment_writes = CommentWriteBudget()
+        return self._comment_writes
+
+
+    async def _probe_canvas_documents(self) -> bool:
+        """Whether this run's conversation has at least one canvas document (plan 44 v2).
+
+        The comment tools and their prompt section exist only then — the same
+        version rows the per-turn canvas note reads. Not for a background
+        task (the orchestrator answers the user's comments) nor without a
+        user and a conversation. **Fail-open to "no"**: a database error
+        means a run without the comment tools, never a failed build.
+        """
+        ctx = self.context or {}
+        user_id, conversation_id = ctx.get("user_id"), ctx.get("conversation_id")
+        if not user_id or not conversation_id or self.async_task_id is not None or not has_memory_pool():
+            return False
+        try:
+            paths = await DocumentVersionStore(get_memory_pool()).document_paths(
+                str(user_id), str(conversation_id), limit=1)
+        except Exception:  # like the turn's canvas note: a tool set is never worth a failed build
+            logger.warning("canvas_documents_probe_failed",
+                           "Could not tell whether the conversation has canvas documents; no comment tools",
+                           agent_slug=self.name, exc_info=True)
+            return False
+        return bool(paths)
 
 
     # ---------------------------------------------------------------------

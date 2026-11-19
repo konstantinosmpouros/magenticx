@@ -32,26 +32,6 @@ export function paintCommentHighlights(ranges: Range[], active: Range | null): (
   };
 }
 
-/**
- * The DOM position under a point of the screen (a click), for finding which
- * passage was clicked; null where the browser has neither API.
- */
-export function caretAtPoint(x: number, y: number): { node: Node; offset: number } | null {
-  const doc = document as Document & {
-    caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
-    caretRangeFromPoint?: (x: number, y: number) => Range | null;
-  };
-  if (typeof doc.caretPositionFromPoint === "function") {
-    const position = doc.caretPositionFromPoint(x, y);
-    return position ? { node: position.offsetNode, offset: position.offset } : null;
-  }
-  if (typeof doc.caretRangeFromPoint === "function") {
-    const range = doc.caretRangeFromPoint(x, y);
-    return range ? { node: range.startContainer, offset: range.startOffset } : null;
-  }
-  return null;
-}
-
 /** Smooth scrolling, unless the user asked for reduced motion. */
 export const scrollBehavior = (): ScrollBehavior =>
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches

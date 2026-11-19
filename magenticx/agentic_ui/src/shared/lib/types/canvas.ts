@@ -18,7 +18,7 @@ export type {
 } from "../schemas";
 
 import type { ReactNode } from "react";
-import type { TRange } from "platejs";
+import type { TElement, TRange, Value } from "platejs";
 
 import type { CanvasDocumentSaved, CanvasEditPreset, CanvasStaleBase } from "../schemas";
 
@@ -32,8 +32,11 @@ export type CanvasSaveResult =
 
 import type { CanvasDocumentAuthor } from "../schemas";
 
-/** The canvas's mode (plan 44 §3): edit the text, or read it. Suggesting is Phase 4.6. */
-export type CanvasMode = "editing" | "viewing";
+/**
+ * The canvas's mode (plan 44 §3): edit the text; review the agent's changes
+ * as suggestions before they stay (Phase 4.6), then edit; or read it.
+ */
+export type CanvasMode = "editing" | "suggesting" | "viewing";
 
 /**
  * Where the open document's edits stand (the header's status, Phase 4.2):
@@ -124,6 +127,58 @@ export interface CanvasDocumentDiff {
   removed: number;
 }
 
+// Suggesting mode (Phase 4.6, features/canvas/lib/suggestions.ts).
+
+/**
+ * How a node of the review shows a suggestion: inserted or deleted text (a
+ * leaf, or a whole added / removed block), or a block whose words changed
+ * (its leaves carry the inserts and deletes).
+ */
+export interface CanvasSuggestionMark {
+  id: string;
+  kind: "insert" | "remove" | "change";
+}
+
+/** One suggestion the user accepts or rejects as a whole. */
+export interface CanvasSuggestion {
+  id: string;
+  /** Blocks added, blocks removed, or text replaced (words in a block, or blocks for blocks). */
+  kind: "insert" | "remove" | "replace";
+  /** The start of its text, for the controls' accessible names. */
+  summary: string;
+}
+
+/**
+ * The document between the base and the agent's version, block by block:
+ * an unchanged block, or a change — the base's blocks and the agent's that
+ * replace them, with the word-level merge of the two when they are one
+ * block edited in place.
+ */
+export type CanvasSuggestionSegment =
+  | { kind: "same"; block: TElement }
+  | { kind: "change"; id: string; base: TElement[]; agent: TElement[]; merged: TElement | null };
+
+export interface CanvasSuggestionSet {
+  segments: CanvasSuggestionSegment[];
+  suggestions: CanvasSuggestion[];
+}
+
+export type CanvasSuggestionDecision = "accept" | "reject";
+
+/** What the document view needs to show a review and take its decisions. */
+export interface CanvasSuggestionReview {
+  /** Changes when the review starts over (another base or agent version). */
+  key: string;
+  /** The document with the undecided suggestions marked in it. */
+  value: Value;
+  /** The suggestions still to decide, in document order. */
+  remaining: CanvasSuggestion[];
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+  onAcceptAll: () => void;
+  onRejectAll: () => void;
+}
+
 /** The text the canvas editor (re)mounts with; a new `key` remounts it. */
 /** What the open editor should shine, by block text (an Ask agent card's change); a new id shines again. */
 export interface CanvasShineTexts {
@@ -148,15 +203,33 @@ export interface CanvasAskPassage {
 
 /** What the canvas asks with: the passage and the instruction (the path and version are the canvas's). */
 export interface CanvasAskDraft {
-  passage: CanvasAskPassage;
+  /** The passage; from a detached comment it has no range (nothing to tint). */
+  passage: Omit<CanvasAskPassage, "range"> & { range: TRange | null };
   instruction: string;
   preset?: CanvasEditPreset;
+  /** Plan 44 v2: the comment thread an `@agent` comment asked from (the thread's id). */
+  commentId?: string;
 }
 
 /** Ask agent's state in the open document: sending the request, or the agent's run going. */
 export interface CanvasAgentEdit {
   phase: "sending" | "running";
-  range: TRange;
+  /** The passage to tint; null when it is not in the shown text (a detached comment). */
+  range: TRange | null;
+  /** Asked from a comment thread (`@agent`): that thread's card says the agent works on it. */
+  commentId?: string;
+}
+
+/**
+ * The agent is writing the open document right now (plan 44 v2): an
+ * `edit_file` / `write_file` call on its path that has not answered yet, read
+ * from the live run's timeline. `passage` is the plain-text line to find in
+ * the document (from `edit_file`'s `old_string`), null when there is none
+ * (`write_file`, or nothing usable) — the marker then sits at the top.
+ */
+export interface CanvasAgentWriting {
+  tool: "edit_file" | "write_file";
+  passage: string | null;
 }
 
 /** What the editor needs to offer Ask agent: whether it can now, and where a request goes. */
@@ -203,6 +276,21 @@ export type CanvasAnchorPlacement = { start: number; end: number } | null;
 export interface CanvasCommentControl {
   /** Starts a thread on the passage with this body (shown at once, rolled back if refused). */
   onCreate: (anchor: CanvasCommentAnchor, body: string) => void;
+  /** `@agent` in a comment asks the agent (plan 44 v2): the composer offers the mention. */
+  mentions: boolean;
+}
+
+/**
+ * What a comment card needs to know about the agent (plan 44 v2), through
+ * `CanvasCommentAgentContext`: whether `@agent` is offered, the thread the
+ * agent is working on now, and the ask a saved `@agent` comment makes.
+ */
+export interface CanvasCommentAgent {
+  mentions: boolean;
+  /** The thread an `@agent` request is running for; null: none. */
+  workingThreadId: string | null;
+  /** A saved comment with `@agent` in it, on `thread`: ask the agent. */
+  ask: (thread: CanvasComment, body: string) => void;
 }
 
 /** The comments the shown text paints, and how a click on a passage reaches its thread. */
@@ -213,24 +301,24 @@ export interface CanvasCommentMarks {
   activeId: string | null;
   /** Bumped to scroll the active thread's passage into view. */
   focusNonce: number;
-  /** A click landed on a thread's passage: open its card. */
-  onActivate: (id: string) => void;
   /** A margin mark was clicked: open the card of its line. */
   onOpen: (id: string) => void;
   /** The open card was dismissed. */
   onClose: () => void;
   /** A card's content for a line's threads. */
   renderThreads: (ids: string[]) => ReactNode;
-  /** The top-of-margin mark: threads with no line (detached, resolved); null: none. */
+  /** The document row's button: threads with no line (detached, resolved); null: none. */
   others: CanvasOtherCommentsMark | null;
   /** Where each thread's passage was found in the shown text (null: detached). */
   onPlaced: (placements: Record<string, CanvasAnchorPlacement>) => void;
 }
 
-/** The top-of-margin mark's threads (no line to sit on): how many, and the card's content. */
+/** The document row's comments button (no line to sit on): how many, its card, open or not. */
 export interface CanvasOtherCommentsMark {
   count: number;
   render: () => ReactNode;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 }
 
 /** A comment mark in the margin: the line's top in the column (px), its height, its threads in reading order. */

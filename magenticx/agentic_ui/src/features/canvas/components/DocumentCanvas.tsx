@@ -20,8 +20,29 @@
  * Comments (Phase 4.4): a selection's menu (or the pill's Comment on touch)
  * starts a thread on the passage; its passage is painted in the text and a
  * 💬 count in the margin opens a card with the line's threads, as in Claude
- * Docs (no side panel). They are not edits: nothing about them is unsaved, and they
- * work while reading. Export (Phase 4.5) downloads a saved version as Word,
+ * Docs (no side panel); the threads with no line open from the document
+ * row. They are not edits: nothing about them is unsaved, and they
+ * work while reading.
+ *
+ * Comments as instructions (plan 44 v2): a comment or reply with `@agent`
+ * is saved, then sent like Ask agent with the thread's id (`commentId`) —
+ * the same unsaved-edits ask, lock and tint; the thread's card says the
+ * agent is working on it. When a run of the conversation ends the comments
+ * are read again (the agent's replies, resolutions and threads). A chat card
+ * can ask to open a thread's card (`pendingThread`). While the run's own
+ * `edit_file` / `write_file` call is on this document (`agentWriting`) the
+ * editor is read-only and the block is marked.
+ *
+ * Suggesting mode (Phase 4.6): with the mode menu on Suggesting, an agent
+ * version the user has not reviewed opens as suggestions against the base
+ * (`useCanvasSuggestions`: the newer of the user's newest version and the
+ * last version reviewed here), read-only until they are decided. Accepting
+ * everything keeps the agent's version (nothing is saved); rejecting any
+ * saves ONE user version — the agent's text with those suggestions put back
+ * — through the save controller, so a 409 is the usual conflict dialog. The
+ * mode picked from the menu is remembered per user and layout.
+ *
+ * Export (Phase 4.5) downloads a saved version as Word,
  * PDF or Markdown; with unsaved edits it asks Save and export / Export the
  * saved version / Cancel first.
  *
@@ -36,14 +57,19 @@
  * pipeline and the diff stay out of the app's main chunk until a document
  * opens.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   CanvasAgentEdit,
+  CanvasAgentWriting,
   CanvasAnchorPlacement,
   CanvasAskControl,
   CanvasAskDraft,
+  CanvasAskPassage,
   CanvasBylineValue,
+  CanvasComment,
+  CanvasCommentAgent,
+  CanvasCommentAnchor,
   CanvasCommentControl,
   CanvasCommentMarks,
   CanvasCompareState,
@@ -51,6 +77,7 @@ import type {
   CanvasEditRef,
   CanvasExportFormat,
   CanvasMode,
+  CanvasSuggestionReview,
 } from "@/shared/lib/types";
 import { useToast } from "@/shared/hooks/use-toast";
 import { toastError } from "@/shared/lib/toast";
@@ -60,10 +87,16 @@ import { useCanvasComments } from "../hooks/useCanvasComments";
 import { useCanvasDocument } from "../hooks/useCanvasDocument";
 import { useCanvasEditing } from "../hooks/useCanvasEditing";
 import { useCanvasExport } from "../hooks/useCanvasExport";
+import { useCanvasSuggestions } from "../hooks/useCanvasSuggestions";
 import { useRequestedShine } from "../hooks/useRequestedShine";
+import { useRequestedThread } from "../hooks/useRequestedThread";
+import { hasAgentMention, mentionInstruction } from "../lib/agentMention";
+import { CanvasCommentAgentContext } from "../lib/commentAgentContext";
 import { useCanvasVersionText, useFetchCanvasVersionText } from "../hooks/useCanvasVersionText";
 import { buildCanvasEdit } from "../lib/askAgent";
 import { documentTitle } from "../lib/documentTitle";
+import { markdownToValue } from "../lib/markdown";
+import { loadCanvasMode, saveCanvasMode } from "../lib/reviewStorage";
 import { isApplePlatform, isFindShortcut, isSaveShortcut } from "../lib/shortcuts";
 import { CanvasCommentThreads, CanvasOtherComments } from "./canvas_parts/CanvasComments";
 import { CanvasCompareView } from "./canvas_parts/CanvasCompareView";
@@ -107,6 +140,8 @@ export interface DocumentCanvasProps {
   onAskAgent?: ((edit: CanvasEditRef) => Promise<boolean>) | null;
   /** A run of this conversation is going (Ask agent waits for it). */
   runActive?: boolean;
+  /** The run is writing this document now (its `edit_file` / `write_file` call). */
+  agentWriting?: CanvasAgentWriting | null;
 }
 
 export default function DocumentCanvas(props: DocumentCanvasProps) {
@@ -127,6 +162,7 @@ function DocumentSession({
   onPreviewFile,
   onAskAgent = null,
   runActive = false,
+  agentWriting = null,
 }: DocumentCanvasProps) {
   const data = useCanvasDocument(userId, conversationId, path, revision);
   const [findOpen, setFindOpen] = useState(false);
@@ -134,11 +170,18 @@ function DocumentSession({
   // The side slot beside the document (a sheet on a phone): the history.
   const [historyOpen, setHistoryOpen] = useState(false);
   const closePanel = () => setHistoryOpen(false);
-  // Desktop opens for editing; a phone opens for reading (✎ switches). Held
-  // as "not chosen yet" until the user picks, because the phone check
-  // settles after the first render.
+  // The mode last picked from the menu on this layout; else a desktop opens
+  // for editing and a phone for reading (✎ switches). Held as "not chosen
+  // yet" until the user picks, because the phone check settles after the
+  // first render.
+  const layout = compact ? "phone" : "desktop";
   const [chosenMode, setMode] = useState<CanvasMode | null>(null);
-  const mode: CanvasMode = chosenMode ?? (compact ? "viewing" : "editing");
+  const [rememberedMode] = useState(() => ({
+    desktop: loadCanvasMode(userId, "desktop"),
+    phone: loadCanvasMode(userId, "phone"),
+  }));
+  const mode: CanvasMode =
+    chosenMode ?? rememberedMode[layout] ?? (compact ? "viewing" : "editing");
   const [compareSelection, setCompareSelection] = useState<number[]>([]);
   const [compare, setCompare] = useState<CanvasCompareState | null>(null);
   const [conflictOpen, setConflictOpen] = useState(false);
@@ -154,6 +197,28 @@ function DocumentSession({
   const { flush } = editing;
   const save = editing.save;
   const conflict = save?.conflict ?? null;
+  // Suggesting mode (Phase 4.6): the agent's unreviewed changes, on the latest version.
+  const { replace: replaceText } = editing;
+  const suggestions = useCanvasSuggestions({
+    userId,
+    conversationId,
+    path,
+    active: mode === "suggesting" && data.isLatest,
+    latest: data.latest,
+    versions,
+    versionsFailed: data.versionsFailed,
+    loadVersions,
+    clean: save?.status === "saved",
+    onResolved: (markdown) => {
+      if (markdown !== null) void replaceText(markdown);
+    },
+  });
+  const review = suggestions.review;
+  const waitingText = suggestions.waiting ? (data.latest?.content ?? null) : null;
+  const waiting = useMemo(
+    () => (waitingText === null ? null : waitingReview(waitingText)),
+    [waitingText],
+  );
   const fetchVersionText = useFetchCanvasVersionText(userId, conversationId, path);
   // Opened from an Ask agent card: what that request changed shines once.
   const requestedShine = useRequestedShine(userId, conversationId, path, fetchVersionText);
@@ -235,6 +300,9 @@ function DocumentSession({
 
   const leave = (then: () => void) => guard(then);
 
+  // Comments (Phase 4.4).
+  const comments = useCanvasComments(userId, conversationId, path);
+
   // Ask agent (Phase 4.3). `agentEdit` is set from the send until the run it
   // started has ended and the agent's version is loaded.
   const [agentEdit, setAgentEdit] = useState<CanvasAgentEdit | null>(null);
@@ -246,25 +314,62 @@ function DocumentSession({
     const version = editing.headVersion();
     if (!onAskAgent || version === null) return;
     sawRun.current = false;
-    setAgentEdit({ phase: "sending", range: draft.passage.range });
+    const range = draft.passage.range ?? null;
+    const commentId = draft.commentId;
+    setAgentEdit({ phase: "sending", range, commentId });
     // The path as the documents API returned it: the bridge checks it is canonical.
     const documentPath = data.latest?.path ?? path;
     const started = await onAskAgent(buildCanvasEdit({ path: documentPath, version, draft }));
-    setAgentEdit(started ? { phase: "running", range: draft.passage.range } : null);
+    setAgentEdit(started ? { phase: "running", range, commentId } : null);
   };
 
   const busy = runActive || agentEdit !== null;
+  const askNow = (draft: CanvasAskDraft) => {
+    // The agent reads the saved document: unsaved edits are saved first, on request.
+    if (editing.hasUnsavedWork()) setPendingAsk(draft);
+    else void sendAsk(draft);
+  };
   const ask: CanvasAskControl | null = onAskAgent
     ? {
         disabledReason: busy ? "Wait for the current reply" : null,
         onAsk: (draft) => {
-          if (busy) return;
-          // The agent reads the saved document: unsaved edits are saved first, on request.
-          if (editing.hasUnsavedWork()) setPendingAsk(draft);
-          else void sendAsk(draft);
+          if (!busy) askNow(draft);
         },
       }
     : null;
+
+  // `@agent` in a saved comment (plan 44 v2): ask about the thread's passage,
+  // with the thread's id. Read through a ref: the comment is saved first, and
+  // the ask runs with what is true once it is.
+  const resolvePassage = useRef<((anchor: CanvasCommentAnchor) => CanvasAskPassage | null) | null>(
+    null,
+  );
+  const attachPassages = useCallback(
+    (resolve: ((anchor: CanvasCommentAnchor) => CanvasAskPassage | null) | null) => {
+      resolvePassage.current = resolve;
+    },
+    [],
+  );
+  const { toast } = useToast();
+  const askFromThreadNow = (thread: CanvasComment, body: string) => {
+    if (!onAskAgent || !thread.anchor) return;
+    if (busy || editing.headVersion() === null) {
+      toast({
+        title: "Comment saved",
+        description: "The agent is busy with another reply. Ask again with @agent once it ends.",
+      });
+      return;
+    }
+    // Detached (its text changed) or not on screen: the quote alone, no tint.
+    const passage = resolvePassage.current?.(thread.anchor) ?? {
+      text: thread.anchor.quote,
+      headingPath: [],
+      range: null,
+    };
+    askNow({ passage, instruction: mentionInstruction(body), commentId: thread.id });
+  };
+  const askFromThread = useRef(askFromThreadNow);
+  askFromThread.current = askFromThreadNow;
 
   const saveAndSend = async () => {
     const draft = pendingAsk;
@@ -273,6 +378,15 @@ function DocumentSession({
     // A failed or refused save sends nothing; the header shows Retry / Resolve.
     if (draft && !editing.hasUnsavedWork()) void sendAsk(draft);
   };
+
+  // A run of the conversation ended: the agent may have answered, resolved
+  // or started threads (plan 44 v2) — read the comments again.
+  const wasRunning = useRef(runActive);
+  const { refresh: refreshComments } = comments;
+  useEffect(() => {
+    if (wasRunning.current && !runActive) refreshComments();
+    wasRunning.current = runActive;
+  }, [runActive, refreshComments]);
 
   // The run ends: load what the agent saved, then unlock. A run never seen
   // going (it ended before this canvas re-rendered) ends the wait anyway.
@@ -307,7 +421,10 @@ function DocumentSession({
     leave(() => onSelectPath(next));
   };
 
-  const changeMode = (next: CanvasMode) => setMode(next);
+  const changeMode = (next: CanvasMode, remember = true) => {
+    setMode(next);
+    if (remember) saveCanvasMode(userId, layout, next);
+  };
 
   const viewVersion = (version: number) => {
     setCompare(null);
@@ -379,31 +496,70 @@ function DocumentSession({
   const savedVersionShown = (): number | null =>
     data.isLatest ? (editing.headVersion() ?? shown?.version ?? null) : (shown?.version ?? null);
 
-  // Comments (Phase 4.4).
-  const comments = useCanvasComments(userId, conversationId, path);
   // The thread whose card is open (null: none), and a nonce that scrolls
   // its passage into view when bumped.
   const [active, setActive] = useState<{ id: string; nonce: number } | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
   const [placements, setPlacements] = useState<Record<string, CanvasAnchorPlacement> | null>(null);
   const openCard = (id: string) => setActive((current) => ({ id, nonce: current?.nonce ?? 0 }));
+  const mentions = onAskAgent !== null;
   const commentControl: CanvasCommentControl = {
+    mentions,
     onCreate: (anchor, body) => {
       const version = savedVersionShown();
       if (version === null) return;
-      // The new thread's card opens under its mark once it is saved.
+      // The new thread's card opens under its mark once it is saved; with
+      // `@agent` in it, the agent is asked then.
       void comments.createThread(version, anchor, body).then((saved) => {
-        if (saved) openCard(saved.id);
+        if (!saved) return;
+        openCard(saved.id);
+        if (mentions && hasAgentMention(body)) askFromThread.current(saved, body);
       });
     },
   };
+  const commentAgent: CanvasCommentAgent = {
+    mentions,
+    workingThreadId: agentEdit?.commentId ?? null,
+    ask: (thread, body) => askFromThread.current(thread, body),
+  };
   const detached = comments.open.filter((thread) => placements?.[thread.comment.id] === null);
   const otherCount = detached.length + comments.resolved.length;
+  const [othersOpen, setOthersOpen] = useState(false);
+  // The thread the others card opens on (asked from the chat), until it closes.
+  const [othersFocus, setOthersFocus] = useState<string | null>(null);
+
+  // A chat card asked for a thread (plan 44 v2): once the comments and their
+  // places are known, open its card under its mark, or — resolved or
+  // detached — the document row's card on it.
+  const requestedThread = useRequestedThread(path);
+  const wanted = requestedThread.request;
+  const { clear: clearRequestedThread } = requestedThread;
+  useEffect(() => {
+    if (!wanted || comments.loading) return;
+    const id = wanted.commentId;
+    const onLine = comments.open.find((thread) => thread.comment.id === id);
+    if (onLine && placements === null) return; // not placed yet
+    if (onLine && placements?.[id]) {
+      setActive((current) => ({ id, nonce: current?.nonce ?? 0 }));
+      setFocusNonce((nonce) => nonce + 1);
+    } else if (onLine || comments.resolved.some((thread) => thread.comment.id === id)) {
+      setOthersFocus(id);
+      setOthersOpen(true);
+    }
+    clearRequestedThread();
+  }, [
+    wanted,
+    comments.loading,
+    comments.open,
+    comments.resolved,
+    placements,
+    clearRequestedThread,
+  ]);
+
   const marks: CanvasCommentMarks = {
     threads: comments.open,
     activeId: active?.id ?? null,
     focusNonce,
-    onActivate: openCard,
     onOpen: (id) => {
       openCard(id);
       setFocusNonce((nonce) => nonce + 1);
@@ -419,7 +575,14 @@ function DocumentSession({
       otherCount > 0
         ? {
             count: otherCount,
-            render: () => <CanvasOtherComments detached={detached} comments={comments} />,
+            render: () => (
+              <CanvasOtherComments detached={detached} comments={comments} focusId={othersFocus} />
+            ),
+            open: othersOpen,
+            onOpenChange: (open) => {
+              setOthersOpen(open);
+              if (!open) setOthersFocus(null);
+            },
           }
         : null,
     onPlaced: setPlacements,
@@ -432,7 +595,6 @@ function DocumentSession({
     path: data.latest?.path ?? path,
     title,
   });
-  const { toast } = useToast();
   // Any saved version exports; unsaved edits never do (the panel says so,
   // with a Save first). Copy as Markdown reads that version's text.
   const exportVersion = (format: CanvasExportFormat, version: number | null) =>
@@ -502,7 +664,31 @@ function DocumentSession({
           onReview={editing.reviewIncoming}
         />
       ) : null}
-      {data.isLatest && editing.source ? (
+      {data.isLatest && review ? (
+        <CanvasDocumentView
+          key={`review-${review.key}`}
+          {...view}
+          markdown={shown.content}
+          byline={byline}
+          canEdit
+          review={review}
+          marks={marks}
+          comment={null}
+          agentEdit={agentEdit}
+          agentWriting={agentWriting}
+        />
+      ) : data.isLatest && waiting ? (
+        // Working out the suggestions (the base's text, the version list):
+        // the agent's version, read-only, for the moment that takes.
+        <CanvasDocumentView
+          key={`review-wait-${shown.version}`}
+          {...view}
+          markdown={shown.content}
+          byline={byline}
+          canEdit
+          review={waiting}
+        />
+      ) : data.isLatest && editing.source ? (
         <CanvasDocumentView
           key={`edit-${editing.source.key}`}
           {...view}
@@ -515,6 +701,8 @@ function DocumentSession({
           onEdited={editing.edited}
           ask={ask}
           agentEdit={agentEdit}
+          agentWriting={agentWriting}
+          onAttachPassages={attachPassages}
         />
       ) : (
         <CanvasDocumentView
@@ -535,106 +723,122 @@ function DocumentSession({
   );
 
   return (
-    <section
-      ref={sectionRef}
-      aria-label={`Document: ${title}`}
-      className="relative flex h-full min-h-0 w-full flex-col bg-background"
-    >
-      <CanvasHeader
-        title={title}
-        documents={data.documents}
-        activePath={path}
-        showOutlineToggle={compact}
-        showFullscreenToggle={canToggleFullscreen}
-        fullscreen={fullscreen}
-        canFind={Boolean(shown)}
-        status={
-          agentEdit ? (
-            <CanvasAgentEditingStatus compact={compact} />
-          ) : save ? (
-            <CanvasSaveStatus
-              status={save.status}
-              errorMessage={save.errorMessage}
-              compact={compact}
-              saveShortcut={isApplePlatform() ? "⌘S" : "Ctrl+S"}
-              onSave={() => void flush()}
-              onRetry={() => void flush()}
-              onResolveConflict={() => setConflictOpen(true)}
+    <CanvasCommentAgentContext.Provider value={commentAgent}>
+      <section
+        ref={sectionRef}
+        aria-label={`Document: ${title}`}
+        className="relative flex h-full min-h-0 w-full flex-col bg-background"
+      >
+        <CanvasHeader
+          title={title}
+          documents={data.documents}
+          activePath={path}
+          showOutlineToggle={compact}
+          showFullscreenToggle={canToggleFullscreen}
+          fullscreen={fullscreen}
+          canFind={Boolean(shown)}
+          status={
+            agentEdit || (agentWriting && data.isLatest) ? (
+              <CanvasAgentEditingStatus compact={compact} />
+            ) : save ? (
+              <CanvasSaveStatus
+                status={save.status}
+                errorMessage={save.errorMessage}
+                compact={compact}
+                saveShortcut={isApplePlatform() ? "⌘S" : "Ctrl+S"}
+                onSave={() => void flush()}
+                onRetry={() => void flush()}
+                onResolveConflict={() => setConflictOpen(true)}
+              />
+            ) : null
+          }
+          exportMenu={
+            <CanvasExportPanel
+              title={title}
+              disabled={!shown}
+              defaultVersion={savedVersionShown()}
+              latestVersion={data.latest?.version ?? null}
+              versions={data.versions}
+              versionsLoading={data.versionsLoading}
+              onLoadVersions={data.loadVersions}
+              pending={exporter.pending}
+              unsaved={Boolean(save && save.status !== "saved")}
+              onSaveFirst={flush}
+              onExport={exportVersion}
+              onCopyMarkdown={copyMarkdown}
             />
-          ) : null
-        }
-        exportMenu={
-          <CanvasExportPanel
-            title={title}
-            disabled={!shown}
-            defaultVersion={savedVersionShown()}
-            latestVersion={data.latest?.version ?? null}
-            versions={data.versions}
-            versionsLoading={data.versionsLoading}
-            onLoadVersions={data.loadVersions}
-            pending={exporter.pending}
-            unsaved={Boolean(save && save.status !== "saved")}
-            onSaveFirst={flush}
-            onExport={exportVersion}
-            onCopyMarkdown={copyMarkdown}
-          />
-        }
-        onSelectDocument={selectDocument}
-        onToggleOutline={() => setOutlineOpen((open) => !open)}
-        onToggleFullscreen={onToggleFullscreen}
-        onClose={() => leave(onClose)}
-      />
+          }
+          onSelectDocument={selectDocument}
+          onToggleOutline={() => setOutlineOpen((open) => !open)}
+          onToggleFullscreen={onToggleFullscreen}
+          onClose={() => leave(onClose)}
+        />
 
-      {/* A row: on desktop the history takes its own column, so the document
+        {/* A row: on desktop the history takes its own column, so the document
           and a compare narrow beside it instead of sliding under. */}
-      <div className="relative flex min-h-0 flex-1">
-        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
-        <CanvasHistory
-          open={historyOpen}
-          compact={compact}
-          versions={data.versions}
-          loading={data.versionsLoading}
-          shownVersion={compare?.kind === "versions" ? null : (shown?.version ?? null)}
-          compareSelection={compareSelection}
-          restoring={restoring}
-          canRestore={save?.status !== "conflict"}
-          onView={viewVersion}
-          onToggleCompare={toggleCompare}
-          onCompare={openCompare}
-          onRestore={(version) => void restore(version)}
-          onClose={closePanel}
+        <div className="relative flex min-h-0 flex-1">
+          <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
+          <CanvasHistory
+            open={historyOpen}
+            compact={compact}
+            versions={data.versions}
+            loading={data.versionsLoading}
+            shownVersion={compare?.kind === "versions" ? null : (shown?.version ?? null)}
+            compareSelection={compareSelection}
+            restoring={restoring}
+            canRestore={save?.status !== "conflict"}
+            onView={viewVersion}
+            onToggleCompare={toggleCompare}
+            onCompare={openCompare}
+            onRestore={(version) => void restore(version)}
+            onClose={closePanel}
+          />
+        </div>
+
+        <CanvasUnsavedDialog
+          open={pendingAction !== null}
+          title={title}
+          onCancel={() => setPendingAction(null)}
+          onSave={saveAndContinue}
+          onDiscard={discardAndContinue}
         />
-      </div>
 
-      <CanvasUnsavedDialog
-        open={pendingAction !== null}
-        title={title}
-        onCancel={() => setPendingAction(null)}
-        onSave={saveAndContinue}
-        onDiscard={discardAndContinue}
-      />
-
-      <CanvasUnsavedDialog
-        open={pendingAsk !== null}
-        title={title}
-        purpose="send"
-        onCancel={() => setPendingAsk(null)}
-        onSave={saveAndSend}
-      />
-
-      {conflict ? (
-        <CanvasConflictDialog
-          open={conflictOpen}
-          version={conflict.currentVersion}
-          byAgent={conflictAuthor === null ? null : conflictAuthor === "agent"}
-          onOpenChange={setConflictOpen}
-          onCompare={compareConflict}
-          onKeepTheirs={keepTheirs}
-          onKeepMine={keepMine}
+        <CanvasUnsavedDialog
+          open={pendingAsk !== null}
+          title={title}
+          purpose="send"
+          onCancel={() => setPendingAsk(null)}
+          onSave={saveAndSend}
         />
-      ) : null}
-    </section>
+
+        {conflict ? (
+          <CanvasConflictDialog
+            open={conflictOpen}
+            version={conflict.currentVersion}
+            byAgent={conflictAuthor === null ? null : conflictAuthor === "agent"}
+            onOpenChange={setConflictOpen}
+            onCompare={compareConflict}
+            onKeepTheirs={keepTheirs}
+            onKeepMine={keepMine}
+          />
+        ) : null}
+      </section>
+    </CanvasCommentAgentContext.Provider>
   );
+}
+
+/** While the suggestions are worked out: the text as it is, read-only, nothing to decide. */
+function waitingReview(markdown: string): CanvasSuggestionReview {
+  const noop = () => undefined;
+  return {
+    key: "waiting",
+    value: markdownToValue(markdown),
+    remaining: [],
+    onAccept: noop,
+    onReject: noop,
+    onAcceptAll: noop,
+    onRejectAll: noop,
+  };
 }
 
 /** The compare view's data: two versions' texts, or the conflict's two texts. */

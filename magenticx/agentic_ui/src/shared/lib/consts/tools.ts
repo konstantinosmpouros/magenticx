@@ -7,6 +7,9 @@ import {
   FolderOpen,
   Image,
   ListChecks,
+  MessageSquarePlus,
+  MessageSquareReply,
+  MessagesSquare,
   Pencil,
   Search,
   SquareTerminal,
@@ -70,6 +73,10 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   check_async_task: { icon: Activity },
   list_async_tasks: { icon: ListChecks },
   cancel_async_task: { icon: CircleStop },
+  // Canvas comments (plan 44 v2): the one read, a reply under a thread, a new thread.
+  list_comments: { label: "Read the comments", icon: MessagesSquare },
+  reply_to_comment: { label: "Replied to a comment", icon: MessageSquareReply },
+  add_comment: { label: "Added a comment", icon: MessageSquarePlus },
 };
 
 export const toolLabel = (name: string): string => TOOL_PRESENTATION[name]?.label ?? name;

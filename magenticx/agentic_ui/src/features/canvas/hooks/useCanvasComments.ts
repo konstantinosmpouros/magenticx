@@ -205,12 +205,22 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
     [edit, queryClient, key, toast, userId, conversationId],
   );
 
+  /**
+   * Read the list again (plan 44 v2): after a run of the conversation ends,
+   * the agent may have replied, resolved or started threads.
+   */
+  const refresh = useCallback(
+    () => void queryClient.invalidateQueries({ queryKey: key }),
+    [queryClient, key],
+  );
+
   return {
     open: threads.open,
     resolved: threads.resolved,
     loading: query.isPending,
     errorMessage: query.isError ? (query.error?.message ?? "Failed to load the comments") : null,
     retry: query.refetch,
+    refresh,
     createThread,
     reply,
     setStatus,

@@ -93,7 +93,7 @@ src/
                    #   features/attachments' panel + ImageLightbox; useDebouncedValue,
                    #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters); a generated
                    #   `.md` row opens in the canvas of its conversation (`/c/:id?doc=`)
-    canvas/        # the document canvas (plan 44, Phases 4.1–4.5): CanvasDock (docks the
+    canvas/        # the document canvas (plan 44, Phases 4.1–4.6 + v2): CanvasDock (docks the
                    #   canvas beside the chat at ~55%, resizable; covers the chat full screen, on a
                    #   phone and below a 760px card), DocumentCanvas (the panel, lazy-loaded so
                    #   Plate and the diff stay out of the main chunk; one session per document,
@@ -101,7 +101,7 @@ src/
                    #   the save status (nothing once saved), Export, full screen, close;
                    #   CanvasExportPanel (version picker, Word / PDF / Markdown rows, Copy as Markdown, unsaved note); CanvasDocumentView, the Plate
                    #   editor — editable at the latest version, read-only at an earlier one;
-                   #   CanvasDocBar (≡, Find, undo / redo, the 💬 count, the Editing / Viewing menu); CanvasToolbar, the floating pill
+                   #   CanvasDocBar (≡, Find, undo / redo, the resolved / detached comments button, the Editing / Suggesting / Viewing menu; marks the agent writing here); CanvasToolbar, the floating pill
                    #   toolbar adapted from Plate's registry (block tools, icon-only: Aa▾, table,
                    #   checklist, quote, ⋯ More (lists, code block, block actions), comment, and a
                    #   filled Ask agent (selection or the caret's block); on touch with a selection
@@ -114,9 +114,11 @@ src/
                    #   agent (the orb) | Aa▾ B I S code | list▾ link; Comment alone while reading).
                    #   Canvas icons are Phosphor regular (`react-icons/pi`, imported one by one); CanvasCaretOrb (the app's
                    #   orb at the caret's line after an idle wait: Ask agent for that block);
-                   #   CanvasComments (the comment threads: side panel / phone sheet, replies,
-                   #   resolve / reopen, edit / delete, detached, Resolved (n)); CanvasCommentForm
-                   #   (the composer); CanvasCommentButton (the pill's comment icon, and on touch a
+                   #   CanvasComments (the comment threads as cards under their margin marks
+                   #   (CanvasCommentMarkers): replies, resolve / reopen, edit / delete, detached,
+                   #   Resolved (n), "Agent is working on this…"); CanvasCommentForm (the composer,
+                   #   with the "@agent" suggestion and the token tinted); CanvasAgentMention (the
+                   #   agent's orb avatar, the token in shown bodies); CanvasCommentButton (the pill's comment icon, and on touch a
                    #   Comment bar while reading); CanvasAskPanel (CanvasAskCard: the compact
                    #   "Ask the agent to change this…" input with the presets as chips, shared by
                    #   the bar, the orb and the pill's popover); CanvasTablePicker (the size grid); CanvasBlockMenu
@@ -129,7 +131,11 @@ src/
                    #   CanvasHistory (side panel, a sheet on a phone: read / compare / restore;
                    #   opened from the byline's version chip); CanvasCompareView (the
                    #   word-level diff); CanvasConflictDialog (the 409); CanvasOutline, CanvasFindBar,
-                   #   CanvasBlockFrame (heading folds, the block handle, the selected-block tint),
+                   #   CanvasBlockFrame (heading folds, the block handle, the selected-block tint,
+                   #   a review's added / removed / edited block marks);
+                   #   CanvasSuggestionBar (Suggesting mode: "N suggestions from the agent",
+                   #   Accept all / Reject all, the ✓ / ✕ pill per suggestion); CanvasSuggestionLeaf
+                   #   (inserted / deleted words),
                    #   CanvasByline, CanvasStates (skeleton, error +
                    #   Retry, 404 → the file's preview, the earlier-version and "agent saved vN"
                    #   banners)), hooks (useCanvasDocument — the documents reads through TanStack
@@ -139,11 +145,16 @@ src/
                    #   useKeyboardInset — the on-screen keyboard's overlap, from visualViewport;
                    #   useSelectedPassage — the passage Ask agent would act on;
                    #   useCaretOrb — where the orb at the caret shows (idle, focused, no selection);
-                   #   useCanvasComments — the threads, optimistic with rollback;
-                   #   useCanvasExport — one export at a time, download + toast), lib/
+                   #   useCanvasComments — the threads, optimistic with rollback, refresh at run end;
+                   #   useRequestedThread — the thread a chat card asked the canvas to open;
+                   #   useCanvasExport — one export at a time, download + toast;
+                   #   useCanvasSuggestions — Suggesting mode's base rule and decisions), lib/
                    #   (saveController — saved only on the user's Save, single flight, base version, 409 → conflict;
                    #   markdown — the markdown ⇄ Plate value pipeline, no MDX, plus normalizeMarkdown;
-                   #   documentDiff — jsdiff lines refined to words; editorCommands — quote, link
+                   #   documentDiff — jsdiff lines refined to words; suggestions — the agent's
+                   #   changes as block / word suggestions and the text the decisions leave
+                   #   (custom, not @platejs/suggestion: why in its header); reviewStorage — the
+                   #   remembered mode and reviewed version (localStorage); editorCommands — quote, link
                    #   and the link URL rule; blockCommands — the target blocks (block selection or
                    #   the text selection's), delete / duplicate / move / turn into, table insert
                    #   and the table toolbar's actions; editorDelete — Backspace / Delete across
@@ -155,7 +166,11 @@ src/
                    #   height, the block's noun; askHighlight — the passage's tint (CSS Custom
                    #   Highlight API); commentAnchors — quote + context capture and finding it
                    #   again (detached when gone); commentHighlight — the threads' passages
-                   #   painted with the Custom Highlight API; shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
+                   #   painted with the Custom Highlight API; agentMention — `@agent` as a word,
+                   #   the instruction without it, the suggestion's query / completion; agentWriting —
+                   #   the run's edit_file / write_file on the open document, from the live timeline;
+                   #   pendingThread — chat card → open a thread (like pendingShine);
+                   #   commentAgentContext; shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
                    #   canvasView, outline, find, documentTitle, dates, bylineContext, canvasFile)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)
@@ -263,6 +278,38 @@ makes the dependency direction visible at the import site.
 Also pending (low priority): per-feature `index.ts` **barrels** as the public
 import surface, then routing cross-feature imports through them instead of deep
 paths.
+
+## Code splitting and delivery (plan 45)
+
+The first download carries only the chat. Everything else is its own chunk,
+loaded when it is first needed and warmed in the background once someone is
+signed in.
+
+| What | How | Where |
+| --- | --- | --- |
+| Route pages (Agents and its pages, Automations, Artifacts, Workflows, Login, Share, Terms, Privacy, Not found) | `React.lazy` over one loader per page; `ChatView` and `LegacyTasksRedirect` stay eager | `app/routeLoaders.ts`, `App.tsx` |
+| Waiting for a chunk | `<Suspense fallback={<PageFallback/>}>`: around the routes in `App.tsx` (full screen), the shell's outlet and the Agents outlet (`overlay`, over the chat, sidebar still usable) | `shared/ui/page-fallback.tsx` |
+| Settings, file preview | Always-mounted panels become lazy, mounted the first time they open and then kept (their close animation and state are unchanged) | `app/WorkspaceShell.tsx` |
+| Charts in answers | `LazyChartCard`: recharts loads with the first chart; a skeleton holds its place | `features/chat/components/message_parts/LazyChartCard.tsx` |
+| Prefetch | `prefetchRouteChunks()` runs once signed in, on `requestIdleCallback` (Safari: a short timeout), one chunk after another, failures ignored | `app/routeLoaders.ts` |
+| Vendor chunks | `react`, `radix`, `data` (TanStack Query, Zod, Zustand) split by `manualChunks`, so they stay cached across releases. Only libraries the first page loads anyway may join a group | `vite.config.ts` |
+| Agent icons | An explicit `AGENT_ICONS` map, never `import * as Icons` (that shipped all of Lucide). A new icon choice is added to the map too; `agent-icons.test.ts` checks the picker, templates and platform agents | `shared/lib/consts/icons.ts` |
+
+**Delivery (nginx).** The Dockerfile writes a `.gz` beside every text asset and
+nginx serves it with `gzip_static` (`gzip on` covers the rest; every `/api/`
+location keeps `gzip off`). Hashed files under `/assets/` are cached for a year
+(`immutable`) and a missing one is a real 404; `/brand/` images for a day;
+`index.html` is `no-cache`. The browser security headers live in
+`security-headers.conf`, included by the server block **and** by every location
+that sets its own `Cache-Control`: nginx's `add_header` does not merge, so a
+location that adds a header without that include would serve the app with no
+CSP or HSTS.
+
+**Rules.** A new route page is lazy (add its loader to `routeLoaders.ts`, and to
+the prefetch order if people open it often). A heavy library used by one panel
+or block loads with that panel, not in the entry chunk. Reach into a `*_parts`
+folder's light leaf (e.g. `attachment_preview_parts/registry`) rather than its
+barrel when the barrel re-exports heavy components.
 
 ## Adding to the frontend
 

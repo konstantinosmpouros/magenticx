@@ -1,9 +1,12 @@
 /**
  * The row at the top of the document: the outline toggle (≡), Find and,
  * while editing, undo / redo on the left (the user asked for them here, not
- * in the floating pill); on the right the mode menu — Editing or Viewing
- * (plan 44 §3; Suggesting joins in Phase 4.6). Comments have no button here:
- * their marks sit in the text's margin, as in Claude Docs. Find moved here
+ * in the floating pill); on the right the mode menu — Editing, Suggesting
+ * (Phase 4.6: the agent's changes arrive as suggestions to accept or reject)
+ * or Viewing (plan 44 §3). Comments on a line have
+ * their marks in the text's margin, as in Claude Docs; the ones with no line
+ * (resolved, or their text changed) have a button just left of the mode
+ * menu (`CanvasOtherCommentsButton`, plan 44 v2). Find moved here
  * from the header, which keeps only the title, the save status, Export,
  * full screen and close. An earlier version is always read-only, so there the
  * menu is a plain "Viewing" label. The row stays at the top as the document
@@ -19,11 +22,12 @@ import {
   PiEye,
   PiListDashes,
   PiMagnifyingGlass,
+  PiNotePencil,
   PiPencilSimpleLine,
 } from "react-icons/pi";
 import { useEditorRef, useEditorSelector } from "platejs/react";
 
-import type { CanvasMode } from "@/shared/lib/types";
+import type { CanvasMode, CanvasOtherCommentsMark } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import {
   DropdownMenu,
@@ -33,6 +37,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 
 import { isApplePlatform, modKeyLabel } from "../../lib/shortcuts";
+import { CanvasOtherCommentsButton } from "./CanvasCommentMarkers";
 import { CanvasHint } from "./CanvasHint";
 
 const pill =
@@ -44,6 +49,12 @@ const MODES: { mode: CanvasMode; label: string; hint: string; Icon: IconType }[]
     label: "Editing",
     hint: "Edit the document directly",
     Icon: PiPencilSimpleLine,
+  },
+  {
+    mode: "suggesting",
+    label: "Suggesting",
+    hint: "Review the agent's changes before they stay",
+    Icon: PiNotePencil,
   },
   { mode: "viewing", label: "Viewing", hint: "Read without changing it", Icon: PiEye },
 ];
@@ -58,6 +69,7 @@ export function CanvasDocBar({
   canEdit,
   onModeChange,
   showUndoRedo,
+  others = null,
 }: {
   showOutlineButton: boolean;
   outlineOpen: boolean;
@@ -70,8 +82,10 @@ export function CanvasDocBar({
   onModeChange: (mode: CanvasMode) => void;
   /** While editing: undo / redo beside the outline button. */
   showUndoRedo: boolean;
+  /** The comments with no line (resolved, detached); null or none: no button. */
+  others?: CanvasOtherCommentsMark | null;
 }) {
-  const current = MODES.find((item) => item.mode === mode) ?? MODES[1];
+  const current = MODES.find((item) => item.mode === mode) ?? MODES[2];
 
   return (
     <div className="sticky top-0 z-20 flex h-12 items-center gap-1 bg-background px-3 sm:px-4">
@@ -109,6 +123,9 @@ export function CanvasDocBar({
       </CanvasHint>
       {showUndoRedo ? <UndoRedo /> : null}
 
+      <span className="ml-auto" />
+      <CanvasOtherCommentsButton others={others} />
+
       {canEdit ? (
         <DropdownMenu>
           <CanvasHint label="Change mode">
@@ -117,8 +134,7 @@ export function CanvasDocBar({
               className={cn(
                 pill,
                 "transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted data-[state=open]:text-foreground",
-                "ml-auto",
-                mode === "editing" && "text-foreground",
+                mode !== "viewing" && "text-foreground",
               )}
             >
               <current.Icon className="size-4" aria-hidden="true" />
@@ -146,10 +162,7 @@ export function CanvasDocBar({
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (
-        <span
-          className={cn(pill, "ml-auto")}
-          title="Earlier versions are read-only"
-        >
+        <span className={pill} title="Earlier versions are read-only">
           <PiEye className="size-4" aria-hidden="true" />
           Viewing
         </span>

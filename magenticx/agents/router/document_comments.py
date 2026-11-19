@@ -9,6 +9,10 @@ exceptions to statuses:
 * :class:`InvalidComment` / :class:`CommentLimitReached` → 422
   ``{"code": "invalid_comment" | "thread_limit" | "reply_limit", "message"}``
 * :class:`DocumentNotFound` / :class:`CommentNotFound` → 404
+
+``GET /{comment_id}`` (plan 44 v2) reads one comment: the bridge confirms
+that a canvas edit started from a comment names an open thread of this
+conversation, on the document the edit is about.
 """
 from uuid import UUID
 
@@ -26,6 +30,7 @@ from schema import (
 from utils.document_comments import (
     add_document_comment,
     delete_document_comment,
+    get_document_comment,
     list_document_comments,
     update_document_comment,
 )
@@ -71,6 +76,15 @@ async def add_comment(user_id: str, conversation_id: str, payload: CreateComment
     except InvalidComment as exc:
         raise _invalid(exc) from exc
     except (DocumentNotFound, CommentNotFound) as exc:
+        raise _not_found() from exc
+
+
+@router.get("/{comment_id}", response_model=DocumentCommentOut)
+async def get_comment(user_id: str, conversation_id: str, comment_id: UUID) -> DocumentCommentOut:
+    """One comment (a thread or a reply) of this conversation."""
+    try:
+        return await get_document_comment(user_id, conversation_id, str(comment_id))
+    except CommentNotFound as exc:
         raise _not_found() from exc
 
 

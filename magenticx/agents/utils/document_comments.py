@@ -50,6 +50,11 @@ async def list_document_comments(user_id: str, conversation_id: str, path: str) 
     return DocumentCommentsResponse(comments=[_out(c) for c in comments])
 
 
+async def get_document_comment(user_id: str, conversation_id: str, comment_id: str) -> DocumentCommentOut:
+    """One comment of this conversation — the bridge's check of a comment-started canvas edit (plan 44 v2)."""
+    return _out(await _store().get_comment(user_id, conversation_id, comment_id))
+
+
 async def add_document_comment(
     user_id: str, conversation_id: str, payload: CreateCommentRequest
 ) -> DocumentCommentOut:

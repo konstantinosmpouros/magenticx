@@ -19,10 +19,10 @@ import {
   PiCaretLeft,
   PiCaretRight,
   PiCheck,
-  PiCopy,
   PiDotsSixVertical,
   PiTrash,
 } from "react-icons/pi";
+import { Copy } from "lucide-react";
 import { BlockMenuPlugin, BlockSelectionPlugin } from "@platejs/selection/react";
 import { useEditorRef } from "platejs/react";
 import type { SlateEditor } from "platejs";
@@ -138,7 +138,8 @@ export function CanvasBlockMenuItems({ leading }: { leading?: ReactNode }) {
         className={row}
         onSelect={run((targets) => duplicateBlocks(editor, targets, asBlocks))}
       >
-        <PiCopy aria-hidden="true" />
+        {/* The same copy mark as the messages' action bar. */}
+        <Copy aria-hidden="true" />
         Duplicate
       </DropdownMenuItem>
       <DropdownMenuItem

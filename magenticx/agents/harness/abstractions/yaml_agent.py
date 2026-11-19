@@ -205,6 +205,10 @@ class YamlDeepAgent(DeepAgent):
             search_past_convs=bool(self.context.get("search_past_convs")),
             files=self.conversation_files if conversation_id else None,
             interactive=self.interactive,
+            async_task_id=self.async_task_id,
+            run_id=self.context.get("run_id"),
+            has_canvas_documents=self.has_canvas_documents,
+            comment_writes=self.comment_writes,
         )
 
     def _resolve_native_tools(self, refs: list[ToolRef]) -> list[Any]:

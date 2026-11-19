@@ -10,11 +10,15 @@
  * has a canvas beside it, the card opens that document there; elsewhere (a
  * public share) it only says what the message was about.
  *
+ * Sent with `@agent` from a comment (plan 44 v2, `commentId`): the second
+ * line reads "Comment · <passage>" with a speech-bubble tile, and the click
+ * also opens that thread's card in the canvas.
+ *
  * A custom component because it is a reference card for a passage, which no
  * shadcn / AI Elements part covers; it borrows the attachment cards' shape
  * (a bordered, rounded tile with an icon) and the app's tokens.
  */
-import { PencilLine } from "lucide-react";
+import { MessageSquareText, PencilLine } from "lucide-react";
 
 import { canvasDocumentTitle } from "@/shared/lib/canvasDocuments";
 import type { CanvasEditRef } from "@/shared/lib/types";
@@ -28,6 +32,8 @@ export function CanvasEditChip({ edit }: { edit: CanvasEditRef }) {
   const openCanvas = useCanvasOpener();
   const title = canvasDocumentTitle(edit.path);
   const passage = oneLine(edit.selection);
+  const fromComment = Boolean(edit.commentId);
+  const Icon = fromComment ? MessageSquareText : PencilLine;
 
   const content = (
     <>
@@ -35,13 +41,15 @@ export function CanvasEditChip({ edit }: { edit: CanvasEditRef }) {
         aria-hidden="true"
         className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"
       >
-        <PencilLine className="size-4" />
+        <Icon className="size-4" />
       </span>
       <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
         <span className="truncate text-[13px] font-medium leading-tight text-foreground">
           {title}
         </span>
-        <span className="truncate text-xs leading-tight text-muted-foreground">{passage}</span>
+        <span className="truncate text-xs leading-tight text-muted-foreground">
+          {fromComment ? `Comment · ${passage}` : passage}
+        </span>
       </span>
     </>
   );
@@ -56,9 +64,16 @@ export function CanvasEditChip({ edit }: { edit: CanvasEditRef }) {
       type="button"
       // Lands on the latest version, with this request's change shining.
       onClick={(event) =>
-        openCanvas(edit.path, event.currentTarget, { shineAfterVersion: edit.version })
+        openCanvas(edit.path, event.currentTarget, {
+          shineAfterVersion: edit.version,
+          ...(edit.commentId ? { commentId: edit.commentId } : {}),
+        })
       }
-      aria-label={`Open ${title} in the canvas. The passage: ${passage}`}
+      aria-label={
+        fromComment
+          ? `Open ${title} in the canvas, on the comment. The passage: ${passage}`
+          : `Open ${title} in the canvas. The passage: ${passage}`
+      }
       title={`Open ${title} · v${edit.version}`}
       className={cn(
         card,

@@ -178,7 +178,10 @@ export function CanvasSelectionMenu({
         <CanvasCommentForm
           className="w-[min(22rem,calc(100vw-2rem))] p-1"
           label="Comment on the selected text"
-          placeholder="Add a comment…"
+          placeholder={
+            comment?.mentions ? "Comment, or @agent to ask the agent…" : "Add a comment…"
+          }
+          mentions={Boolean(comment?.mentions)}
           onSubmit={(body) => {
             setHeld(null);
             setDismissed(target);

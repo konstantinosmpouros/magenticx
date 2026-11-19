@@ -219,6 +219,20 @@ export function useCanvasEditing({
       setIncoming(null);
     }, [incoming]),
     /**
+     * Show `markdown` in the editor at once and save it as the user's version
+     * on the current base (Suggesting mode: the agent's version with the
+     * rejected suggestions put back). A 409 is the usual conflict.
+     */
+    replace: useCallback(
+      (markdown: string) => {
+        const ctl = controller();
+        if (!ctl) return Promise.resolve();
+        remount(markdown);
+        return ctl.replaceAndSave(markdown);
+      },
+      [remount],
+    ),
+    /**
      * Restore an earlier version: save its text as a new version based on the
      * latest (pending edits are saved first), and show it in the editor.
      */

@@ -111,6 +111,16 @@ BUILTIN_TOOLS: tuple[BuiltinTool, ...] = (
     BuiltinTool("present_artifact", "Output", availability=Availability.CONVERSATION),
     BuiltinTool("create_skill", "Skills", hitl_default=True),
     BuiltinTool("ask_user", "Interaction", gateable=False, availability=Availability.CONVERSATION),
+    # The canvas comment tools (plan 44 v2): attached only when the
+    # conversation has a canvas document (a per-run fact the catalog cannot
+    # know, so it lists them under the conversation gate). Not gated by
+    # default — they only touch comments, and a per-run cap bounds them.
+    # There is no resolve tool: resolving a thread is the user's call.
+    # `list_comments` is the one read (open / resolved / all), never counted
+    # against the write cap.
+    BuiltinTool("list_comments", "Canvas", availability=Availability.CONVERSATION),
+    BuiltinTool("reply_to_comment", "Canvas", availability=Availability.CONVERSATION),
+    BuiltinTool("add_comment", "Canvas", availability=Availability.CONVERSATION),
 )
 
 BUILTIN_BY_NAME: dict[str, BuiltinTool] = {t.name: t for t in BUILTIN_TOOLS}

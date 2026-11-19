@@ -12,10 +12,14 @@
  * agent edits, with a conversation to send into). Under reduced motion the
  * orb holds still (`Orb`) and only fades.
  *
+ * A comment's margin mark on the caret's line is never covered: the orb
+ * moves just right of it when the margin is wide enough, else under it
+ * (`orbClearOfMarks`).
+ *
  * Custom: no prebuilt component places an action at the caret's line; it is
  * built from our Popover, tooltip and the shared `Orb`.
  */
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { TElement } from "platejs";
 import { useEditorRef } from "platejs/react";
 
@@ -26,7 +30,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { useCaretOrb, type CaretOrbSpot } from "../../hooks/useCaretOrb";
 import { blockPassage } from "../../lib/askAgent";
 import { showAskHighlight } from "../../lib/askHighlight";
-import { blockNoun } from "../../lib/caretOrb";
+import { blockNoun, orbClearOfMarks } from "../../lib/caretOrb";
 import { CanvasAskCard } from "./CanvasAskPanel";
 import { CanvasHint } from "./CanvasHint";
 
@@ -62,7 +66,16 @@ export function CanvasCaretOrb({
   };
 
   const shown = open ? (held?.spot ?? null) : spot;
+  // Clear of the comment marks in the margin (measured once the spot is known).
+  const [place, setPlace] = useState<{ top: number; left: number | null } | null>(null);
+  const shownTop = shown?.top ?? null;
+  useLayoutEffect(() => {
+    const column = columnRef.current;
+    setPlace(shownTop === null || !column ? null : orbClearOfMarks(column, shownTop));
+  }, [shownTop, columnRef]);
   if (!shown) return null;
+  const top = place?.top ?? shown.top;
+  const left = place?.left ?? null;
 
   return (
     <Popover
@@ -87,7 +100,7 @@ export function CanvasCaretOrb({
           contentEditable={false}
           onPointerDown={holdFocus}
           onMouseDown={holdFocus}
-          style={{ top: shown.top }}
+          style={left === null ? { top } : { top, left }}
           // Just outside the column's right edge, inside the editing
           // margin (sm:px-10 while editing); the heading chevrons are inside.
           className="absolute left-[calc(100%+2px)] z-10 flex size-7 -translate-y-1/2 select-none items-center justify-center rounded-full transition-colors animate-in fade-in-0 zoom-in-75 duration-200 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted motion-reduce:zoom-in-100 sm:left-[calc(100%+8px)]"

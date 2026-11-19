@@ -314,6 +314,7 @@ def test_every_conversation_run_narrates_a_background_task_as_a_sub_agent(agents
         _has_reference = False
         _has_default_skills = False
         platform_skills_dir = None
+        has_canvas_documents = False
         tools = ()
 
         def __init__(self, context, async_task_id=None):

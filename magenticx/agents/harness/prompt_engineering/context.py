@@ -47,6 +47,9 @@ class PromptContext:
     has_subagents: bool = False
     #: ``ask_user`` is attached: an interactive run with a conversation.
     has_ask_user: bool = False
+    #: The canvas comment tools are attached (plan 44 v2): the conversation
+    #: has a canvas document and the run is not a background task.
+    has_canvas_comments: bool = False
     #: The user follows this agent's work live in a conversation, so it should
     #: narrate between tool calls (``progress_prompt``). Off for a background
     #: task's run, whose text is its parent's input, not the user's chat.
