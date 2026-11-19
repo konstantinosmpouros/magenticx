@@ -136,8 +136,6 @@ export function useCanvasDocument(
     pickedVersion: isLatest ? null : pickedVersion,
     versions: versions.data ?? null,
     versionsLoading: versions.isFetching,
-    /** The version list could not be read (Suggesting then goes by the reviewed record alone). */
-    versionsFailed: versions.isError,
     loadVersions,
     refreshVersions,
     refreshLatest,

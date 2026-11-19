@@ -23,6 +23,10 @@ const { api, http, passage, coarse } = vi.hoisted(() => ({
   api: {
     listConversationDocuments: vi.fn(),
     getLatestDocument: vi.fn(),
+    // The pending suggestion set (Phase 4.6): none.
+    getDocumentSuggestion: vi.fn(async () => null),
+    putDocumentSuggestion: vi.fn(),
+    deleteDocumentSuggestion: vi.fn(async () => undefined),
     listDocumentVersions: vi.fn(),
     getDocumentVersion: vi.fn(),
     saveDocumentVersion: vi.fn(),

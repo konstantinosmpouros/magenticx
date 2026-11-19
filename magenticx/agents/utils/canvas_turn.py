@@ -9,8 +9,9 @@ before the agent is built:
 2. for a deep agent in a conversation, the seen markers name the documents
    the user edited since the agent's last turn, and their diffs become the
    turn's note, followed by each document's open comment threads (Phase
-   4.4). **Fail-open**: a database error means a turn without that part of
-   the note, never a failed run;
+   4.4) and the user's pending suggestions (Phase 4.6, Suggesting mode —
+   shown as not applied). **Fail-open**: a database error means a turn
+   without that part of the note, never a failed run;
 3. both go into the turn's user message (:func:`apply_canvas_turn`), and the
    documents are marked seen at their latest version — a document met for the
    first time is only marked, with no diff. A turn whose last message is a
@@ -34,6 +35,7 @@ from harness.canvas import (
 )
 from harness.conversation_files.comments import DocumentCommentStore, DocumentOpenThreads
 from harness.conversation_files.seen import DocumentSeenStore, TurnState
+from harness.conversation_files.suggestions import DocumentSuggestionStore, PendingSuggestions
 from harness.memory import get_memory_pool, has_memory_pool
 
 logger = get_logger(__name__)
@@ -57,6 +59,22 @@ async def _open_comments(user_id: str, conversation_id: str) -> list[DocumentOpe
         logger.warning("canvas_turn_comments_failed", "Could not read the canvas comments for the turn note",
                        exc_info=True)
         return []
+
+
+def _suggestion_store() -> DocumentSuggestionStore:
+    return DocumentSuggestionStore(get_memory_pool())
+
+
+async def _pending_suggestions(user_id: str, conversation_id: str) -> PendingSuggestions | None:
+    """The conversation's pending suggestion sets, or None when they cannot be read (fail-open)."""
+    if not has_memory_pool():
+        return None
+    try:
+        return await _suggestion_store().pending(user_id, conversation_id)
+    except Exception:  # a note is never worth a failed run
+        logger.warning("canvas_turn_suggestions_failed",
+                       "Could not read the canvas suggestions for the turn note", exc_info=True)
+        return None
 
 
 async def _turn_state(user_id: str, conversation_id: str) -> TurnState | None:
@@ -88,10 +106,12 @@ async def prepare_canvas_turn(
     user_id, conversation_id = ctx.get("user_id"), ctx.get("conversation_id")
     state: TurnState | None = None
     comments: list[DocumentOpenThreads] = []
+    suggestions: PendingSuggestions | None = None
     if isinstance(user_id, str) and user_id and isinstance(conversation_id, str) and conversation_id:
-        state, comments = await asyncio.gather(_turn_state(user_id, conversation_id),
-                                               _open_comments(user_id, conversation_id))
-    notes = render_edit_notes(state.edits if state is not None else [], comments)
+        state, comments, suggestions = await asyncio.gather(_turn_state(user_id, conversation_id),
+                                                            _open_comments(user_id, conversation_id),
+                                                            _pending_suggestions(user_id, conversation_id))
+    notes = render_edit_notes(state.edits if state is not None else [], comments, suggestions)
     rewritten, users_turn = apply_canvas_turn(messages, notes=notes, edit=edit)
     if edit is not None and not users_turn:
         raise CanvasEditRefused("The canvas edit has no user message to go with.")
@@ -104,7 +124,9 @@ async def prepare_canvas_turn(
         else:
             logger.info("canvas_turn_prepared", "Added the canvas note and request to the turn",
                         documents=len(state.marks), edited=len(state.edits), marked=marked,
-                        commented=len(comments), has_note=bool(notes), has_edit=edit is not None)
+                        commented=len(comments),
+                        suggested=suggestions.total if suggestions is not None else 0,
+                        has_note=bool(notes), has_edit=edit is not None)
     elif state is not None and state.marks:
         logger.info("canvas_turn_skipped", "Left the canvas markers for the next user turn",
                     documents=len(state.marks))

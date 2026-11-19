@@ -4,6 +4,8 @@ import {
   Bot,
   Brain,
   CircleStop,
+  FileCheck2,
+  FileX2,
   FolderOpen,
   Image,
   ListChecks,
@@ -42,6 +44,12 @@ export type ToolPresentation = {
    * identical wrenches gives the eye nothing to scan by.
    */
   icon?: LucideIcon;
+  /**
+   * An icon that depends on the call's arguments, where one tool does two
+   * opposite things (`review_suggestions`: accept or reject). Wins over `icon`
+   * when it returns one.
+   */
+  iconFor?: (args: Record<string, unknown> | null) => LucideIcon | undefined;
 };
 
 export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
@@ -77,6 +85,13 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   list_comments: { label: "Read the comments", icon: MessagesSquare },
   reply_to_comment: { label: "Replied to a comment", icon: MessageSquareReply },
   add_comment: { label: "Added a comment", icon: MessageSquarePlus },
+  // The user's pending suggestions (plan 44, Phase 4.6), accepted or rejected
+  // on their request: a document with a tick, or with a cross.
+  review_suggestions: {
+    label: "Reviewed your suggestions",
+    icon: FileCheck2,
+    iconFor: (args) => (args?.decision === "reject" ? FileX2 : FileCheck2),
+  },
 };
 
 export const toolLabel = (name: string): string => TOOL_PRESENTATION[name]?.label ?? name;
@@ -85,3 +100,7 @@ export const toolIsBare = (name: string): boolean => TOOL_PRESENTATION[name]?.ba
 
 /** Icon for this tool's step, or undefined to keep the generic one. */
 export const toolIcon = (name: string): LucideIcon | undefined => TOOL_PRESENTATION[name]?.icon;
+
+/** Icon for one call's step: from its arguments where they decide it (`iconFor`), else the tool's own. */
+export const toolIconFor = (name: string, args: Record<string, unknown> | null): LucideIcon | undefined =>
+  TOOL_PRESENTATION[name]?.iconFor?.(args) ?? toolIcon(name);

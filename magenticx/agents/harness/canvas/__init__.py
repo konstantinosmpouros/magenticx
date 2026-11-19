@@ -9,7 +9,9 @@ Two pieces of text, both added to the turn's user message by the stream route
   ``edit_file`` on that passage only;
 * ``notes`` — **the user's edits since the agent's last turn**: one short note
   per document with a compact diff, from the seen markers
-  (:mod:`harness.conversation_files.seen`).
+  (:mod:`harness.conversation_files.seen`), then the open comment threads and
+  the user's pending suggestions (Suggesting mode — not applied, apply only
+  when asked).
 
 ``turn`` puts them into the message. Everything the user wrote (selection,
 headings, instruction, the document text in a diff) goes in only as fenced

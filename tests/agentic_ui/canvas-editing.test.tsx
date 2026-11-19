@@ -333,7 +333,7 @@ describe("editing hook: a newer version from outside", () => {
 
   it("raises the banner instead when the user has unsaved edits, and Review opens the conflict", () => {
     const hook = mount();
-    act(() => hook.result.current.attach(() => "# Brief\n\nMine.\n"));
+    act(() => hook.result.current.attach(() => ({ text: "# Brief\n\nMine.\n", proposed: null })));
     act(() => hook.result.current.edited());
     hook.rerender({ latest: version(5, "# Brief\n\nNew.\n") });
     expect(hook.result.current.source?.key).toBe(0);

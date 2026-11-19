@@ -200,7 +200,8 @@ async def test_there_is_no_tool_to_resolve_a_thread(agents_service, registry, to
     canvas_group = [t.name for t in builtins_mod.BUILTIN_TOOLS if t.group == "Canvas"]
     attached = _names(registry, _ctx(registry, tool_mod))
 
-    assert canvas_group == list(NAMES)
+    # The Canvas group: the three comment tools, then the suggestions tool.
+    assert canvas_group == [*NAMES, "review_suggestions"]
     for roster in (canvas_group, attached, list(registry.NATIVE_TOOLS), list(builtins_mod.BUILTIN_BY_NAME)):
         assert not [name for name in roster if "resolve" in name]
     assert not [name for name in dir(tool_mod) if "resolve" in name.lower()]

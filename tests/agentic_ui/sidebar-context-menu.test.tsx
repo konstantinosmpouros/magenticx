@@ -104,7 +104,7 @@ describe("sidebar conversation right-click menu", () => {
     const onTogglePin = vi.fn();
     const pinned = conversation("c1", "Pinned chat", {
       isPinned: true,
-      pinnedAt: "2026-10-02T10:00:00Z",
+      pinnedAt: new Date("2026-10-02T10:00:00Z"),
     });
     render(sidebar({ conversations: [pinned], onTogglePinConversation: onTogglePin }));
 

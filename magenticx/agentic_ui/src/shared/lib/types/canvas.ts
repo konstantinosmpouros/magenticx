@@ -9,6 +9,7 @@ export type {
   CanvasCommentAnchor,
   CanvasDocumentAuthor,
   CanvasDocumentSaved,
+  CanvasDocumentSuggestion,
   CanvasDocumentSummary,
   CanvasDocumentVersion,
   CanvasDocumentVersionMeta,
@@ -18,7 +19,7 @@ export type {
 } from "../schemas";
 
 import type { ReactNode } from "react";
-import type { TElement, TRange, Value } from "platejs";
+import type { TRange } from "platejs";
 
 import type { CanvasDocumentSaved, CanvasEditPreset, CanvasStaleBase } from "../schemas";
 
@@ -33,8 +34,10 @@ export type CanvasSaveResult =
 import type { CanvasDocumentAuthor } from "../schemas";
 
 /**
- * The canvas's mode (plan 44 §3): edit the text; review the agent's changes
- * as suggestions before they stay (Phase 4.6), then edit; or read it.
+ * The canvas's mode (plan 44 §3): edit the text; type suggestions — the
+ * user's own edits tracked as changes that do not alter the document until
+ * accepted (Phase 4.6); or read it. It only changes how the user's typing
+ * behaves: the agent's versions always apply directly.
  */
 export type CanvasMode = "editing" | "suggesting" | "viewing";
 
@@ -130,53 +133,60 @@ export interface CanvasDocumentDiff {
 // Suggesting mode (Phase 4.6, features/canvas/lib/suggestions.ts).
 
 /**
- * How a node of the review shows a suggestion: inserted or deleted text (a
- * leaf, or a whole added / removed block), or a block whose words changed
- * (its leaves carry the inserts and deletes).
+ * One suggestion in the open document, as the bar and its ✓ / ✕ name it:
+ * text the user added, text they deleted, text they replaced (a deletion and
+ * an insertion made together), or a formatting change.
  */
-export interface CanvasSuggestionMark {
-  id: string;
-  kind: "insert" | "remove" | "change";
-}
-
-/** One suggestion the user accepts or rejects as a whole. */
 export interface CanvasSuggestion {
   id: string;
-  /** Blocks added, blocks removed, or text replaced (words in a block, or blocks for blocks). */
-  kind: "insert" | "remove" | "replace";
+  kind: "insert" | "remove" | "replace" | "format";
   /** The start of its text, for the controls' accessible names. */
   summary: string;
 }
 
-/**
- * The document between the base and the agent's version, block by block:
- * an unchanged block, or a change — the base's blocks and the agent's that
- * replace them, with the word-level merge of the two when they are one
- * block edited in place.
- */
-export type CanvasSuggestionSegment =
-  | { kind: "same"; block: TElement }
-  | { kind: "change"; id: string; base: TElement[]; agent: TElement[]; merged: TElement | null };
-
-export interface CanvasSuggestionSet {
-  segments: CanvasSuggestionSegment[];
-  suggestions: CanvasSuggestion[];
+/** How a top-level block shows a block-level suggestion (`CanvasBlockFrame`). */
+export interface CanvasBlockSuggestion {
+  id: string;
+  kind: "insert" | "remove";
+  /** Only the line break after the block is suggested (added, or joined away). */
+  lineBreak: boolean;
 }
 
-export type CanvasSuggestionDecision = "accept" | "reject";
+/**
+ * The document's pending suggestions as the canvas opens it: still being
+ * read; ready (the proposed text to draw over the latest version, or null
+ * for none, and what the server holds); or stale — the latest version moved
+ * past the set's base and the user's changes could not be carried onto it,
+ * so they show read-only over their own base until discarded.
+ */
+export type CanvasSuggestionStart =
+  | { status: "loading" }
+  | {
+      status: "ready";
+      proposed: string | null;
+      /** The base version of the set the server holds; null: it holds none. */
+      savedBase: number | null;
+    }
+  | ({ status: "stale" } & CanvasStaleSuggestions);
 
-/** What the document view needs to show a review and take its decisions. */
-export interface CanvasSuggestionReview {
-  /** Changes when the review starts over (another base or agent version). */
-  key: string;
-  /** The document with the undecided suggestions marked in it. */
-  value: Value;
-  /** The suggestions still to decide, in document order. */
-  remaining: CanvasSuggestion[];
-  onAccept: (id: string) => void;
-  onReject: (id: string) => void;
-  onAcceptAll: () => void;
-  onRejectAll: () => void;
+/** Suggestions shown read-only over their base, because the document changed since. */
+export interface CanvasStaleSuggestions {
+  base: string;
+  proposed: string;
+  baseVersion: number;
+}
+
+/** What the editor's live text stands for: the document (every suggestion rejected) and the proposal (all accepted). */
+export interface CanvasEditorTexts {
+  text: string;
+  /** Null when nothing is suggested. */
+  proposed: string | null;
+}
+
+/** Where the suggestion set stands (beside the version saves): saved, edited, being saved, or failed. */
+export interface CanvasSuggestionSaveState {
+  status: "saved" | "unsaved" | "saving" | "failed";
+  errorMessage: string | null;
 }
 
 /** The text the canvas editor (re)mounts with; a new `key` remounts it. */
@@ -191,6 +201,8 @@ export interface CanvasEditorSource {
   markdown: string;
   /** The text before an agent's version was loaded: what changed shines once. */
   previous?: string;
+  /** Suggesting mode: the proposed text, drawn over `markdown` as suggestions. */
+  proposed?: string;
 }
 
 /** Ask agent (Phase 4.3): the passage the user picked — its text, where it sits, its range (the highlight). */

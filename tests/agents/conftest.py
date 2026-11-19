@@ -806,7 +806,7 @@ class MemoryFileStore:
         # The in-memory store keeps no document versions (plan 44); Postgres does.
         return {"conversation_files": len(files), "conversation_file_versions": 0,
                 "conversation_file_seen": 0, "conversation_file_comments": 0,
-                "conversation_file_blobs": len(blobs)}
+                "conversation_file_suggestions": 0, "conversation_file_blobs": len(blobs)}
 
 
 @pytest.fixture

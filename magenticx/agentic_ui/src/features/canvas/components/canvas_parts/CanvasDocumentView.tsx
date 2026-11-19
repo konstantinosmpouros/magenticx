@@ -32,11 +32,16 @@
  * (`CanvasSelectionMenu`) and the orb at the caret (`CanvasCaretOrb`) offers
  * Ask agent for the block the caret rests in.
  *
- * A Suggesting review (plan 44, Phase 4.6, `review`) mounts the view on the
- * review's value (the agent's changes marked as suggestions), read-only,
- * with the suggestions bar under the document row and a check / cross pill on
- * each suggestion. Each decision swaps the value in place (`setValue`), so
- * the page stays where it is; nothing here is attached to the save controller.
+ * Suggesting mode (plan 44, Phase 4.6): with the mode on Suggesting, Plate's
+ * `SuggestionPlugin` turns what the user types and deletes into suggestion
+ * marks (its `isSuggesting` option follows the mode). A saved set opens drawn
+ * over the text (`proposed`, built word by word by `lib/suggestions.ts`), in
+ * any mode. While the text holds suggestions, the bar under the document row
+ * counts them with Accept all / Reject all, and each one has a ✓ / ✕ pill
+ * under the end of its text; a decision is Plate's transform on this editor
+ * (undoable), then `onDecided` — the canvas saves it at once. The serializer
+ * handed to the parent reads both texts the value stands for: the document
+ * (every suggestion rejected) and the proposal (every one accepted).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Value } from "platejs";
@@ -55,8 +60,9 @@ import type {
   CanvasCommentMarker,
   CanvasCommentMarks,
   CanvasMode,
+  CanvasEditorTexts,
+  CanvasSuggestion,
   CanvasShineTexts,
-  CanvasSuggestionReview,
 } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import { Editor, EditorContainer } from "@/shared/ui/plate/editor";
@@ -76,9 +82,16 @@ import {
 import { paintCommentHighlights, scrollBehavior } from "../../lib/commentHighlight";
 import { measureCommentMarkers } from "../../lib/commentMarkers";
 import { countMatches } from "../../lib/find";
-import { markdownToValue, valueToMarkdown } from "../../lib/markdown";
+import { markdownToValue } from "../../lib/markdown";
 import { shineChanges, shineTexts as shineTextsIn } from "../../lib/changeShine";
 import { getHiddenBlocks, getOutline } from "../../lib/outline";
+import {
+  decideSuggestions,
+  editorTexts,
+  listSuggestions,
+  setSuggesting,
+  suggestionValue,
+} from "../../lib/suggestions";
 import { CanvasByline } from "./CanvasByline";
 import { CanvasCaretOrb } from "./CanvasCaretOrb";
 import { CanvasCommentMarkers } from "./CanvasCommentMarkers";
@@ -96,6 +109,47 @@ import { CanvasToolbar } from "./CanvasToolbar";
 
 /** An empty document still needs one block for Plate to render. */
 const EMPTY_DOCUMENT: Value = [{ type: "p", children: [{ text: "" }] }];
+
+/** The ✓ / ✕ pill's width (px), to keep it inside the column: mouse, then touch. */
+const PILL_WIDTH = { fine: 72, coarse: 96 };
+
+/**
+ * Where each suggestion's pill sits: under the end of its last piece of
+ * text (a leaf's last line), or at the bottom right of its last block for a
+ * block-level one. Measured after the paint, in the column's coordinates.
+ */
+function measureSuggestionSpots(
+  column: HTMLElement,
+  suggestions: CanvasSuggestion[],
+  pillWidth: number,
+): CanvasSuggestionSpot[] {
+  const box = column.getBoundingClientRect();
+  const spots: CanvasSuggestionSpot[] = [];
+  for (const suggestion of suggestions) {
+    const id = typeof CSS !== "undefined" && CSS.escape ? CSS.escape(suggestion.id) : suggestion.id;
+    const pieces = column.querySelectorAll<HTMLElement>(
+      `[data-slate-editor] [data-canvas-suggestion-id="${id}"]`,
+    );
+    const last = pieces[pieces.length - 1];
+    if (!last) continue;
+    const maxLeft = Math.max(0, box.width - pillWidth);
+    if (last.hasAttribute("data-canvas-block")) {
+      const rect = last.getBoundingClientRect();
+      spots.push({ suggestion, top: rect.bottom - box.top - 4, left: maxLeft });
+      continue;
+    }
+    const rects = last.getClientRects();
+    const rect = rects[rects.length - 1] ?? last.getBoundingClientRect();
+    const left = rect.right - box.left - pillWidth / 2;
+    spots.push({
+      suggestion,
+      // Overlapping the line a little, so the pointer can move onto the pill.
+      top: rect.bottom - box.top - 2,
+      left: Math.min(maxLeft, Math.max(0, left)),
+    });
+  }
+  return spots;
+}
 
 /**
  * Where `passage` (a line of the agent's `old_string`, as it reads) is in the
@@ -140,7 +194,8 @@ export function CanvasDocumentView({
   onAttachPassages,
   shineFrom = null,
   shineTexts = null,
-  review = null,
+  proposed = null,
+  onDecided,
 }: {
   markdown: string;
   /** The document's title, for the editor's accessible name. */
@@ -160,8 +215,8 @@ export function CanvasDocumentView({
   canEdit: boolean;
   /** `remember: false` for a quick switch that should not become the default (the phone's pencil). */
   onModeChange: (mode: CanvasMode, remember?: boolean) => void;
-  /** Receives the editor's serializer on mount, null on unmount (editable views only). */
-  onAttach?: (serialize: (() => string) | null) => void;
+  /** Receives the editor's reader of its two texts on mount, null on unmount (editable views only). */
+  onAttach?: (serialize: (() => CanvasEditorTexts) | null) => void;
   onEdited?: () => void;
   onBlur?: () => void;
   /** Ask agent on a selection (Phase 4.3), where the canvas can send one. */
@@ -185,12 +240,14 @@ export function CanvasDocumentView({
   shineFrom?: string | null;
   /** Blocks to shine by their text (opened from an Ask agent card); a new id shines again. */
   shineTexts?: CanvasShineTexts | null;
-  /** Suggesting mode: the agent's changes to review; the view is read-only meanwhile. */
-  review?: CanvasSuggestionReview | null;
+  /** Suggesting mode: a saved set's proposed text, drawn over `markdown` as suggestions. */
+  proposed?: string | null;
+  /** Offers ✓ / ✕ on the suggestions; called after a decision is applied (the canvas saves it). */
+  onDecided?: () => void;
 }) {
   // Parsed once per mount: the parent remounts the view for new text.
   const [initial] = useState(() => {
-    if (review) return review.value;
+    if (proposed) return suggestionValue(markdown, proposed);
     const parsed = markdownToValue(markdown);
     return parsed.length > 0 ? parsed : EMPTY_DOCUMENT;
   });
@@ -203,8 +260,9 @@ export function CanvasDocumentView({
   const [query, setQuery] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  // Suggesting edits like Editing once nothing is left to review.
-  const editing = canEdit && mode !== "viewing" && review === null;
+  const editing = canEdit && mode !== "viewing";
+  // The user's typing becomes suggestions (Plate's plugin, which tracks while this is on).
+  const suggesting = editing && mode === "suggesting";
   // While the agent changes a passage nobody else writes: no conflict mid-run.
   const agentBusy = agentEdit !== null || agentWriting !== null;
   const writable = editing && !agentBusy;
@@ -215,10 +273,20 @@ export function CanvasDocumentView({
   const outline = useMemo(() => (outlineOpen ? getOutline(value) : []), [value, outlineOpen]);
   const titleFirst = value[0]?.type === "h1";
 
-  // The serializer reads the live value only when a save is due.
+  useEffect(() => {
+    setSuggesting(editor, suggesting);
+  }, [editor, suggesting]);
+
+  // The serializer reads the live value only when a save is due (or the
+  // dirty check after a pause); both texts are read once per value.
   useEffect(() => {
     if (!canEdit || !onAttach) return;
-    onAttach(() => valueToMarkdown(editor.children as Value));
+    let last: { children: unknown; texts: CanvasEditorTexts } | null = null;
+    onAttach(() => {
+      const children = editor.children;
+      if (last?.children !== children) last = { children, texts: editorTexts(children as Value) };
+      return last.texts;
+    });
     return () => onAttach(null);
   }, [editor, canEdit, onAttach]);
 
@@ -367,38 +435,31 @@ export function CanvasDocumentView({
     return () => window.cancelAnimationFrame(frame);
   }, [focusNonce]);
 
-  // A decision in the review: the value changes in place, the page stays put.
-  const reviewValue = review?.value ?? null;
-  useEffect(() => {
-    if (reviewValue && reviewValue !== initial) editor.tf.setValue(reviewValue);
-  }, [editor, reviewValue, initial]);
+  // The suggestions in the text, in document order (the bar and the pills).
+  const suggestions = useMemo(() => listSuggestions(value), [value]);
+  // Decisions wait while the agent writes: a save now would only conflict.
+  const deciding = Boolean(onDecided) && suggestions.length > 0 && !agentBusy;
+  const decide = (ids: string[], decision: "accept" | "reject") => {
+    decideSuggestions(editor, ids, decision);
+    onDecided?.();
+  };
 
-  // Each undecided suggestion's pill sits at the bottom of its last block,
-  // overlapping it a little so the pointer can move onto it.
-  const remaining = review?.remaining ?? null;
   const [spots, setSpots] = useState<CanvasSuggestionSpot[]>([]);
   const [activeSuggestion, setActiveSuggestion] = useState<string | null>(null);
   useEffect(() => {
-    if (!remaining || remaining.length === 0) {
+    if (!deciding) {
       setSpots([]);
       return;
     }
     const frame = window.requestAnimationFrame(() => {
       const column = contentRef.current;
       if (!column) return;
-      const box = column.getBoundingClientRect();
-      const next: CanvasSuggestionSpot[] = [];
-      for (const suggestion of remaining) {
-        const blocks = column.querySelectorAll<HTMLElement>(
-          `[data-canvas-block][data-canvas-suggestion-id="${suggestion.id}"]`,
-        );
-        const last = blocks[blocks.length - 1];
-        if (last) next.push({ suggestion, top: last.getBoundingClientRect().bottom - box.top });
-      }
-      setSpots(next);
+      setSpots(
+        measureSuggestionSpots(column, suggestions, coarse ? PILL_WIDTH.coarse : PILL_WIDTH.fine),
+      );
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [remaining, value, layoutTick]);
+  }, [deciding, suggestions, layoutTick, coarse]);
   const trackSuggestion = (target: EventTarget | null) => {
     const el = target instanceof Element ? target.closest("[data-canvas-suggestion-id]") : null;
     setActiveSuggestion(el?.getAttribute("data-canvas-suggestion-id") ?? null);
@@ -491,11 +552,21 @@ export function CanvasDocumentView({
               showUndoRedo={writable}
               others={marks?.others ?? null}
             />
-            {review && review.remaining.length > 0 ? (
+            {deciding ? (
               <CanvasSuggestionBar
-                count={review.remaining.length}
-                onAcceptAll={review.onAcceptAll}
-                onRejectAll={review.onRejectAll}
+                count={suggestions.length}
+                onAcceptAll={() =>
+                  decide(
+                    suggestions.map((item) => item.id),
+                    "accept",
+                  )
+                }
+                onRejectAll={() =>
+                  decide(
+                    suggestions.map((item) => item.id),
+                    "reject",
+                  )
+                }
               />
             ) : null}
             <div
@@ -509,9 +580,9 @@ export function CanvasDocumentView({
               <div
                 ref={contentRef}
                 className="relative w-full min-w-0 max-w-[680px]"
-                onPointerOver={review ? (event) => trackSuggestion(event.target) : undefined}
+                onPointerOver={deciding ? (event) => trackSuggestion(event.target) : undefined}
                 onPointerLeave={
-                  review
+                  deciding
                     ? (event) => {
                         // A finger "leaves" as it lifts: a tapped suggestion keeps its pill.
                         if (event.pointerType !== "touch") setActiveSuggestion(null);
@@ -528,12 +599,12 @@ export function CanvasDocumentView({
                   <Editor
                     aria-label={
                       writable
-                        ? `${title}, editing`
+                        ? suggesting
+                          ? `${title}, suggesting`
+                          : `${title}, editing`
                         : editing
                           ? `${title}, read-only while the agent edits`
-                          : review
-                            ? `${title}, read-only until the suggestions are reviewed`
-                            : `${title}, read-only`
+                          : `${title}, read-only`
                     }
                     className={
                       editing ? "sm:-mx-10 sm:w-[calc(100%+5rem)] sm:px-10" : "cursor-default"
@@ -554,12 +625,12 @@ export function CanvasDocumentView({
                   />
                 ) : null}
                 {agentWriting && writingSpot ? <WritingMarker spot={writingSpot} /> : null}
-                {review ? (
+                {deciding ? (
                   <CanvasSuggestionControls
                     spots={spots}
                     activeId={activeSuggestion}
-                    onAccept={review.onAccept}
-                    onReject={review.onReject}
+                    onAccept={(id) => decide([id], "accept")}
+                    onReject={(id) => decide([id], "reject")}
                   />
                 ) : null}
               </div>
@@ -570,7 +641,9 @@ export function CanvasDocumentView({
             <CanvasOutline items={outline} onPick={pickHeading} onClose={onCloseOutline} />
           ) : null}
 
-          {writable ? <CanvasToolbar ask={ask} comment={comment} /> : null}
+          {writable && (!suggesting || ask || comment) ? (
+            <CanvasToolbar ask={ask} comment={comment} suggesting={suggesting} />
+          ) : null}
           {!compact && (writable || comment) ? (
             <CanvasSelectionMenu ask={writable ? ask : null} comment={comment} />
           ) : null}
@@ -594,7 +667,7 @@ export function CanvasDocumentView({
           ) : null}
 
           {/* Phone: the document opens for reading; ✎ switches to editing. */}
-          {compact && canEdit && !editing && !review ? (
+          {compact && canEdit && !editing ? (
             <button
               type="button"
               aria-label="Edit document"

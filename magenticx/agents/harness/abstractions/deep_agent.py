@@ -423,6 +423,10 @@ class DeepAgent(BaseAgent, ABC):
           task; the two writes share ``comment_writes`` (the read is not
           counted). The agent never resolves a
           thread — the user does.
+        * ``review_suggestions`` (plan 44, Phase 4.6) has the same gate plus
+          the run's conversation files: it accepts (writes the document file
+          as the agent's edit) or rejects the user's pending suggestion set,
+          only when the user asks. Not counted against ``comment_writes``.
         """
         ctx = self.context or {}
         user_id = ctx.get("user_id")

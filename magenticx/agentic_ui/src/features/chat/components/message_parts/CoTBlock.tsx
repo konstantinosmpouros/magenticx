@@ -18,12 +18,14 @@ import {
   ChainOfThoughtHeader,
   ChainOfThoughtStep,
 } from "@/shared/ui/ai-elements/chain-of-thought";
-import { toolIcon } from "@/shared/lib/consts";
+import { toolIconFor } from "@/shared/lib/consts";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
 import {
   asToolArgs,
   parseToolArgs,
   replyToCommentTitle,
+  REVIEW_SUGGESTIONS_TOOL,
+  reviewSuggestionsTitle,
   toolMeta,
   toolTitle,
   toolTitleHint,
@@ -98,7 +100,7 @@ const PendingApprovalIcon = ({ className }: { className?: string }) => (
 // same step), or rejected (never ran).
 type ToolApprovalFace = "pending" | "decision-sent" | "approved" | "rejected" | null;
 
-const toolStepIcon = (tool: TimelineToolExecution, face: ToolApprovalFace) => {
+const toolStepIcon = (tool: TimelineToolExecution, face: ToolApprovalFace, args?: unknown) => {
   // Approval and failure outrank identity: a rejected `ls` must not read as a
   // successful one at a glance, so those states keep their own glyph.
   if (face === "pending") return PendingApprovalIcon;
@@ -106,7 +108,7 @@ const toolStepIcon = (tool: TimelineToolExecution, face: ToolApprovalFace) => {
   if (tool.state === "output-error") return XCircle;
   // A settled call shows what it *did* where we have a glyph for it — a column
   // of identical wrenches gives the eye nothing to scan by.
-  if (tool.state === "output-available") return toolIcon(tool.name) ?? Wrench;
+  if (tool.state === "output-available") return toolIconFor(tool.name, asToolArgs(args)) ?? Wrench;
   return RunningToolIcon;
 };
 
@@ -128,9 +130,12 @@ const TimelineToolItem = memo(
     const replyThreadId = tool.name === "reply_to_comment" ? asToolArgs(args)?.thread_id : null;
     const replyThread = useCommentThreadRef(typeof replyThreadId === "string" ? replyThreadId : null);
     // "Read report.csv" rather than `read_file`; the full path on hover.
+    // Reviewing the user's suggestions is titled by its outcome once it settles.
     const title = replyThread
       ? replyToCommentTitle(replyThread.path)
-      : toolTitle(tool.name, args, serverId);
+      : tool.name === REVIEW_SUGGESTIONS_TOOL
+        ? reviewSuggestionsTitle(args, tool)
+        : toolTitle(tool.name, args, serverId);
     const titleHint = toolTitleHint(tool.name, args);
     const meta =
       tool.state === "output-error" ? undefined : toolMeta(tool.name, args, tool.result, serverId);
@@ -157,7 +162,7 @@ const TimelineToolItem = memo(
     if (TITLE_ONLY_TOOLS.has(tool.name) && tool.state !== "output-error" && !approval) {
       return (
         <ChainOfThoughtStep
-          icon={toolStepIcon(tool, face)}
+          icon={toolStepIcon(tool, face, args)}
           hideConnector={isLast}
           className="text-sm"
           label={
@@ -180,7 +185,7 @@ const TimelineToolItem = memo(
     return (
       <Collapsible open={open} onOpenChange={setOpen}>
         <ChainOfThoughtStep
-          icon={toolStepIcon(tool, face)}
+          icon={toolStepIcon(tool, face, args)}
           hideConnector={isLast}
           className={cn(
             "text-sm",

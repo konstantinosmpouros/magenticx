@@ -46,6 +46,7 @@ from router import (
     conversation_tasks_router,
     documents_router,
     document_comments_router,
+    document_suggestions_router,
     tasks_router,
     export_router,
     favicons_router,
@@ -304,6 +305,12 @@ app.include_router(
 # Plan 44 Phase 4.4: comments on a canvas document, beside the document routes.
 app.include_router(
     document_comments_router,
+    prefix="/v1/conversations",
+    tags=["Documents"],
+)
+# Plan 44 Phase 4.6: the user's pending suggestions on a canvas document.
+app.include_router(
+    document_suggestions_router,
     prefix="/v1/conversations",
     tags=["Documents"],
 )

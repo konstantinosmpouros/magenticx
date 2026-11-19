@@ -35,6 +35,7 @@ from router.conversation_files import router as conversation_files_router
 from router.conversation_sources import router as conversation_sources_router
 from router.document_comments import router as document_comments_router
 from router.document_export import router as document_export_router
+from router.document_suggestions import router as document_suggestions_router
 from router.documents import router as documents_router
 from router.embeddings import router as embeddings_router
 from router.export import router as export_router
@@ -155,6 +156,7 @@ app.include_router(conversation_files_router)
 app.include_router(conversation_sources_router)
 app.include_router(document_comments_router)
 app.include_router(document_export_router)
+app.include_router(document_suggestions_router)
 app.include_router(documents_router)
 app.include_router(embeddings_router)
 app.include_router(export_router)

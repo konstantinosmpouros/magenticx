@@ -99,6 +99,9 @@ const TITLES: Record<string, (args: ToolArgs | null) => string | null> = {
   list_comments: (a) => listCommentsTitle(str(a, "path"), str(a, "status")),
   add_comment: (a) =>
     str(a, "path") ? `Commented on ${canvasDocumentTitle(str(a, "path"))}` : null,
+  // The user's suggestions (plan 44, Phase 4.6). Args alone: worded as done;
+  // a step with its state and result is titled by `reviewSuggestionsTitle`.
+  review_suggestions: (a) => reviewSuggestionsTitle(a),
 };
 
 /**
@@ -367,6 +370,50 @@ export const parseCommentToolResult = (result: string | undefined): CommentToolO
     return { ok: true };
   }
   return null;
+};
+
+// ---------------------------------------------------------------------------
+// The user's pending suggestions (plan 44, Phase 4.6): review_suggestions
+// ---------------------------------------------------------------------------
+
+/** The agent's accept / reject of the user's suggestion set, which renders as its outcome rather than JSON. */
+export const REVIEW_SUGGESTIONS_TOOL = "review_suggestions";
+
+/**
+ * A `review_suggestions` result: its success sentence, or the `Could not …`
+ * refusal the agents service writes (harness/tools/canvas_suggestions/tool.py).
+ * Null for anything else — the view shows that text as a plain note.
+ */
+export const parseSuggestionReviewResult = (result: string | undefined): CommentToolOutcome | null => {
+  const text = result?.trim();
+  if (!text) return null;
+  if (/^Could not (apply|reject|review) the suggestions:/.test(text)) return { ok: false, reason: text };
+  if (text.startsWith("Applied the user's suggestions") || text.startsWith("Rejected the user's suggestions")) {
+    return { ok: true };
+  }
+  return null;
+};
+
+/**
+ * The step's title: "Reviewing your suggestions…" while it runs, then
+ * "Applied your suggestions on brief" / "Rejected your suggestions on brief",
+ * or "Could not apply your suggestions on brief" when it was refused. Without
+ * a `step` (only the arguments known) it is worded as done.
+ */
+export const reviewSuggestionsTitle = (
+  args: unknown,
+  step?: { state: string; result?: string },
+): string => {
+  const a = asToolArgs(args);
+  const decision = str(a, "decision");
+  const path = str(a, "path");
+  const settled = !step || step.state === "output-available" || step.state === "output-error";
+  if (!settled || (decision !== "accept" && decision !== "reject")) return "Reviewing your suggestions…";
+  const on = path ? ` on ${canvasDocumentTitle(path)}` : "";
+  const refused =
+    step?.state === "output-error" || parseSuggestionReviewResult(step?.result)?.ok === false;
+  if (refused) return `Could not ${decision === "accept" ? "apply" : "reject"} your suggestions${on}`;
+  return `${decision === "accept" ? "Applied" : "Rejected"} your suggestions${on}`;
 };
 
 // The one read, list_comments. Its result is the plain-text listing whose

@@ -12,6 +12,7 @@ import type {
   CanvasComment,
   CanvasCommentDraft,
   CanvasCommentPatch,
+  CanvasDocumentSuggestion,
   CanvasDocumentSummary,
   CanvasExportFile,
   CanvasExportFormat,
@@ -26,6 +27,7 @@ import {
   CanvasCommentSchema,
   CanvasDocumentListSchema,
   CanvasDocumentSavedSchema,
+  CanvasDocumentSuggestionSchema,
   CanvasDocumentVersionSchema,
   CanvasDocumentVersionsSchema,
   CanvasStaleBaseSchema,
@@ -125,6 +127,64 @@ export async function saveDocumentVersion(
     }
     throw error;
   }
+}
+
+const SUGGESTION_ERRORS = { 429: "Saving too often. Wait a moment, then try again." };
+
+/**
+ * The document's pending suggestion set (plan 44, Phase 4.6), or null when
+ * it has none (404 `no_suggestion`). Re-parsed like the latest version: a set
+ * without its base version or text must never be drawn over the document.
+ */
+export async function getDocumentSuggestion(
+  userId: string,
+  conversationId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<CanvasDocumentSuggestion | null> {
+  const res = await requestRaw(documentsUrl(userId, conversationId, "/suggestion", path), {
+    fallbackMessage: "Failed to load the suggestions",
+    ignoreStatuses: [404],
+    signal,
+  });
+  if (res.status === 404) return null;
+  return CanvasDocumentSuggestionSchema.parse(await res.json());
+}
+
+/**
+ * Save the user's suggestion set: `content` is the proposed markdown (every
+ * suggestion accepted) on `baseVersion`. Resolves to the saved set, or null
+ * when the server found nothing suggested (the text equalled the base: 204,
+ * the set is gone). CSRF like every state change.
+ */
+export async function putDocumentSuggestion(
+  userId: string,
+  conversationId: string,
+  set: { path: string; baseVersion: number; content: string },
+): Promise<CanvasDocumentSuggestion | null> {
+  const res = await requestRaw(documentsUrl(userId, conversationId, "/suggestion"), {
+    method: "PUT",
+    csrf: true,
+    body: { path: set.path, baseVersion: set.baseVersion, content: set.content },
+    fallbackMessage: "Failed to save the suggestions",
+    errorMessages: SUGGESTION_ERRORS,
+  });
+  if (res.status === 204) return null;
+  return CanvasDocumentSuggestionSchema.parse(await res.json());
+}
+
+/** Drop the document's suggestion set (idempotent: 204 whether or not there was one). */
+export async function deleteDocumentSuggestion(
+  userId: string,
+  conversationId: string,
+  path: string,
+): Promise<void> {
+  await requestVoid(documentsUrl(userId, conversationId, "/suggestion", path), {
+    method: "DELETE",
+    csrf: true,
+    fallbackMessage: "Failed to discard the suggestions",
+    errorMessages: SUGGESTION_ERRORS,
+  });
 }
 
 /** Version `version` of one document, with its markdown (re-parsed like the latest). */

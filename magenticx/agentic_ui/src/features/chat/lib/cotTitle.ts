@@ -3,6 +3,8 @@ import type { ThinkingBlockItem } from "@/shared/lib/types";
 import {
   humaniseName,
   parseToolArgs,
+  REVIEW_SUGGESTIONS_TOOL,
+  reviewSuggestionsTitle,
   subagentName,
   titleFromArgs,
   toolTitle,
@@ -75,6 +77,8 @@ function stepTitle(
     }
     if (item.kind === "tool") {
       const args = parseToolArgs(item.argsText);
+      // Worded by where it stands: "Reviewing your suggestions…", then its outcome.
+      if (item.name === REVIEW_SUGGESTIONS_TOOL) return clipTitle(reviewSuggestionsTitle(args, item));
       const known = titleFromArgs(item.name, args);
       if (known) return clipTitle(known);
       const label = toolTitle(item.name, args, serverIdOf(item.name));

@@ -113,13 +113,15 @@ async def test_conversation_file_store_purge_deletes_every_file_and_blob_of_that
     counts = await agents_service.conversation_files.ConversationFileStore(pool).purge_user("u1")
 
     assert counts == {"conversation_files": 4, "conversation_file_versions": 4, "conversation_file_seen": 4,
-                      "conversation_file_comments": 4, "conversation_file_blobs": 4}
+                      "conversation_file_comments": 4, "conversation_file_suggestions": 4,
+                      "conversation_file_blobs": 4}
     assert pool.transactions == 1
     # Versions before blobs: their foreign key names the blobs (plan 44); the
-    # comments before the versions they name (4.4).
+    # comments (4.4) and the suggestions (4.6) before the versions they name.
     assert pool.calls == [
         ("DELETE FROM conversation_files WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_comments WHERE user_id = %s", ("u1",)),
+        ("DELETE FROM conversation_file_suggestions WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_versions WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_seen WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_blobs WHERE user_id = %s", ("u1",)),
@@ -228,6 +230,6 @@ async def test_delete_route_reports_what_was_removed(client, internal_headers, p
         "agent_memories", "skill_pool", "skill_files", "agent_skills",
         "agent_definitions", "agent_definition_files", "agent_definition_versions",
         "conversation_files", "conversation_file_versions", "conversation_file_seen", "conversation_file_blobs",
-        "conversation_file_comments", "conversation_sources",
+        "conversation_file_comments", "conversation_file_suggestions", "conversation_sources",
         "workflows", "workflow_versions",
     }

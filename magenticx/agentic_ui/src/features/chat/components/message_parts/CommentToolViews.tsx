@@ -10,6 +10,11 @@
  * threads") that expands to each thread's passage and first comment, parsed
  * from the listing (`parseCommentListing`).
  *
+ * `review_suggestions` (plan 44, Phase 4.6) — the agent accepting or rejecting
+ * the user's own pending suggestions, on their request — is told by its title
+ * ("Applied your suggestions on brief"); its body is only the way to the
+ * document on success, or the refusal sentence (`SuggestionReviewResultView`).
+ *
  * Written for this app because no shadcn / AI Elements part renders a comment
  * on a passage inside a chain-of-thought step; it reuses the step panes'
  * tokens and the artifact card's "Open in canvas" affordance.
@@ -29,6 +34,7 @@ import {
   oneLinePassage,
   parseCommentListing,
   parseCommentToolResult,
+  parseSuggestionReviewResult,
   type ToolArgs,
   undoDoubleEscaping,
 } from "@/features/chat/lib/toolPresentation";
@@ -122,7 +128,6 @@ const RefusalLine = ({ children }: { children: string }) => (
 export const CommentToolResultView = ({ tool, args: rawArgs }: { tool: TimelineToolExecution; args: unknown }) => {
   const args = asToolArgs(rawArgs);
   const target = useCommentTarget(tool.name, args);
-  const openCanvas = useCanvasOpener();
   const result = tool.result;
   if (result === undefined) return null;
   if (tool.state === "output-error") {
@@ -133,13 +138,18 @@ export const CommentToolResultView = ({ tool, args: rawArgs }: { tool: TimelineT
   if (!outcome) {
     return <p className="whitespace-pre-wrap break-words text-muted-foreground text-xs italic">{result}</p>;
   }
-  if (!openCanvas || !target.path) return null;
-  const path = target.path;
+  return <OpenInCanvas path={target.path} commentId={target.threadId} />;
+};
+
+/** "Open in canvas" for a step that touched a document; nothing where no canvas sits beside the chat. */
+const OpenInCanvas = ({ path, commentId }: { path: string | null; commentId?: string | null }) => {
+  const openCanvas = useCanvasOpener();
+  if (!openCanvas || !path) return null;
   return (
     <button
       type="button"
       onClick={(event) =>
-        openCanvas(path, event.currentTarget, target.threadId ? { commentId: target.threadId } : undefined)
+        openCanvas(path, event.currentTarget, commentId ? { commentId } : undefined)
       }
       className="flex items-center gap-1.5 rounded-sm font-medium text-[11px] text-primary/80 transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
@@ -147,6 +157,32 @@ export const CommentToolResultView = ({ tool, args: rawArgs }: { tool: TimelineT
       Open in canvas
     </button>
   );
+};
+
+/**
+ * What `review_suggestions` came to: the title already says applied or
+ * rejected, so a success shows only the way to the document; a refusal is
+ * the same destructive line as the comment tools'.
+ */
+export const SuggestionReviewResultView = ({
+  tool,
+  args: rawArgs,
+}: {
+  tool: TimelineToolExecution;
+  args: unknown;
+}) => {
+  const path = text(asToolArgs(rawArgs), "path").trim() || null;
+  const result = tool.result;
+  if (result === undefined) return null;
+  if (tool.state === "output-error") {
+    return <RefusalLine>{result.trim() || "The suggestions could not be reviewed."}</RefusalLine>;
+  }
+  const outcome = parseSuggestionReviewResult(result);
+  if (outcome?.ok === false) return <RefusalLine>{outcome.reason}</RefusalLine>;
+  if (!outcome) {
+    return <p className="whitespace-pre-wrap break-words text-muted-foreground text-xs italic">{result}</p>;
+  }
+  return <OpenInCanvas path={path} />;
 };
 
 /** One listed thread: its passage, then its first comment, clamped to two lines. */

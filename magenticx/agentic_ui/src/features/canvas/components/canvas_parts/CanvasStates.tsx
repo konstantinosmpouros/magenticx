@@ -3,11 +3,13 @@
  * the loading skeleton (the shape of a title, a byline and paragraphs), a
  * failed load with Retry, and a document that is gone (404: deleted, or the
  * conversation is not the user's) with the file's own preview as the way on.
- * Plus the two banners over a document: reading an earlier version, and a
- * newer version that arrived while the user had unsaved edits.
+ * Plus the banners over a document: reading an earlier version, a newer
+ * version that arrived while the user had unsaved edits, and suggestions
+ * that no longer fit the document (Phase 4.6).
  */
 import type { ReactNode } from "react";
 import { FileQuestion, RotateCw, Sparkles, TriangleAlert } from "lucide-react";
+import { PiWarningCircle } from "react-icons/pi";
 
 import { Button } from "@/shared/ui/button";
 import { Skeleton } from "@/shared/ui/skeleton";
@@ -162,6 +164,42 @@ export function CanvasIncomingBanner({
         className="h-8 shrink-0 px-2 text-[13px] font-medium text-primary hover:text-primary [@media(pointer:coarse)]:h-10"
       >
         Review
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Suggestions that no longer fit (plan 44, Phase 4.6): the document changed
+ * since they were made (the agent edited the same lines), so they show
+ * read-only over the version they were made on. Discard deletes them; the
+ * user re-applies what they still want by hand.
+ */
+export function CanvasStaleSuggestionsBanner({
+  version,
+  onDiscard,
+}: {
+  /** The version the suggestions were made on. */
+  version: number;
+  onDiscard: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="flex shrink-0 items-start gap-2 border-b border-warning/30 bg-warning/10 px-4 py-2 text-[13px] text-foreground sm:items-center"
+    >
+      <PiWarningCircle className="mt-0.5 size-4 shrink-0 text-warning sm:mt-0" aria-hidden="true" />
+      <span className="min-w-0 flex-1">
+        The document changed since your suggestions on v{version}. Discard them, or re-apply by
+        hand.
+      </span>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={onDiscard}
+        className="h-8 shrink-0 px-2 text-[13px] font-medium text-destructive hover:text-destructive [@media(pointer:coarse)]:h-11"
+      >
+        Discard
       </Button>
     </div>
   );

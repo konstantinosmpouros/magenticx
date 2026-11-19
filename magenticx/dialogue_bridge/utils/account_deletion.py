@@ -107,6 +107,8 @@ _AGENT_COUNT_KEYS = (
     "conversation_file_seen",
     # Comments on canvas documents (plan 44 4.4).
     "conversation_file_comments",
+    # Pending suggestions on canvas documents (plan 44 4.6).
+    "conversation_file_suggestions",
     # Citation sources (plan 42), stored per conversation like its files.
     "conversation_sources",
     # Workflow definitions (plan 38), when the agents service reports them.

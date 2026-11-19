@@ -14,7 +14,9 @@ what the user changed (the per-turn note, ``harness.canvas``); this says what
 to do about it.
 
 Plan 44 v2 adds how to treat the user's **comments** — their instructions on
-a passage, answered with the comment tools — but only when those tools are
+a passage, answered with the comment tools — and their pending
+**suggestions** (Suggesting mode, accepted or rejected with
+``review_suggestions`` only when the user asks), but only when those tools are
 attached (``has_canvas_comments``: the conversation has a canvas document).
 
 This is the one statement of the rule — the platform verbs section only says
@@ -81,14 +83,26 @@ that passage.
   passage's words exactly as they read in the document, without markdown
   marks. Never use comments to chat, to summarise your work, or for anything
   you would say in the reply.
-- At most {MAX_COMMENT_WRITES_PER_RUN} comment writes per turn."""
+- At most {MAX_COMMENT_WRITES_PER_RUN} comment writes per turn.
+
+### The user's suggestions on canvas documents
+
+In the canvas's Suggesting mode the user's own edits are kept as pending
+suggestions; the turn shows them, not applied. Use `review_suggestions`
+ONLY when the user explicitly asks you to accept / apply or reject / remove
+their suggestions — never on your own initiative, and never because the
+suggestions look right or wrong to you. `accept` writes them into the
+document as your edit; `reject` discards them and leaves the document as it
+is. If it says they were made on an older version, ask the user to review
+them in the canvas; do not merge them yourself. After it, say in one line
+what happened."""
 
 
 def documents_prompt(context: PromptContext) -> str:
     """The document routing rule for this run. Empty without a conversation.
 
-    With the canvas comment tools attached (plan 44 v2), a block on how to
-    treat comments follows the rules.
+    With the canvas tools attached (plan 44 v2), a block on how to treat
+    comments and one on the user's pending suggestions follow the rules.
     """
     if not context.has_conversation:
         return ""

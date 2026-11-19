@@ -132,15 +132,17 @@ src/
                    #   opened from the byline's version chip); CanvasCompareView (the
                    #   word-level diff); CanvasConflictDialog (the 409); CanvasOutline, CanvasFindBar,
                    #   CanvasBlockFrame (heading folds, the block handle, the selected-block tint,
-                   #   a review's added / removed / edited block marks);
-                   #   CanvasSuggestionBar (Suggesting mode: "N suggestions from the agent",
-                   #   Accept all / Reject all, the ✓ / ✕ pill per suggestion); CanvasSuggestionLeaf
-                   #   (inserted / deleted words),
+                   #   a suggested added / removed block or line break);
+                   #   CanvasSuggestionBar (Suggesting mode — the user's edits as suggestions:
+                   #   "N suggestions", Accept all / Reject all, the ✓ / ✕ pill per suggestion);
+                   #   CanvasSuggestionLeaf (suggested inserted / deleted / formatted words),
                    #   CanvasByline, CanvasStates (skeleton, error +
-                   #   Retry, 404 → the file's preview, the earlier-version and "agent saved vN"
-                   #   banners)), hooks (useCanvasDocument — the documents reads through TanStack
-                   #   Query; useCanvasEditing — the save controller of the open document, the
-                   #   editor's source text, the reload-or-banner rule for a newer version;
+                   #   Retry, 404 → the file's preview, the earlier-version, "agent saved vN" and
+                   #   stale-suggestions banners)), hooks (useCanvasDocument — the documents reads
+                   #   through TanStack Query; useCanvasEditing — the save controller and the
+                   #   suggestion saver of the open document (one Save: a version, then the set),
+                   #   the editor's source text, the reload-or-banner rule for a newer version
+                   #   (pending suggestions carried onto it, or set aside as stale);
                    #   useCanvasVersionText; useCanvasRoute — `?doc=<path>` in the URL;
                    #   useKeyboardInset — the on-screen keyboard's overlap, from visualViewport;
                    #   useSelectedPassage — the passage Ask agent would act on;
@@ -148,13 +150,16 @@ src/
                    #   useCanvasComments — the threads, optimistic with rollback, refresh at run end;
                    #   useRequestedThread — the thread a chat card asked the canvas to open;
                    #   useCanvasExport — one export at a time, download + toast;
-                   #   useCanvasSuggestions — Suggesting mode's base rule and decisions), lib/
+                   #   useCanvasSuggestions — the pending suggestion set read on open: drawn,
+                   #   rebased onto the latest, stale, or cleared), lib/
                    #   (saveController — saved only on the user's Save, single flight, base version, 409 → conflict;
                    #   markdown — the markdown ⇄ Plate value pipeline, no MDX, plus normalizeMarkdown;
-                   #   documentDiff — jsdiff lines refined to words; suggestions — the agent's
-                   #   changes as block / word suggestions and the text the decisions leave
-                   #   (custom, not @platejs/suggestion: why in its header); reviewStorage — the
-                   #   remembered mode and reviewed version (localStorage); editorCommands — quote, link
+                   #   documentDiff — jsdiff lines refined to words; suggestions — around Plate's
+                   #   @platejs/suggestion (live tracking in editorKit): the two texts a value
+                   #   stands for (all rejected / all accepted), a saved set drawn word by word,
+                   #   the list, accept / reject on the editor, the jsdiff rebase; suggestionSaver —
+                   #   PUT / DELETE of the set, single flight, a moved base saved again; modeStorage —
+                   #   the remembered mode (localStorage); editorCommands — quote, link
                    #   and the link URL rule; blockCommands — the target blocks (block selection or
                    #   the text selection's), delete / duplicate / move / turn into, table insert
                    #   and the table toolbar's actions; editorDelete — Backspace / Delete across
@@ -170,7 +175,8 @@ src/
                    #   the instruction without it, the suggestion's query / completion; agentWriting —
                    #   the run's edit_file / write_file on the open document, from the live timeline;
                    #   pendingThread — chat card → open a thread (like pendingShine);
-                   #   commentAgentContext; shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
+                   #   commentAgentContext; shortcuts; queryKeys; editorKit (with Plate's BlockSelection
+                   #   and SuggestionPlugin, plus Enter in a heading as a suggested line break),
                    #   canvasView, outline, find, documentTitle, dates, bylineContext, canvasFile)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)

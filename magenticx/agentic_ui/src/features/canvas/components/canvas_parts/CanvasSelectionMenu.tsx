@@ -13,7 +13,9 @@
  * agent to change only that passage. The formatting controls are the pill's
  * own (`CanvasFormatControls`): text style, bold / italic / strikethrough /
  * code, the lists, link. No underline and no colour: markdown keeps neither.
- * While reading (or while the agent edits) the bar is Comment alone.
+ * While reading (or while the agent edits) the bar is Comment alone; while
+ * suggesting (Phase 4.6) it has no formatting (block styles and links would
+ * change the text directly, not as suggestions).
  *
  * Adapted from Plate's registry `floating-toolbar`: the same
  * `@platejs/floating` positioning (a virtual element on the selection's
@@ -28,7 +30,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { PiChatCircle } from "react-icons/pi";
 import { RangeApi } from "platejs";
-import { useEditorReadOnly, useEditorRef, useEditorSelector } from "platejs/react";
+import { useEditorReadOnly, useEditorRef, useEditorSelector, usePluginOption } from "platejs/react";
+import { SuggestionPlugin } from "@platejs/suggestion/react";
 import {
   flip,
   getRangeBoundingClientRect,
@@ -81,6 +84,7 @@ export function CanvasSelectionMenu({
 }) {
   const editor = useEditorRef();
   const readOnly = useEditorReadOnly();
+  const suggesting = usePluginOption(SuggestionPlugin, "isSuggesting");
   const coarse = useCoarsePointer();
   const passage = useSelectedPassage();
   // The passage an input was opened for: the bar stays on it while the
@@ -121,8 +125,9 @@ export function CanvasSelectionMenu({
 
   // Ask agent and formatting need a writable editor; Comment works on any text.
   const askHere = ask !== null && !readOnly;
-  // A mouse formats from the bar; on touch the pill does it.
-  const formatHere = !readOnly && !coarse;
+  // A mouse formats from the bar; on touch the pill does it. Not while
+  // suggesting: block styles and links would change the text directly.
+  const formatHere = !readOnly && !coarse && !suggesting;
   const target = held?.passage ?? passage;
   const isDismissed =
     dismissed !== null && target !== null && RangeApi.equals(dismissed.range, target.range);

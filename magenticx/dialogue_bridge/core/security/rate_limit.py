@@ -332,6 +332,17 @@ document_comment_rate_limit = rate_limit(
     emit_headers=True,
 )
 
+# Plan 44 Phase 4.6 — saving or dropping the pending suggestions on a canvas
+# document (Suggesting mode), per user, after auth + CSRF. Its own bucket so
+# an accept (a version save, then a suggestion write) never doubles up on the
+# save bucket; reading the set counts as a document read.
+document_suggestion_rate_limit = rate_limit(
+    (settings.rate_limit.document_suggestion_max_attempts, settings.rate_limit.document_suggestion_window_seconds),
+    scope="document-suggestion",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
 # Plan 44 Phase 4.5 — per user, after auth. An export runs pandoc / LibreOffice
 # in the sandbox box, so the tightest window; an Office PDF preview runs it
 # only on a cache miss, so a roomier one.

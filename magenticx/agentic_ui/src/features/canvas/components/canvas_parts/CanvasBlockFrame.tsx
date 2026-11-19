@@ -1,12 +1,14 @@
 /**
  * The frame around every top-level block of the document: hides the block
  * when a heading above it is folded, puts a fold chevron at a heading's right
- * edge and the byline under the title, and — while editing — the ⋮⋮ block
- * handle in the left margin (desktop) and the tint of a selected block.
- * In a Suggesting review (plan 44, Phase 4.6) it also marks a block the agent
- * added (success tint, underlined, a bar at the left) or removed (struck
- * through, faded, a destructive bar), or edited word by word (a quiet bar;
- * the words are `CanvasSuggestionLeaf`'s), and names it for screen readers.
+ * edge and the byline under the title, and — while editing (not suggesting)
+ * — the ⋮⋮ block handle in the left margin (desktop) and the tint of a
+ * selected block.
+ * In Suggesting mode (plan 44, Phase 4.6) it also marks a block the user
+ * suggested adding (success tint, underlined, a bar at the left) or removing
+ * (struck through, faded, a destructive bar), or a line break they suggested
+ * adding or joining away (the bar alone), and names it for screen readers;
+ * suggested words inside a block are `CanvasSuggestionLeaf`'s.
  *
  * Written for the canvas: Plate has a toggle plugin, but it folds a dedicated
  * toggle block, not the section under a heading, and a markdown document has
@@ -15,9 +17,10 @@
 import type { ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { useBlockSelected } from "@platejs/selection/react";
+import { SuggestionPlugin } from "@platejs/suggestion/react";
 import { useEditorRef, usePluginOption, useReadOnly } from "platejs/react";
 
-import type { CanvasSuggestionMark } from "@/shared/lib/types";
+import type { CanvasBlockSuggestion } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 
 import { canvasViewPlugin, setFolds } from "../../lib/canvasView";
@@ -53,8 +56,8 @@ export function CanvasBlockFrame({
   /** The block's node id (block selection works by id); absent before ids are assigned. */
   id: string | undefined;
   type: string;
-  /** The suggestion this block shows in a review, if any. */
-  suggestion?: CanvasSuggestionMark | null;
+  /** The block-level suggestion this block shows, if any. */
+  suggestion?: CanvasBlockSuggestion | null;
   children: ReactNode;
 }) {
   const editor = useEditorRef();
@@ -62,6 +65,8 @@ export function CanvasBlockFrame({
   const selected = useBlockSelected(id ?? "") as boolean;
   const hidden = usePluginOption(canvasViewPlugin, "hidden");
   const folded = usePluginOption(canvasViewPlugin, "folded");
+  // Suggesting tracks typing, not block moves: the handle's actions would change the text directly.
+  const suggesting = usePluginOption(SuggestionPlugin, "isSuggesting");
 
   const level = headingLevel(type);
   const isFolded = folded.includes(index);
@@ -82,12 +87,14 @@ export function CanvasBlockFrame({
         hidden.includes(index) && "hidden",
         index === 0 && "[&>*:first-child]:!mt-0",
         suggestion?.kind === "insert" &&
+          !suggestion.lineBreak &&
           "underline decoration-success/60 decoration-[1.5px] underline-offset-[5px] [text-decoration-skip-ink:none]",
         suggestion?.kind === "remove" &&
+          !suggestion.lineBreak &&
           "line-through decoration-destructive/80 decoration-[1.5px] opacity-70",
       )}
     >
-      {suggestion ? <SuggestionFrame kind={suggestion.kind} /> : null}
+      {suggestion ? <SuggestionFrame suggestion={suggestion} /> : null}
       {children}
 
       {selected ? (
@@ -99,7 +106,7 @@ export function CanvasBlockFrame({
         />
       ) : null}
 
-      {!readOnly && id ? (
+      {!readOnly && !suggesting && id ? (
         <span
           contentEditable={false}
           className={cn(
@@ -145,20 +152,20 @@ export function CanvasBlockFrame({
   );
 }
 
-const SUGGESTION_LABEL: Record<CanvasSuggestionMark["kind"], string> = {
-  insert: "Suggested addition:",
-  remove: "Suggested deletion:",
-  change: "Suggested edit:",
+const SUGGESTION_LABEL: Record<CanvasBlockSuggestion["kind"], [string, string]> = {
+  insert: ["Suggested addition:", "Suggested new line after this block:"],
+  remove: ["Suggested deletion:", "Suggested joining with the next block:"],
 };
 
-/** The tint and the bar beside a block in a review, and its name for screen readers. */
-function SuggestionFrame({ kind }: { kind: CanvasSuggestionMark["kind"] }) {
+/** The tint and the bar beside a block with a suggestion, and its name for screen readers. */
+function SuggestionFrame({ suggestion }: { suggestion: CanvasBlockSuggestion }) {
+  const { kind, lineBreak } = suggestion;
   return (
     <>
       <span contentEditable={false} className="sr-only select-none">
-        {SUGGESTION_LABEL[kind]}
+        {SUGGESTION_LABEL[kind][lineBreak ? 1 : 0]}
       </span>
-      {kind === "change" ? null : (
+      {lineBreak ? null : (
         <span
           aria-hidden="true"
           contentEditable={false}
@@ -173,9 +180,8 @@ function SuggestionFrame({ kind }: { kind: CanvasSuggestionMark["kind"] }) {
         contentEditable={false}
         className={cn(
           "pointer-events-none absolute -left-4 inset-y-0.5 w-[3px] select-none rounded-full sm:-left-5",
-          kind === "insert" && "bg-success",
-          kind === "remove" && "bg-destructive",
-          kind === "change" && "bg-primary/60",
+          kind === "insert" ? "bg-success" : "bg-destructive",
+          lineBreak && "opacity-60",
         )}
       />
     </>

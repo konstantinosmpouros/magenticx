@@ -35,6 +35,7 @@ from harness.tools.canvas_comments import (
     build_list_comments_tool,
     build_reply_to_comment_tool,
 )
+from harness.tools.canvas_suggestions import REVIEW_TOOL_NAME, build_review_suggestions_tool
 from harness.tools.charts import build_render_chart_tool
 from harness.tools.create_skill import build_create_skill_tool
 from harness.tools.forget import build_forget_tool
@@ -140,6 +141,9 @@ def register_native_tool(defn: NativeToolDef) -> NativeToolDef:
 #                            the two writes are bounded to 10 per run instead,
 #                            the read is not counted). There is no resolve
 #                            tool: the user resolves a thread.
+#   review_suggestions     → the same gate, plus the run's conversation files
+#                            (it writes the document file as the agent's edit);
+#                            not gated, not counted against the comment budget.
 
 register_native_tool(
     NativeToolDef(
@@ -303,6 +307,26 @@ register_native_tool(
             build_add_comment_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id),
                                    run_id=ctx.run_id, budget=ctx.comment_writes)
             if ctx.comments_available and ctx.comment_writes is not None
+            else None
+        ),
+    )
+)
+
+# The user's pending suggestions (plan 44, Phase 4.6): accepted or rejected only
+# when the user asks — the prompt and the canvas note state that rule. Same gate
+# as the comment tools, so the canvas tools always come and go together; it also
+# needs the run's conversation files, through which an accept is written exactly
+# like the agent's own `edit_file` (so the run-end capture records it as the
+# agent's version). Not HITL-gated: the user asked for it, and it touches only
+# their own suggestions. Not counted against the comment-write budget.
+register_native_tool(
+    NativeToolDef(
+        name=REVIEW_TOOL_NAME,
+        description="Accept or reject the user's pending suggestions on a canvas document, when they ask.",
+        auto_attach=True,
+        builder=lambda ctx: (
+            build_review_suggestions_tool(files=ctx.files)
+            if ctx.comments_available and ctx.files is not None
             else None
         ),
     )

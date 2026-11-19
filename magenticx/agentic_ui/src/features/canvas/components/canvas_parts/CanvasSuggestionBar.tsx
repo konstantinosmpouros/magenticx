@@ -1,10 +1,9 @@
 /**
  * Suggesting mode's controls (plan 44, Phase 4.6): the bar at the top of the
- * document — "N suggestions from the agent", that the document is read-only
- * until they are reviewed, **Reject all** / **Accept all** — and the small
- * ✓ / ✕ pill on each suggestion, at the bottom right of its last block (below
- * the text it is about — usually over the short end of its last line — and
- * clear of a heading's fold chevron at the top right).
+ * document while it holds the user's suggestions — "N suggestions", that
+ * they are not in the document until accepted, **Reject all** / **Accept
+ * all** — and the small ✓ / ✕ pill on each suggestion, just under the end
+ * of its text (or at the bottom of its block, for a whole block).
  *
  * A pill shows while its suggestion is hovered or tapped (`activeId`), or
  * while one of its buttons has the keyboard focus; hidden, it is still in
@@ -13,7 +12,7 @@
  *
  * Built from the app's `Button` and the canvas's `CanvasHint` tooltips;
  * Plate's registry has no suggestion bar to start from (its accept / reject
- * lives in the discussion popover, see `lib/suggestions.ts`).
+ * lives in the discussion popover, wired to its comments and user model).
  */
 import { PiCheck, PiNotePencil, PiX } from "react-icons/pi";
 
@@ -35,7 +34,7 @@ export function CanvasSuggestionBar({
   return (
     <div className="sticky top-12 z-20 bg-background px-3 pb-2 sm:px-4">
       <section
-        aria-label="Suggestions from the agent"
+        aria-label="Your suggestions"
         className="mx-auto flex max-w-[760px] flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-border/80 bg-muted/40 px-3 py-2 animate-in fade-in-0 duration-200 motion-reduce:animate-none"
       >
         <span
@@ -46,10 +45,10 @@ export function CanvasSuggestionBar({
         </span>
         <div className="min-w-[11rem] flex-1">
           <p role="status" className="text-[13px] font-medium leading-5 text-foreground">
-            {count} {count === 1 ? "suggestion" : "suggestions"} from the agent
+            {count} {count === 1 ? "suggestion" : "suggestions"}
           </p>
           <p className="text-xs leading-4 text-muted-foreground">
-            Read-only until you accept or reject them
+            Not in the document until accepted
           </p>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
@@ -76,16 +75,18 @@ export function CanvasSuggestionBar({
   );
 }
 
-/** Where a suggestion's pill sits: the bottom of its last block, in the column (px). */
+/** Where a suggestion's pill sits in the column (px): under the end of its text. */
 export interface CanvasSuggestionSpot {
   suggestion: CanvasSuggestion;
   top: number;
+  left: number;
 }
 
 const KIND_NAME: Record<CanvasSuggestion["kind"], string> = {
   insert: "addition",
   remove: "deletion",
   replace: "edit",
+  format: "formatting",
 };
 
 const pillButton =
@@ -105,7 +106,7 @@ export function CanvasSuggestionControls({
 }) {
   return (
     <>
-      {spots.map(({ suggestion, top }) => {
+      {spots.map(({ suggestion, top, left }) => {
         const name = `${KIND_NAME[suggestion.kind]}${suggestion.summary ? ` “${suggestion.summary}”` : ""}`;
         return (
           <div
@@ -114,9 +115,9 @@ export function CanvasSuggestionControls({
             aria-label={`Suggested ${name}`}
             data-canvas-suggestion-id={suggestion.id}
             data-canvas-suggestion-pill=""
-            style={{ top }}
+            style={{ top, left }}
             className={cn(
-              "absolute right-0 z-10 flex -translate-y-1/2 items-center gap-0.5 rounded-full border border-border/80 bg-background p-0.5 shadow-md shadow-foreground/10 transition-opacity duration-150 motion-reduce:transition-none",
+              "absolute z-10 flex items-center gap-0.5 rounded-full border border-border/80 bg-background p-0.5 shadow-md shadow-foreground/10 transition-opacity duration-150 motion-reduce:transition-none",
               activeId === suggestion.id
                 ? "opacity-100"
                 : "pointer-events-none opacity-0 focus-within:pointer-events-auto focus-within:opacity-100",

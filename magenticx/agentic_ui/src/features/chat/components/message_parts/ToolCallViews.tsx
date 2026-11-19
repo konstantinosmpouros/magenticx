@@ -27,6 +27,7 @@ import {
   asToolArgs,
   isCommentTool,
   LIST_COMMENTS_TOOL,
+  REVIEW_SUGGESTIONS_TOOL,
   isMcpTool,
   isRoutineSuccess,
   languageForPath,
@@ -44,7 +45,12 @@ import {
 } from "@/features/chat/lib/toolPresentation";
 import { toTitleCase } from "@/features/inference";
 import type { SubagentRunStatus } from "@/shared/lib/types";
-import { CommentListingView, CommentToolArgsView, CommentToolResultView } from "./CommentToolViews";
+import {
+  CommentListingView,
+  CommentToolArgsView,
+  CommentToolResultView,
+  SuggestionReviewResultView,
+} from "./CommentToolViews";
 import { McpResultView } from "./McpToolViews";
 import { SourceCards } from "./SourceCards";
 import { STATUS_META } from "./subagentStatus";
@@ -178,6 +184,8 @@ export const ToolCallArgsView = ({
   if (isCommentTool(tool.name)) return <CommentToolArgsView tool={tool} args={rawArgs} />;
   // Reading the comments: the title names the document and which threads.
   if (tool.name === LIST_COMMENTS_TOOL) return null;
+  // Reviewing the user's suggestions: the title says which document and what; never the JSON.
+  if (tool.name === REVIEW_SUGGESTIONS_TOOL) return null;
   const args = asToolArgs(rawArgs);
   if (isGenericStep(tool, args)) {
     return rawArgs !== null && rawArgs !== undefined && !toolIsBare(tool.name) ? <ToolInput input={rawArgs} /> : null;
@@ -294,6 +302,7 @@ export const ToolCallResultView = ({
   if (tool.sources?.length && tool.state !== "output-error") return <SourceCards sources={tool.sources} />;
   if (isCommentTool(tool.name)) return <CommentToolResultView tool={tool} args={rawArgs} />;
   if (tool.name === LIST_COMMENTS_TOOL) return <CommentListingView tool={tool} />;
+  if (tool.name === REVIEW_SUGGESTIONS_TOOL) return <SuggestionReviewResultView tool={tool} args={rawArgs} />;
   if (isGenericStep(tool, args) || result === undefined) return result === undefined ? null : generic;
   const a = args as ToolArgs;
   if (isMcpTool(tool.name, serverId)) return <McpResultView tool={tool} />;

@@ -16,11 +16,14 @@ import {
   commentListingSummary,
   parseCommentListing,
   parseCommentToolResult,
+  parseSuggestionReviewResult,
   replyToCommentTitle,
+  reviewSuggestionsTitle,
   toolMeta,
   toolTitle,
 } from "@/features/chat/lib/toolPresentation";
-import { toolIcon } from "@/shared/lib/consts";
+import { liveCoTTitle, finalCoTTitle } from "@/features/chat/lib/cotTitle";
+import { toolIcon, toolIconFor } from "@/shared/lib/consts";
 import type { CanvasComment, MessageOut, ThinkingBlock, TimelineToolExecution } from "@/shared/lib/types";
 import { useWorkspaceStore } from "@/shared/stores/workspaceStore";
 
@@ -330,6 +333,102 @@ describe("list_comments step", () => {
     const { container } = renderStep(step("list_comments", { status: "resolved" }, { state: "input-available" }));
     expand("Read the comments · resolved");
     expect(container.textContent).not.toContain("resolved\"");
+    noJson(container);
+  });
+});
+
+describe("review_suggestions step", () => {
+  // The result strings are the agents service's (harness/tools/canvas_suggestions/tool.py).
+  const APPLIED = "Applied the user's suggestions to brief.md.";
+  const REJECTED = "Rejected the user's suggestions on brief.md; the document is unchanged.";
+  const BEHIND =
+    "Could not apply the suggestions: they were made on v1 and the document is now at v2. " +
+    "Do not merge them yourself: ask the user to review them in the canvas.";
+  const NONE = "Could not reject the suggestions: There are no pending suggestions on that document.";
+  const accept = { path: PATH, decision: "accept" };
+  const reject = { path: PATH, decision: "reject" };
+
+  it("is titled by where it stands and what it did", () => {
+    expect(reviewSuggestionsTitle(accept, { state: "input-available" })).toBe("Reviewing your suggestions…");
+    expect(reviewSuggestionsTitle(accept, { state: "output-available", result: APPLIED })).toBe(
+      "Applied your suggestions on brief",
+    );
+    expect(reviewSuggestionsTitle(reject, { state: "output-available", result: REJECTED })).toBe(
+      "Rejected your suggestions on brief",
+    );
+    expect(reviewSuggestionsTitle(accept, { state: "output-available", result: BEHIND })).toBe(
+      "Could not apply your suggestions on brief",
+    );
+    expect(reviewSuggestionsTitle(reject, { state: "output-error", result: "boom" })).toBe(
+      "Could not reject your suggestions on brief",
+    );
+    // Arguments still streaming: no decision yet.
+    expect(reviewSuggestionsTitle('{"name": "review_suggestions", "args": {"pa', { state: "input-streaming" })).toBe(
+      "Reviewing your suggestions…",
+    );
+    expect(toolTitle("review_suggestions", reject)).toBe("Rejected your suggestions on brief");
+  });
+
+  it("titles the thinking block while it runs and once it is done", () => {
+    const running = step("review_suggestions", accept, { state: "input-available" });
+    expect(liveCoTTitle([running])).toBe("Reviewing your suggestions…");
+    expect(finalCoTTitle([step("review_suggestions", accept, { result: APPLIED })])).toBe(
+      "Applied your suggestions on brief",
+    );
+  });
+
+  it("has an icon for each decision", () => {
+    const applied = toolIconFor("review_suggestions", accept);
+    const rejected = toolIconFor("review_suggestions", reject);
+    expect(applied).toBeDefined();
+    expect(rejected).toBeDefined();
+    expect(applied).not.toBe(rejected);
+    expect(toolIcon("review_suggestions")).toBe(applied);
+    expect(applied).not.toBe(toolIcon("add_comment"));
+  });
+
+  it("reads the result: success, refusal, anything else", () => {
+    expect(parseSuggestionReviewResult(APPLIED)).toEqual({ ok: true });
+    expect(parseSuggestionReviewResult(REJECTED)).toEqual({ ok: true });
+    expect(parseSuggestionReviewResult(BEHIND)).toEqual({ ok: false, reason: BEHIND });
+    expect(parseSuggestionReviewResult(NONE)?.ok).toBe(false);
+    expect(parseSuggestionReviewResult("something new")).toBeNull();
+    expect(parseSuggestionReviewResult(undefined)).toBeNull();
+  });
+
+  it("on success shows only the way to the document, never JSON", () => {
+    const open = vi.fn<CanvasOpener>();
+    const { container } = renderStep(step("review_suggestions", accept, { result: APPLIED }), (node) => (
+      <CanvasOpenerContext.Provider value={open}>{node}</CanvasOpenerContext.Provider>
+    ));
+    expand("Applied your suggestions on brief");
+    expect(container.textContent).not.toContain("Applied the user's suggestions");
+    expect(container.textContent).not.toContain("decision");
+    fireEvent.click(screen.getByRole("button", { name: "Open in canvas" }));
+    expect(open).toHaveBeenCalledWith(PATH, expect.anything(), undefined);
+    noJson(container);
+  });
+
+  it("a rejection reads as rejected", () => {
+    const { container } = renderStep(step("review_suggestions", reject, { result: REJECTED }));
+    expand("Rejected your suggestions on brief");
+    expect(container.textContent).not.toContain("the document is unchanged");
+    noJson(container);
+  });
+
+  it("shows a refusal as one destructive line", () => {
+    const { container } = renderStep(step("review_suggestions", accept, { result: BEHIND }));
+    expand("Could not apply your suggestions on brief");
+    expect(screen.getByText(BEHIND).closest("p")?.className).toContain("text-destructive");
+    expect(screen.queryByRole("button", { name: "Open in canvas" })).toBeNull();
+    noJson(container);
+  });
+
+  it("while running, shows no arguments and no result", () => {
+    const { container } = renderStep(step("review_suggestions", accept, { state: "input-available" }));
+    expand("Reviewing your suggestions…");
+    expect(screen.queryByRole("button", { name: "Open in canvas" })).toBeNull();
+    expect(container.textContent).not.toContain("accept");
     noJson(container);
   });
 });

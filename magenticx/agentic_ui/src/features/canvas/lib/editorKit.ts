@@ -10,13 +10,18 @@
  * `CanvasToolbar` drives these plugins), plus block selection
  * (`block-selection-kit`: drag over the margin, Esc, Ctrl/Cmd+A, the ⋮⋮
  * handle) and the canvas's Backspace / Delete rules (`editorDelete.ts`).
- * Comments are painted over the text (Highlight API), not plugins; Suggesting
- * mode (4.6) adds one leaf plugin, `canvasSuggestion`, which only draws the
- * marks of a review's value (`lib/suggestions.ts`) — no such value is ever
- * serialized, so it has no counterpart in `canvasBasePlugins`.
+ * Comments are painted over the text (Highlight API), not plugins. Suggesting
+ * mode (4.6) is Plate's `SuggestionPlugin` (`@platejs/suggestion`): with its
+ * `isSuggesting` option on, the user's typing and deleting become suggestion
+ * marks (`CanvasSuggestionLeaf`, and block marks in `CanvasBlockFrame`). It
+ * comes last, so in Suggesting it sees every key before the delete, list and
+ * table rules (which would change the text directly); with the option off it
+ * passes everything through to them. Its marks are never serialized as
+ * such: `lib/suggestions.ts` resolves them to the document's two texts
+ * first, so the plugin has no counterpart in `canvasBasePlugins`.
  */
 import { createElement } from "react";
-import { isHotkey, KEYS, type Value } from "platejs";
+import { isHotkey, KEYS, type TElement, type Value } from "platejs";
 import {
   createPlateEditor,
   createPlatePlugin,
@@ -43,6 +48,8 @@ import { isOrderedList } from "@platejs/list";
 import { ListPlugin } from "@platejs/list/react";
 import { ImagePlugin } from "@platejs/media/react";
 import { BlockSelectionPlugin } from "@platejs/selection/react";
+import { findSuggestionProps } from "@platejs/suggestion";
+import { SuggestionPlugin } from "@platejs/suggestion/react";
 import {
   TableCellHeaderPlugin,
   TableCellPlugin,
@@ -74,7 +81,7 @@ import { canvasViewPlugin } from "./canvasView";
 import { canvasDeletePlugin } from "./editorDelete";
 import { canvasMarkdownPlugin } from "./markdown";
 import { canvasPastePlugin } from "./pasteCleanup";
-import { SUGGESTION_KEY, suggestionMark } from "./suggestions";
+import { blockSuggestion, SUGGESTION_USER } from "./suggestions";
 
 export const findPlugin = FindReplacePlugin.configure({
   options: { search: "" },
@@ -92,16 +99,57 @@ const canvasBlockFrame: RenderNodeWrapper = ({ path, element }) => {
   if (path.length !== 1) return;
   const index = path[0];
   const id = typeof element.id === "string" ? element.id : undefined;
-  const suggestion = suggestionMark(element);
+  const suggestion = blockSuggestion(element as TElement);
   return ({ children }) =>
     createElement(CanvasBlockFrame, { index, id, type: element.type, suggestion, children });
 };
 
-/** Inserted / deleted words of a review (Suggesting mode); whole blocks are the frame's. */
-const suggestionPlugin = createPlatePlugin({
-  key: SUGGESTION_KEY,
-  node: { isLeaf: true, component: CanvasSuggestionLeaf },
-});
+/** Top-level blocks Enter splits as a suggested line break, as Plate's plugin does a paragraph. */
+const SPLIT_TYPES: string[] = [...KEYS.heading];
+
+/**
+ * Enter in Suggesting mode, in a heading: Plate's plugin tracks a new line
+ * only in a plain paragraph and puts a "
+" character into any other block
+ * (a heading with a line break inside is not markdown). Here a heading splits
+ * like a paragraph does, the split marked as a suggested line break, so
+ * rejecting it joins the two halves back. Everything else is the plugin's.
+ */
+const suggestingBreakPlugin = createPlatePlugin({ key: "canvasSuggestingBreak" }).overrideEditor(
+  ({ editor, tf: { insertBreak } }) => ({
+    transforms: {
+      insertBreak() {
+        const entry = editor.api.block();
+        const selection = editor.selection;
+        if (
+          !editor.getOption(SuggestionPlugin, "isSuggesting") ||
+          !entry ||
+          !selection ||
+          entry[1].length !== 1 ||
+          !SPLIT_TYPES.includes(entry[0].type)
+        )
+          return insertBreak();
+        const [, path] = entry;
+        const { id, createdAt } = findSuggestionProps(editor, { at: selection, type: "insert" });
+        editor.getApi(SuggestionPlugin).suggestion.withoutSuggestions(() => insertBreak());
+        editor.tf.withoutMerging(() => {
+          editor.tf.setNodes(
+            {
+              [KEYS.suggestion]: {
+                id,
+                createdAt,
+                isLineBreak: true,
+                type: "insert",
+                userId: SUGGESTION_USER,
+              },
+            },
+            { at: path },
+          );
+        });
+      },
+    },
+  }),
+);
 
 export const canvasEditorPlugins = [
   ParagraphPlugin.withComponent(ParagraphElement),
@@ -171,12 +219,17 @@ export const canvasEditorPlugins = [
     },
   }),
   findPlugin,
-  suggestionPlugin,
   canvasMarkdownPlugin,
   canvasViewPlugin.configure({ render: { aboveNodes: canvasBlockFrame } }),
   canvasPastePlugin,
-  // Last, so its Backspace / Delete rules run before the table and list ones.
+  // After the table and list plugins, so its Backspace / Delete rules run before theirs.
   canvasDeletePlugin,
+  // Last: in Suggesting mode the user's typing is tracked before any rule above changes the text.
+  SuggestionPlugin.configure({
+    node: { component: CanvasSuggestionLeaf },
+    options: { currentUserId: SUGGESTION_USER, isSuggesting: false },
+  }),
+  suggestingBreakPlugin,
 ];
 
 /** Node ids on every block: block selection finds blocks by id (they never reach the markdown). */

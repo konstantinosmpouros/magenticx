@@ -1302,6 +1302,11 @@ class RateLimitSettings(BaseSettings):
     # reading the comments counts as a document read.
     document_comment_max_attempts: int = Field(60, validation_alias="DOCUMENT_COMMENT_RATE_LIMIT_MAX_ATTEMPTS")
     document_comment_window_seconds: int = Field(60, validation_alias="DOCUMENT_COMMENT_RATE_LIMIT_WINDOW_SECONDS")
+    # Plan 44 Phase 4.6 — saving / dropping the pending suggestions on a canvas
+    # document (Suggesting mode); reading them counts as a document read.
+    document_suggestion_max_attempts: int = Field(60, validation_alias="DOCUMENT_SUGGESTION_RATE_LIMIT_MAX_ATTEMPTS")
+    document_suggestion_window_seconds: int = Field(
+        60, validation_alias="DOCUMENT_SUGGESTION_RATE_LIMIT_WINDOW_SECONDS")
     # Plan 44 Phase 4.5: an export (docx / pdf run in the sandbox box) and an
     # Office PDF preview (a box run on a cache miss) are the expensive reads.
     document_export_max_attempts: int = Field(10, validation_alias="DOCUMENT_EXPORT_RATE_LIMIT_MAX_ATTEMPTS")

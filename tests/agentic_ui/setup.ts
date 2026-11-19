@@ -45,9 +45,9 @@ if (hasDom) {
 }
 
 if (hasDom) {
-  // The canvas remembers the mode picked from its menu, and what was
-  // reviewed, in localStorage (plan 44, Phase 4.6). A test that picks
-  // Viewing must not open the next test's document for reading.
+  // The canvas remembers the mode picked from its menu in localStorage
+  // (plan 44, Phase 4.6). A test that picks Viewing must not open the next
+  // test's document for reading.
   afterEach(() => {
     try {
       const storage = window.localStorage;

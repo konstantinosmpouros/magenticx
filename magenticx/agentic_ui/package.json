@@ -30,6 +30,7 @@
     "@platejs/markdown": "53.5.3",
     "@platejs/media": "53.1.4",
     "@platejs/selection": "53.1.6",
+    "@platejs/suggestion": "53.2.3",
     "@platejs/table": "53.0.9",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-context-menu": "2.2.16",

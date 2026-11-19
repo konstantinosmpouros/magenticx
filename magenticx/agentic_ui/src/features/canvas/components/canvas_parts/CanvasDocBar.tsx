@@ -2,7 +2,7 @@
  * The row at the top of the document: the outline toggle (≡), Find and,
  * while editing, undo / redo on the left (the user asked for them here, not
  * in the floating pill); on the right the mode menu — Editing, Suggesting
- * (Phase 4.6: the agent's changes arrive as suggestions to accept or reject)
+ * (Phase 4.6: the user's own edits become suggestions to accept or reject)
  * or Viewing (plan 44 §3). Comments on a line have
  * their marks in the text's margin, as in Claude Docs; the ones with no line
  * (resolved, or their text changed) have a button just left of the mode
@@ -47,13 +47,13 @@ const MODES: { mode: CanvasMode; label: string; hint: string; Icon: IconType }[]
   {
     mode: "editing",
     label: "Editing",
-    hint: "Edit the document directly",
+    hint: "Change the text directly",
     Icon: PiPencilSimpleLine,
   },
   {
     mode: "suggesting",
     label: "Suggesting",
-    hint: "Review the agent's changes before they stay",
+    hint: "Your edits become suggestions",
     Icon: PiNotePencil,
   },
   { mode: "viewing", label: "Viewing", hint: "Read without changing it", Icon: PiEye },
@@ -80,7 +80,7 @@ export function CanvasDocBar({
   /** False on an earlier version: those are read-only. */
   canEdit: boolean;
   onModeChange: (mode: CanvasMode) => void;
-  /** While editing: undo / redo beside the outline button. */
+  /** While editing or suggesting: undo / redo beside the outline button. */
   showUndoRedo: boolean;
   /** The comments with no line (resolved, detached); null or none: no button. */
   others?: CanvasOtherCommentsMark | null;

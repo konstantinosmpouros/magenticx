@@ -32,7 +32,9 @@
  * narrow canvas Ask agent drops its label (the orb alone), and narrower still
  * (a side panel open in a small window) checklist and quote move into ⋯; on
  * touch the tools scroll sideways under a fade while Ask agent stays in view,
- * and the pill rises above the on-screen keyboard.
+ * and the pill rises above the on-screen keyboard. In Suggesting mode
+ * (Phase 4.6) the pill keeps only Comment and Ask agent: the user's typing
+ * becomes suggestions, but a block style or a table would not.
  */
 import { useEffect, useRef, useState } from "react";
 import type { IconType } from "react-icons";
@@ -282,9 +284,12 @@ const TIGHT_PILL_PX = 330;
 export function CanvasToolbar({
   ask,
   comment = null,
+  suggesting = false,
 }: {
   ask?: CanvasAskControl | null;
   comment?: CanvasCommentControl | null;
+  /** Suggesting mode: only Comment and Ask agent (the block tools would change the text directly). */
+  suggesting?: boolean;
 }) {
   const editor = useEditorRef();
   const quoted = useEditorSelector((ed) => inQuote(ed), []);
@@ -314,40 +319,42 @@ export function CanvasToolbar({
         aria-orientation="horizontal"
         className="pointer-events-auto flex max-w-full items-center gap-0.5 rounded-2xl border border-border/70 bg-popover/95 p-1 text-popover-foreground shadow-lg shadow-foreground/5 backdrop-blur-md animate-in fade-in-0 slide-in-from-bottom-2 duration-200 motion-reduce:animate-none"
       >
-        <div
-          data-canvas-toolbar-tools=""
-          className="flex min-w-0 items-center gap-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [@media(pointer:coarse)]:overflow-x-auto [@media(pointer:coarse)]:pr-3 [@media(pointer:coarse)]:[mask-image:linear-gradient(to_right,black_calc(100%-1rem),transparent)]"
-        >
-          <TextStyleMenu />
-          {touchMarks ? (
-            <>
-              <MarkButtons />
-              <LinkButton />
-            </>
-          ) : (
-            <>
-              <CanvasTablePicker triggerClassName={CANVAS_TOOL_BUTTON} />
-              {tight ? null : <TodoButton />}
-              {tight ? null : (
-                <ToolButton
-                  label="Quote"
-                  pressed={quoted}
-                  onClick={() => {
-                    if (!isSelectingBlocks(editor)) return toggleQuote(editor);
-                    // Selected blocks: all quotes already → back to text, else one quote.
-                    const allQuoted = targetBlocks(editor).every(
-                      ([node]) => node.type === KEYS.blockquote,
-                    );
-                    turnInto(editor, allQuoted ? KEYS.p : KEYS.blockquote);
-                  }}
-                >
-                  <PiQuotes />
-                </ToolButton>
-              )}
-            </>
-          )}
-          <MoreMenu tight={tight} />
-        </div>
+        {suggesting ? null : (
+          <div
+            data-canvas-toolbar-tools=""
+            className="flex min-w-0 items-center gap-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden [@media(pointer:coarse)]:overflow-x-auto [@media(pointer:coarse)]:pr-3 [@media(pointer:coarse)]:[mask-image:linear-gradient(to_right,black_calc(100%-1rem),transparent)]"
+          >
+            <TextStyleMenu />
+            {touchMarks ? (
+              <>
+                <MarkButtons />
+                <LinkButton />
+              </>
+            ) : (
+              <>
+                <CanvasTablePicker triggerClassName={CANVAS_TOOL_BUTTON} />
+                {tight ? null : <TodoButton />}
+                {tight ? null : (
+                  <ToolButton
+                    label="Quote"
+                    pressed={quoted}
+                    onClick={() => {
+                      if (!isSelectingBlocks(editor)) return toggleQuote(editor);
+                      // Selected blocks: all quotes already → back to text, else one quote.
+                      const allQuoted = targetBlocks(editor).every(
+                        ([node]) => node.type === KEYS.blockquote,
+                      );
+                      turnInto(editor, allQuoted ? KEYS.p : KEYS.blockquote);
+                    }}
+                  >
+                    <PiQuotes />
+                  </ToolButton>
+                )}
+              </>
+            )}
+            <MoreMenu tight={tight} />
+          </div>
+        )}
         {/* The selection's own actions stay in view while the tools scroll (touch). */}
         {comment ? (
           <CanvasCommentButton comment={comment} onHold={setCommentHeld} iconOnly />

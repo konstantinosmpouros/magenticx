@@ -100,6 +100,7 @@ from schema.document_comments import (
     DocumentCommentRefusal,
     DocumentCommentsOut,
 )
+from schema.document_suggestions import DocumentSuggestionIn, DocumentSuggestionOut
 from schema.documents import (
     DocumentListOut,
     DocumentSaveIn,
@@ -246,6 +247,8 @@ __all__ = [
     "DocumentCommentPatchIn",
     "DocumentCommentRefusal",
     "DocumentCommentsOut",
+    "DocumentSuggestionIn",
+    "DocumentSuggestionOut",
     "DocumentListOut",
     "DocumentSaveIn",
     "DocumentSaveOut",

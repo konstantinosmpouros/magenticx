@@ -829,6 +829,31 @@ export const CanvasStaleBaseSchema = z
   }));
 export type CanvasStaleBase = z.output<typeof CanvasStaleBaseSchema>;
 
+/**
+ * A document's pending suggestion set (plan 44, Phase 4.6): the user's
+ * suggestions, kept as the PROPOSED full markdown (every suggestion accepted)
+ * on the version they were made on. `{"path", "baseVersion", "content",
+ * "updatedAt"}`; one set per document. Without its base version or its text
+ * the set cannot be drawn over anything, so both are a contract break.
+ */
+export const CanvasDocumentSuggestionSchema = z
+  .record(z.unknown())
+  .superRefine((raw, ctx) => {
+    if (typeof raw.content !== "string") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "content must be a string" });
+    }
+    if (toCanvasVersionNo(wireField(raw, "base_version", "baseVersion")) === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["baseVersion"], message: "baseVersion must be a positive integer" });
+    }
+  })
+  .transform((raw) => ({
+    path: toFileText(raw.path) ?? "",
+    baseVersion: toCanvasVersionNo(wireField(raw, "base_version", "baseVersion")) ?? 0,
+    content: typeof raw.content === "string" ? raw.content : "",
+    updatedAt: toFileText(wireField(raw, "updated_at", "updatedAt")) ?? "",
+  }));
+export type CanvasDocumentSuggestion = z.output<typeof CanvasDocumentSuggestionSchema>;
+
 // ---------------------------------------------------------------------------
 // Canvas comments (plan 44, Phase 4.4): threads on a passage of a document and
 // their replies, one level deep. The bridge answers camelCase; the snake_case

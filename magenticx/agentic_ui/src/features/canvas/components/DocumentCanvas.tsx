@@ -33,14 +33,19 @@
  * `edit_file` / `write_file` call is on this document (`agentWriting`) the
  * editor is read-only and the block is marked.
  *
- * Suggesting mode (Phase 4.6): with the mode menu on Suggesting, an agent
- * version the user has not reviewed opens as suggestions against the base
- * (`useCanvasSuggestions`: the newer of the user's newest version and the
- * last version reviewed here), read-only until they are decided. Accepting
- * everything keeps the agent's version (nothing is saved); rejecting any
- * saves ONE user version — the agent's text with those suggestions put back
- * — through the save controller, so a 409 is the usual conflict dialog. The
- * mode picked from the menu is remembered per user and layout.
+ * Suggesting mode (Phase 4.6): the mode menu's Suggesting turns the user's
+ * own typing and deleting into suggestions (tracked changes) that leave the
+ * document as it is until accepted; the agent's versions always load
+ * directly, with the change shine, in every mode. The document's pending set
+ * is read when it opens (`useCanvasSuggestions`: rebased onto the latest
+ * version when the agent edited meanwhile, set aside read-only with Discard
+ * when that no longer fits, cleared when the latest already says it) and
+ * drawn over the text in any mode. Save saves the set beside the versions
+ * (`useCanvasEditing`); a ✓ / ✕ decision is saved at once — accepting is a
+ * normal user version (a 409 is the usual conflict dialog) and the rest of
+ * the set is PUT again or deleted; rejecting everything deletes the set and
+ * writes no version. The mode picked from the menu is remembered per user
+ * and layout.
  *
  * Export (Phase 4.5) downloads a saved version as Word,
  * PDF or Markdown; with unsaved edits it asks Save and export / Export the
@@ -57,7 +62,7 @@
  * pipeline and the diff stay out of the app's main chunk until a document
  * opens.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   CanvasAgentEdit,
@@ -77,7 +82,6 @@ import type {
   CanvasEditRef,
   CanvasExportFormat,
   CanvasMode,
-  CanvasSuggestionReview,
 } from "@/shared/lib/types";
 import { useToast } from "@/shared/hooks/use-toast";
 import { toastError } from "@/shared/lib/toast";
@@ -95,8 +99,7 @@ import { CanvasCommentAgentContext } from "../lib/commentAgentContext";
 import { useCanvasVersionText, useFetchCanvasVersionText } from "../hooks/useCanvasVersionText";
 import { buildCanvasEdit } from "../lib/askAgent";
 import { documentTitle } from "../lib/documentTitle";
-import { markdownToValue } from "../lib/markdown";
-import { loadCanvasMode, saveCanvasMode } from "../lib/reviewStorage";
+import { loadCanvasMode, saveCanvasMode } from "../lib/modeStorage";
 import { isApplePlatform, isFindShortcut, isSaveShortcut } from "../lib/shortcuts";
 import { CanvasCommentThreads, CanvasOtherComments } from "./canvas_parts/CanvasComments";
 import { CanvasCompareView } from "./canvas_parts/CanvasCompareView";
@@ -112,6 +115,7 @@ import {
   CanvasGone,
   CanvasIncomingBanner,
   CanvasSkeleton,
+  CanvasStaleSuggestionsBanner,
   CanvasVersionBanner,
 } from "./canvas_parts/CanvasStates";
 
@@ -193,32 +197,20 @@ function DocumentSession({
       versions?.find((meta) => meta.version === version)?.author ?? null,
     [versions],
   );
-  const editing = useCanvasEditing({ userId, conversationId, path, latest: data.latest, authorOf });
-  const { flush } = editing;
-  const save = editing.save;
-  const conflict = save?.conflict ?? null;
-  // Suggesting mode (Phase 4.6): the agent's unreviewed changes, on the latest version.
-  const { replace: replaceText } = editing;
-  const suggestions = useCanvasSuggestions({
+  // Suggesting mode (Phase 4.6): the document's pending suggestion set, as it opens.
+  const pendingSuggestions = useCanvasSuggestions(userId, conversationId, path, data.latest);
+  const editing = useCanvasEditing({
     userId,
     conversationId,
     path,
-    active: mode === "suggesting" && data.isLatest,
     latest: data.latest,
-    versions,
-    versionsFailed: data.versionsFailed,
-    loadVersions,
-    clean: save?.status === "saved",
-    onResolved: (markdown) => {
-      if (markdown !== null) void replaceText(markdown);
-    },
+    authorOf,
+    suggestions: pendingSuggestions.start,
   });
-  const review = suggestions.review;
-  const waitingText = suggestions.waiting ? (data.latest?.content ?? null) : null;
-  const waiting = useMemo(
-    () => (waitingText === null ? null : waitingReview(waitingText)),
-    [waitingText],
-  );
+  const { flush } = editing;
+  const save = editing.save;
+  const conflict = save?.conflict ?? null;
+  const stale = editing.stale;
   const fetchVersionText = useFetchCanvasVersionText(userId, conversationId, path);
   // Opened from an Ask agent card: what that request changed shines once.
   const requestedShine = useRequestedShine(userId, conversationId, path, fetchVersionText);
@@ -380,13 +372,23 @@ function DocumentSession({
   };
 
   // A run of the conversation ended: the agent may have answered, resolved
-  // or started threads (plan 44 v2) — read the comments again.
+  // or started threads (plan 44 v2) — read the comments again — and may have
+  // accepted or rejected the user's suggestions on their request: read the
+  // set again, and drop what the server no longer holds (an accepted set
+  // arrives as the agent's new version, through `revision`).
   const wasRunning = useRef(runActive);
   const { refresh: refreshComments } = comments;
+  const { refresh: refreshSuggestions } = pendingSuggestions;
+  const { suggestionsCleared } = editing;
   useEffect(() => {
-    if (wasRunning.current && !runActive) refreshComments();
+    if (wasRunning.current && !runActive) {
+      refreshComments();
+      void refreshSuggestions().then((set) => {
+        if (set === null) suggestionsCleared();
+      });
+    }
     wasRunning.current = runActive;
-  }, [runActive, refreshComments]);
+  }, [runActive, refreshComments, refreshSuggestions, suggestionsCleared]);
 
   // The run ends: load what the agent saved, then unlock. A run never seen
   // going (it ended before this canvas re-rendered) ends the wait anyway.
@@ -664,35 +666,39 @@ function DocumentSession({
           onReview={editing.reviewIncoming}
         />
       ) : null}
-      {data.isLatest && review ? (
-        <CanvasDocumentView
-          key={`review-${review.key}`}
-          {...view}
-          markdown={shown.content}
-          byline={byline}
-          canEdit
-          review={review}
-          marks={marks}
-          comment={null}
-          agentEdit={agentEdit}
-          agentWriting={agentWriting}
-        />
-      ) : data.isLatest && waiting ? (
-        // Working out the suggestions (the base's text, the version list):
-        // the agent's version, read-only, for the moment that takes.
-        <CanvasDocumentView
-          key={`review-wait-${shown.version}`}
-          {...view}
-          markdown={shown.content}
-          byline={byline}
-          canEdit
-          review={waiting}
-        />
+      {data.isLatest && stale ? (
+        <>
+          <CanvasStaleSuggestionsBanner
+            version={stale.baseVersion}
+            onDiscard={() => void editing.discardStale()}
+          />
+          {/* The suggestions over the version they were made on, to read and re-apply by hand. */}
+          <CanvasDocumentView
+            key={`stale-${stale.baseVersion}`}
+            {...view}
+            markdown={stale.base}
+            proposed={stale.proposed}
+            byline={{
+              ...byline,
+              version: stale.baseVersion,
+              author: authorOf(stale.baseVersion) ?? byline.author,
+              isLatest: false,
+            }}
+            canEdit={false}
+            marks={null}
+            comment={null}
+          />
+        </>
+      ) : data.isLatest && !editing.source ? (
+        // The pending suggestions are being read: the editor waits for them.
+        <CanvasSkeleton />
       ) : data.isLatest && editing.source ? (
         <CanvasDocumentView
           key={`edit-${editing.source.key}`}
           {...view}
           markdown={editing.source.markdown}
+          proposed={editing.source.proposed ?? null}
+          onDecided={() => void flush()}
           shineFrom={editing.source.previous ?? null}
           shineTexts={requestedShine}
           byline={byline}
@@ -825,20 +831,6 @@ function DocumentSession({
       </section>
     </CanvasCommentAgentContext.Provider>
   );
-}
-
-/** While the suggestions are worked out: the text as it is, read-only, nothing to decide. */
-function waitingReview(markdown: string): CanvasSuggestionReview {
-  const noop = () => undefined;
-  return {
-    key: "waiting",
-    value: markdownToValue(markdown),
-    remaining: [],
-    onAccept: noop,
-    onReject: noop,
-    onAcceptAll: noop,
-    onRejectAll: noop,
-  };
 }
 
 /** The compare view's data: two versions' texts, or the conflict's two texts. */

@@ -121,6 +121,10 @@ BUILTIN_TOOLS: tuple[BuiltinTool, ...] = (
     BuiltinTool("list_comments", "Canvas", availability=Availability.CONVERSATION),
     BuiltinTool("reply_to_comment", "Canvas", availability=Availability.CONVERSATION),
     BuiltinTool("add_comment", "Canvas", availability=Availability.CONVERSATION),
+    # The user's pending suggestions (plan 44, Phase 4.6): accept or reject the
+    # set, only when the user asks. Same gate as the comment tools; not gated
+    # (it runs on the user's request) and not counted against the comment cap.
+    BuiltinTool("review_suggestions", "Canvas", availability=Availability.CONVERSATION),
 )
 
 BUILTIN_BY_NAME: dict[str, BuiltinTool] = {t.name: t for t in BUILTIN_TOOLS}
