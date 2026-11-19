@@ -1,4 +1,4 @@
-import { type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useLocation, useOutlet } from "react-router-dom";
 
@@ -8,7 +8,6 @@ import { ChatWorkspaceProvider } from "@/app/workspaceContext";
 
 import SwitchingAccounts from "@/features/auth/components/SwitchingAccounts";
 import AccountLimitDialog from "@/features/auth/components/AccountLimitDialog";
-import AttachmentPreviewPanel from "@/features/attachments/components/AttachmentPreviewPanel";
 import ChatSidebar from "@/features/chat/components/ChatSidebar";
 import { ContextMeter } from "@/features/chat/components/ContextMeter";
 import { useSidebarInteractionEffect } from "@/features/chat/hooks/useChatEffects";
@@ -19,20 +18,21 @@ import SearchPanel from "@/features/search/components/SearchPanel";
 import EditProfileDialog from "@/features/settings/components/EditProfileDialog";
 import HelpPanel from "@/features/settings/components/HelpPanel";
 import { PendingDeletionScreen } from "@/features/settings/components/PendingDeletionScreen";
-import ProfilePanel from "@/features/settings/components/ProfilePanel";
 import ShortcutsPanel from "@/features/settings/components/ShortcutsPanel";
 import ShareConversationDialog from "@/features/sharing/components/SharePanel";
 
 import { AGENTS_PATH, isAgentsPath } from "@/features/agents/lib/routes";
 import { AUTOMATIONS_PATH, isAutomationsPath } from "@/features/automations/lib/routes";
 import { ARTIFACTS_PATH, isArtifactsPath } from "@/features/artifacts/lib/routes";
-import {
-  isWorkflowsPath,
-  workflowIdFromPath,
-  workflowPath,
-} from "@/features/workflows/lib/routes";
+import { isWorkflowsPath, workflowIdFromPath, workflowPath } from "@/features/workflows/lib/routes";
 
 import ChatView from "@/pages/ChatView";
+import {
+  loadAttachmentPreviewPanel,
+  loadProfilePanel,
+  prefetchRouteChunks,
+} from "@/app/routeLoaders";
+import { PageFallback } from "@/shared/ui/page-fallback";
 import { ImageLightbox } from "@/shared/ui/ImageLightbox";
 
 import { OVERLAY_HOST_ID } from "@/shared/lib/overlay-host";
@@ -49,6 +49,13 @@ type WorkspaceShellProps = ChatWorkspaceOptions & { children?: ReactNode };
  *  Automations or Agents page until it has fully faded in (their PAGE). */
 const ROUTE_SWAP_HOLD_S = 0.42;
 
+// Settings is the largest panel (usage charts, skills, agents) and most visits
+// never open it, so it is its own chunk (plan 45), mounted on first open.
+const ProfilePanel = lazy(loadProfilePanel);
+// The file preview (PDF, Word, CSV, code with highlighting) likewise: its own
+// chunk, mounted the first time a file is previewed.
+const AttachmentPreviewPanel = lazy(loadAttachmentPreviewPanel);
+
 /**
  * The persistent workspace shell — sidebar, search, profile/dialog modals, and
  * the chrome around the routed views. Builds the workspace once via
@@ -58,6 +65,12 @@ const ROUTE_SWAP_HOLD_S = 0.42;
  */
 export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {}) {
   const ws = useChatWorkspace(props);
+  // Mounted from the first time Settings opens, then kept, so its close
+  // animation and tab state behave exactly as when it was always mounted.
+  const [profilePanelMounted, setProfilePanelMounted] = useState(false);
+  if (ws.settingsPanels.showUserProfile && !profilePanelMounted) setProfilePanelMounted(true);
+  const [filePreviewMounted, setFilePreviewMounted] = useState(false);
+  if (ws.attachmentPreview.selectedFilePreview && !filePreviewMounted) setFilePreviewMounted(true);
   // The bundle reaches the route views through ChatWorkspaceProvider at the
   // content slot below. It used to be published into the Zustand store here,
   // during render — zustand notifies synchronously, so that force-updated
@@ -197,6 +210,11 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
         : isArtifactsPage
           ? "artifacts"
           : "chat";
+  // Once someone is signed in, warm the other pages' chunks while the browser
+  // is idle, so opening Agents or Settings later doesn't wait on the network.
+  const signedIn = authResolved && isLoggedIn && Boolean(userId);
+  useEffect(() => (signedIn ? prefetchRouteChunks() : undefined), [signedIn]);
+
   // Main Chat Interface
   if (!authResolved) {
     return (
@@ -339,164 +357,174 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
             <HitlProvider value={{ resumeRun: resumeInferenceRunHandler, isDecisionInFlight }}>
               {/* The open conversation's background task tree (plan 41). */}
               <BackgroundTasksContext.Provider value={backgroundTasksContext}>
-              {/* The sources the answers' citation pills resolve against (plan 42). */}
-              <CitationSourcesContext.Provider value={citationSources}>
-              {/* Fills the card on desktop (md:h-full) and the screen on mobile;
+                {/* The sources the answers' citation pills resolve against (plan 42). */}
+                <CitationSourcesContext.Provider value={citationSources}>
+                  {/* Fills the card on desktop (md:h-full) and the screen on mobile;
                   the overlays mounted here stay inside the card's rounded edge. */}
-              <div
-                id={OVERLAY_HOST_ID}
-                className="animate-fade-in relative flex h-svh flex-col overflow-hidden transition-slow md:h-full"
-              >
-                {/* The routed view: ChatView ("/", "/c/:id"), AutomationsView ("/automations")
+                  <div
+                    id={OVERLAY_HOST_ID}
+                    className="animate-fade-in relative flex h-svh flex-col overflow-hidden transition-slow md:h-full"
+                  >
+                    {/* The routed view: ChatView ("/", "/c/:id"), AutomationsView ("/automations")
                   or AgentsView ("/agents…"), or `children` when ChatShell is used
                   directly (shared conversation). */}
-                <ChatWorkspaceProvider value={ws}>
-                  {children ?? (
-                    // Chat <-> Automations <-> Agents: the view that leaves stays
-                    // mounted for its exit (the page's own; the chat simply holds
-                    // under a page sliding in), keyed by surface so moving between
-                    // chats, or between Agents pages, never remounts. `contents`:
-                    // the wrapper adds no box.
-                    <AnimatePresence initial={false}>
-                      <motion.div
-                        key={surfaceKey}
-                        className="contents"
-                        exit={{ opacity: 1, transition: { duration: ROUTE_SWAP_HOLD_S } }}
-                      >
-                        {outlet}
-                      </motion.div>
-                    </AnimatePresence>
-                  )}
-                </ChatWorkspaceProvider>
+                    <ChatWorkspaceProvider value={ws}>
+                      {children ?? (
+                        // Chat <-> Automations <-> Agents: the view that leaves stays
+                        // mounted for its exit (the page's own; the chat simply holds
+                        // under a page sliding in), keyed by surface so moving between
+                        // chats, or between Agents pages, never remounts. `contents`:
+                        // the wrapper adds no box.
+                        <AnimatePresence initial={false}>
+                          <motion.div
+                            key={surfaceKey}
+                            className="contents"
+                            exit={{ opacity: 1, transition: { duration: ROUTE_SWAP_HOLD_S } }}
+                          >
+                            {/* A page whose chunk is still downloading shows the
+                            fallback over the chat; the sidebar stays usable. */}
+                            <Suspense fallback={<PageFallback overlay />}>{outlet}</Suspense>
+                          </motion.div>
+                        </AnimatePresence>
+                      )}
+                    </ChatWorkspaceProvider>
 
-                <AccountLimitDialog
-                  open={accountSwitching.accountLimitOpen}
-                  accounts={accountSwitching.accounts}
-                  submitting={Boolean(accountSwitching.busyAccountId)}
-                  onCancel={() => accountSwitching.setAccountLimitOpen(false)}
-                  onConfirm={(account) => void accountSwitching.onConfirmAccountLimit(account)}
-                />
+                    <AccountLimitDialog
+                      open={accountSwitching.accountLimitOpen}
+                      accounts={accountSwitching.accounts}
+                      submitting={Boolean(accountSwitching.busyAccountId)}
+                      onCancel={() => accountSwitching.setAccountLimitOpen(false)}
+                      onConfirm={(account) => void accountSwitching.onConfirmAccountLimit(account)}
+                    />
 
-                {/* User Profile Modal */}
-                <ProfilePanel
-                  open={settingsPanels.showUserProfile}
-                  onClose={closeProfilePanel}
-                  activeTab={activeProfileTab}
-                  setActiveTab={handleSetActiveProfileTab}
-                  onLogout={handleLogout}
-                  user={userProfile}
-                  availableTools={availableTools}
-                  mySkills={mySkills}
-                  loadingMySkills={loadingMySkills}
-                  mySkillDetails={mySkillDetails}
-                  isMySkillDetailLoading={loadingSkillDetail}
-                  onLoadMySkillDetail={ensureSkillDetail}
-                  onAddRemoteSkillToPool={handleAddRemoteSkill}
-                  onCreateCustomSkill={handleCreateCustomSkill}
-                  onRemoveSkillFromPool={handleRemoveSkillFromPool}
-                  onRefreshMySkills={refreshMySkills}
-                  onManageAgents={() => {
-                    closeProfilePanel();
-                    navigate(AGENTS_PATH);
-                  }}
-                  agents={agents}
-                  skillSelections={skillSelections}
-                  onLoadAgentSkills={loadAgentSkills}
-                  onToggleUserAgentSkill={toggleUserAgentSkill}
-                  isAgentSkillLoading={isAgentSkillLoading}
-                  isSkillToggling={isSkillToggling}
-                  userPreferences={resolvedPreferences}
-                  archivedConversations={archivedConversations}
-                  archivedConversationsLoading={archivedConvIsLoading}
-                  archivedConversationsHasMore={archivedConvHasMore}
-                  onLoadMoreArchivedConversations={handleLoadMoreArchivedConversations}
-                  onSelectArchivedConversation={handleOpenArchivedConversation}
-                  onUnarchiveConversation={(conversation) =>
-                    void handleUnarchiveConversation(conversation.id)
-                  }
-                  sharedConversations={sharedConversations}
-                  sharedConversationsLoading={sharedConvIsLoading}
-                  sharedConversationsHasMore={sharedConvHasMore}
-                  onLoadMoreSharedConversations={handleLoadMoreSharedConversations}
-                  onSelectSharedConversation={handleOpenSharedConversation}
-                  onRevokeSharedConversation={handleRevokeSharedConversation}
-                  onToggleSuggestionsEnabled={handleToggleSuggestionsEnabled}
-                  onToggleMessageTokenUsage={handleToggleShowMessageTokenUsage}
-                  onToggleSearchPastConvs={handleToggleSearchPastConvs}
-                  onToggleUseMemory={handleToggleUseMemory}
-                  onToggleImproveModel={handleToggleImproveModel}
-                  onSelectPersonality={handleSelectPersonality}
-                  onSaveCustomInstructions={handleSaveCustomInstructions}
-                  onSelectVoiceModeVoice={handleSelectVoiceModeVoice}
-                  onSelectVoiceModeLanguage={handleSelectVoiceModeLanguage}
-                  preferencesSaving={isSavingPreferences}
-                  conversationId={currentConversation?.id ?? null}
-                  conversationTitle={currentConversation?.title ?? null}
-                />
+                    {/* User Profile Modal — its own chunk, mounted on first open */}
+                    {profilePanelMounted && (
+                      <Suspense fallback={null}>
+                        <ProfilePanel
+                          open={settingsPanels.showUserProfile}
+                          onClose={closeProfilePanel}
+                          activeTab={activeProfileTab}
+                          setActiveTab={handleSetActiveProfileTab}
+                          onLogout={handleLogout}
+                          user={userProfile}
+                          availableTools={availableTools}
+                          mySkills={mySkills}
+                          loadingMySkills={loadingMySkills}
+                          mySkillDetails={mySkillDetails}
+                          isMySkillDetailLoading={loadingSkillDetail}
+                          onLoadMySkillDetail={ensureSkillDetail}
+                          onAddRemoteSkillToPool={handleAddRemoteSkill}
+                          onCreateCustomSkill={handleCreateCustomSkill}
+                          onRemoveSkillFromPool={handleRemoveSkillFromPool}
+                          onRefreshMySkills={refreshMySkills}
+                          onManageAgents={() => {
+                            closeProfilePanel();
+                            navigate(AGENTS_PATH);
+                          }}
+                          agents={agents}
+                          skillSelections={skillSelections}
+                          onLoadAgentSkills={loadAgentSkills}
+                          onToggleUserAgentSkill={toggleUserAgentSkill}
+                          isAgentSkillLoading={isAgentSkillLoading}
+                          isSkillToggling={isSkillToggling}
+                          userPreferences={resolvedPreferences}
+                          archivedConversations={archivedConversations}
+                          archivedConversationsLoading={archivedConvIsLoading}
+                          archivedConversationsHasMore={archivedConvHasMore}
+                          onLoadMoreArchivedConversations={handleLoadMoreArchivedConversations}
+                          onSelectArchivedConversation={handleOpenArchivedConversation}
+                          onUnarchiveConversation={(conversation) =>
+                            void handleUnarchiveConversation(conversation.id)
+                          }
+                          sharedConversations={sharedConversations}
+                          sharedConversationsLoading={sharedConvIsLoading}
+                          sharedConversationsHasMore={sharedConvHasMore}
+                          onLoadMoreSharedConversations={handleLoadMoreSharedConversations}
+                          onSelectSharedConversation={handleOpenSharedConversation}
+                          onRevokeSharedConversation={handleRevokeSharedConversation}
+                          onToggleSuggestionsEnabled={handleToggleSuggestionsEnabled}
+                          onToggleMessageTokenUsage={handleToggleShowMessageTokenUsage}
+                          onToggleSearchPastConvs={handleToggleSearchPastConvs}
+                          onToggleUseMemory={handleToggleUseMemory}
+                          onToggleImproveModel={handleToggleImproveModel}
+                          onSelectPersonality={handleSelectPersonality}
+                          onSaveCustomInstructions={handleSaveCustomInstructions}
+                          onSelectVoiceModeVoice={handleSelectVoiceModeVoice}
+                          onSelectVoiceModeLanguage={handleSelectVoiceModeLanguage}
+                          preferencesSaving={isSavingPreferences}
+                          conversationId={currentConversation?.id ?? null}
+                          conversationTitle={currentConversation?.title ?? null}
+                        />
+                      </Suspense>
+                    )}
 
-                {/* Edit profile — the small identity card from the profile menu */}
-                <EditProfileDialog
-                  open={settingsPanels.showEditProfile}
-                  onClose={settingsPanels.closeEditProfile}
-                  user={userProfile}
-                />
+                    {/* Edit profile — the small identity card from the profile menu */}
+                    <EditProfileDialog
+                      open={settingsPanels.showEditProfile}
+                      onClose={settingsPanels.closeEditProfile}
+                      user={userProfile}
+                    />
 
-                {/* Dedicated reference panels from the profile menu's Help submenu */}
-                <ShortcutsPanel
-                  open={settingsPanels.showShortcutsPanel}
-                  onClose={settingsPanels.closeShortcutsPanel}
-                />
-                <HelpPanel
-                  open={settingsPanels.showHelpPanel}
-                  onClose={settingsPanels.closeHelpPanel}
-                  archivedConversations={archivedConversations}
-                  availableTools={availableTools}
-                />
+                    {/* Dedicated reference panels from the profile menu's Help submenu */}
+                    <ShortcutsPanel
+                      open={settingsPanels.showShortcutsPanel}
+                      onClose={settingsPanels.closeShortcutsPanel}
+                    />
+                    <HelpPanel
+                      open={settingsPanels.showHelpPanel}
+                      onClose={settingsPanels.closeHelpPanel}
+                      archivedConversations={archivedConversations}
+                      availableTools={availableTools}
+                    />
 
-                <ReportConversationDialog
-                  open={reportPanel.isReportDialogOpen}
-                  onClose={closeReportDialog}
-                  onSubmit={handleSubmitConversationReport}
-                  submitting={reportPanel.isSubmittingReport}
-                  messageId={reportPanel.reportTargetMessageId}
-                  messagePreview={reportPanel.reportTargetMessagePreview}
-                  conversationTitle={reportPanel.reportConversationTitle}
-                />
+                    <ReportConversationDialog
+                      open={reportPanel.isReportDialogOpen}
+                      onClose={closeReportDialog}
+                      onSubmit={handleSubmitConversationReport}
+                      submitting={reportPanel.isSubmittingReport}
+                      messageId={reportPanel.reportTargetMessageId}
+                      messagePreview={reportPanel.reportTargetMessagePreview}
+                      conversationTitle={reportPanel.reportConversationTitle}
+                    />
 
-                <ShareConversationDialog
-                  open={Boolean(sharePanel.shareTargetMessage)}
-                  title={currentConversation?.title}
-                  message={sharePanel.shareTargetMessage}
-                  creating={sharePanel.isCreatingShareLink}
-                  exportingPdf={sharePanel.isExportingSharePdf}
-                  linkCreated={Boolean(sharePanel.shareDialogUrl)}
-                  copied={sharePanel.isShareCopyPulse}
-                  shareMode={sharePanel.shareMode}
-                  forceFullConversation={sharePanel.shareForceFullConversation}
-                  expiresAt={sharePanel.shareExpiresAt}
-                  onShareModeChange={handleShareModeChange}
-                  onExpiresAtChange={handleShareExpiresAtChange}
-                  onClose={closeShareDialog}
-                  onCreateLink={
-                    sharePanel.shareDialogUrl ? copyShareDialogUrl : handleCreateShareLink
-                  }
-                  onDownloadPdf={handleDownloadSharePdf}
-                />
+                    <ShareConversationDialog
+                      open={Boolean(sharePanel.shareTargetMessage)}
+                      title={currentConversation?.title}
+                      message={sharePanel.shareTargetMessage}
+                      creating={sharePanel.isCreatingShareLink}
+                      exportingPdf={sharePanel.isExportingSharePdf}
+                      linkCreated={Boolean(sharePanel.shareDialogUrl)}
+                      copied={sharePanel.isShareCopyPulse}
+                      shareMode={sharePanel.shareMode}
+                      forceFullConversation={sharePanel.shareForceFullConversation}
+                      expiresAt={sharePanel.shareExpiresAt}
+                      onShareModeChange={handleShareModeChange}
+                      onExpiresAtChange={handleShareExpiresAtChange}
+                      onClose={closeShareDialog}
+                      onCreateLink={
+                        sharePanel.shareDialogUrl ? copyShareDialogUrl : handleCreateShareLink
+                      }
+                      onDownloadPdf={handleDownloadSharePdf}
+                    />
 
-                <AttachmentPreviewPanel
-                  preview={attachmentPreview.selectedFilePreview}
-                  userId={userId}
-                  conversationId={currentConversation?.id ?? null}
-                  onClose={attachmentPreview.closeFilePreview}
-                  onDownload={handleFileDownload}
-                />
+                    {filePreviewMounted && (
+                      <Suspense fallback={null}>
+                        <AttachmentPreviewPanel
+                          preview={attachmentPreview.selectedFilePreview}
+                          userId={userId}
+                          conversationId={currentConversation?.id ?? null}
+                          onClose={attachmentPreview.closeFilePreview}
+                          onDownload={handleFileDownload}
+                        />
+                      </Suspense>
+                    )}
 
-                <ImageLightbox
-                  src={attachmentPreview.selectedImage}
-                  onClose={handleCloseImagePreview}
-                />
-              </div>
-              </CitationSourcesContext.Provider>
+                    <ImageLightbox
+                      src={attachmentPreview.selectedImage}
+                      onClose={handleCloseImagePreview}
+                    />
+                  </div>
+                </CitationSourcesContext.Provider>
               </BackgroundTasksContext.Provider>
             </HitlProvider>
           </TooltipProvider>

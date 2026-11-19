@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, type Variants } from "framer-motion";
 import { useLocation, useOutlet } from "react-router-dom";
 
@@ -7,6 +7,7 @@ import { automationsForAgentPath } from "@/features/automations/lib/routes";
 
 import { useChatWorkspaceContext } from "@/app/workspaceContext";
 import { useWorkspaceStore } from "@/shared/stores/workspaceStore";
+import { PageFallback } from "@/shared/ui/page-fallback";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -101,7 +102,9 @@ export default function AgentsView() {
           animate="shown"
           exit="exit"
         >
-          {outlet}
+          {/* The gallery, an agent's page and the builder are separate chunks
+              (plan 45): one still downloading shows the fallback in the page. */}
+          <Suspense fallback={<PageFallback overlay />}>{outlet}</Suspense>
         </motion.div>
       </AnimatePresence>
     </motion.div>

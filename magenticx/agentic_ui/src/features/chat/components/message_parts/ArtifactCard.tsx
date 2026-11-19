@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Download, Eye, FileText, Loader2, PanelRight, Sparkles } from "lucide-react";
 import type { ArtifactBlock, AttachmentOut, MessageOut } from "@/shared/lib/types";
-import { classifyAttachmentPreview } from "@/features/attachments/components/attachment_preview_parts";
+import { classifyAttachmentPreview } from "@/features/attachments/components/attachment_preview_parts/registry";
 import { useIsMobile } from "@/shared/hooks/use-mobile";
 import { useAttachmentObjectUrl } from "@/features/chat/hooks/useAttachmentObjectUrl";
 import { ImageLightbox } from "@/shared/ui/ImageLightbox";

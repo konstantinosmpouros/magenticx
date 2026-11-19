@@ -70,8 +70,10 @@ one per mode.
 
 - Logo: put the file in `public/` and set `logo: "/<file>"`. The sidebar and the
   theme's card in Settings → General use it (`logoFor`).
-- Orb: put a square WebP (1254px, transparent background) in `public/` and set
-  `orb: "/<file>.webp"`. Every orb uses it (`orbFor`, `src/shared/ui/orb.tsx`);
+- Orb: put a square WebP (512px, transparent background, lossy ~q86 / alpha
+  ~q95; the full-size PNG goes in `brand-sources/orb/`) in `public/` and set
+  `orb: "/<file>.webp"`. 512px covers the largest orb on a 3x screen, and a
+  power-of-two square goes to the GPU without a redraw (`logo-renderer.ts`). Every orb uses it (`orbFor`, `src/shared/ui/orb.tsx`);
   only the active theme's file is fetched, and a theme change cross-fades it.
   Retune that theme's `--orb-glow-1..3` in its CSS file to the artwork's own
   colours, so the halo matches it.

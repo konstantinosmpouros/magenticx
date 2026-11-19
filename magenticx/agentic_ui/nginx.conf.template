@@ -37,25 +37,20 @@ server {
   real_ip_header CF-Connecting-IP;
   real_ip_recursive on;
 
-  # Browser security headers
-  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-  add_header X-Frame-Options "DENY" always;
-  add_header X-Content-Type-Options "nosniff" always;
-  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-  add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; font-src 'self' data:; connect-src 'self'; frame-src 'self' blob: https://view.officeapps.live.com; frame-ancestors 'none';" always;
+  # Browser security headers (CSP, HSTS, COOP/CORP, …). One shared file, because
+  # a location that sets its own add_header loses these unless it includes it too.
+  include /etc/nginx/snippets/security-headers.conf;
 
-  # Deny every powerful browser feature we don't use; voice mode needs the mic
-  # (same-origin only), nothing else (camera/geolocation/payment/usb/sensors) is used.
-  add_header Permissions-Policy "geolocation=(), camera=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=(), microphone=(self)" always;
-
-  # Cross-origin isolation (Spectre-class / window.opener hardening). These apply
-  # to the app + /api/ responses; the attachments locations below re-declare their
-  # own add_header set, so CORP intentionally never reaches /attachments/public/
-  # (that stays cross-origin for the Office viewer). COOP same-origin would sever
-  # window.opener for popup OAuth — revisit (→ same-origin-allow-popups) if/when
-  # OIDC popups land.
-  add_header Cross-Origin-Opener-Policy "same-origin" always;
-  add_header Cross-Origin-Resource-Policy "same-origin" always;
+  # Compression for the static app (plan 45). The build ships a .gz next to each
+  # text asset (Dockerfile), served by gzip_static at no CPU cost; gzip on covers
+  # anything else. Every /api/ location below keeps its own `gzip off` (streamed
+  # and proxied bodies are never compressed here), so this only reaches static files.
+  gzip on;
+  gzip_static on;
+  gzip_vary on;
+  gzip_comp_level 6;
+  gzip_min_length 1024;
+  gzip_types text/css application/javascript text/javascript application/json image/svg+xml text/plain application/manifest+json;
 
   # Keep request bodies bounded; the app also validates lower logical limits.
   client_max_body_size 50M;
@@ -243,7 +238,33 @@ server {
     return 200 "ok\n";
   }
 
-  # Single Page App routing + static assets
+  # Vite's build output: every file name carries a content hash, so a file's
+  # bytes never change under its name and the browser may keep it for a year
+  # without asking again. A missing chunk (an old tab after a release) is a real
+  # 404, never index.html served as JavaScript.
+  location /assets/ {
+    include /etc/nginx/snippets/security-headers.conf;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    try_files $uri =404;
+  }
+
+  # Brand images (logos, orbs) keep fixed names, so they get a day, not a year:
+  # a redesigned image reaches everyone within a day.
+  location /brand/ {
+    include /etc/nginx/snippets/security-headers.conf;
+    add_header Cache-Control "public, max-age=86400" always;
+    try_files $uri =404;
+  }
+
+  # The app shell names the current hashed chunks, so it is always revalidated
+  # (a cheap 304 via ETag) and a release is picked up on the next load. The SPA
+  # fallback below lands here too.
+  location = /index.html {
+    include /etc/nginx/snippets/security-headers.conf;
+    add_header Cache-Control "no-cache" always;
+  }
+
+  # Single Page App routing: client routes fall back to the app shell.
   location / {
     try_files $uri $uri/ /index.html;
   }

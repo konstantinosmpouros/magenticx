@@ -16,7 +16,6 @@ import type {
   TimelineTerminalStatus,
 } from "@/shared/lib/types";
 import { ArtifactCard } from "./ArtifactCard";
-import { ChartCard } from "./ChartCard";
 import { CompactionMarker } from "./ConversationMarkers";
 import { ContentBlockView } from "./Content";
 import { CoTBlock } from "./CoTBlock";
@@ -24,6 +23,7 @@ import { SubagentTreeCard } from "./SubagentTreeCard";
 import { TaskInputBlockView } from "./TaskInputBlockView";
 import { TaskRefBlockView } from "./TaskRefBlockView";
 import { TaskSettledMarker } from "./TaskSettledMarker";
+import { LazyChartCard } from "./LazyChartCard";
 
 // Cross-block state the sequencer computes and threads to each object. The
 // data model deliberately doesn't carry these — they depend on a block's
@@ -69,7 +69,7 @@ export const BLOCK_REGISTRY: Record<
   content: (block, ctx) => (
     <ContentBlockView block={block as ContentBlock} streaming={ctx.isLiveActive} />
   ),
-  chart: (block) => <ChartCard block={block as ChartBlock} />,
+  chart: (block) => <LazyChartCard block={block as ChartBlock} />,
   compaction: (block, ctx) => {
     const compaction = block as CompactionBlock;
     // A compaction still "running" when the run is no longer live never

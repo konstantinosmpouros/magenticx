@@ -19,7 +19,7 @@ import {
 } from "@/shared/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { useTouchMenuTrigger } from "@/shared/hooks/useTouchMenuTrigger";
-import { formatBytes } from "@/features/attachments/components/attachment_preview_parts";
+import { formatBytes } from "@/features/attachments/components/attachment_preview_parts/registry";
 import {
   FILE_TYPE_META,
   fileExtension,

@@ -123,7 +123,8 @@ const isPowerOfTwo = (n: number) => (n & (n - 1)) === 0;
 
 /**
  * The image as a square power-of-two source, so the texture gets mipmaps and
- * stays smooth when drawn small (an orb artwork is 1254px).
+ * stays smooth when drawn small. The orb artwork ships as 512px squares, which
+ * are used as they are; any other size is redrawn here first.
  */
 function textureSource(image: HTMLImageElement): TexImageSource {
   const edge = Math.max(image.naturalWidth, image.naturalHeight);

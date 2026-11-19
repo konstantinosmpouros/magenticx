@@ -13,6 +13,13 @@ RUN npm ci
 COPY . .
 RUN npm run build -- --debug
 
+# Precompress every text asset once, at build time (plan 45): nginx's
+# gzip_static serves the .gz to browsers that accept it, so the 5 MB of
+# JavaScript goes over the wire at about a quarter of its size with no
+# per-request CPU. Files under 1 KB aren't worth a second copy.
+RUN find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' -o -name '*.html' -o -name '*.json' -o -name '*.txt' \) \
+      -size +1k -exec sh -c 'gzip -9 -c "$1" > "$1.gz"' _ {} \;
+
 
 # 2) Runtime stage
 # nginx 1.28 is the supported stable line (1.25 sat on Alpine 3.19, past end of
@@ -43,6 +50,9 @@ RUN chmod +x /usr/local/bin/load-secrets-and-exec.sh
 # Remove default Nginx config; the base nginx entrypoint renders templates from env vars.
 RUN rm /etc/nginx/conf.d/default.conf
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# The shared security headers the server block and the cached static locations
+# include. Outside conf.d on purpose: conf.d/*.conf is loaded at http level.
+COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
