@@ -179,7 +179,9 @@ src/
     stores/                  # workspaceStore (Zustand)
     hooks/                   # use-mobile, use-toast (framework-generic), useSessionUserId,
                              #   useResizablePanel (a dockable right-hand panel's width: the agent
-                             #   builder's inspector and the document canvas)
+                             #   builder's inspector and the document canvas), useTouchMenuTrigger
+                             #   (a finger opens a Radix menu on the tap's click: the chat sidebar,
+                             #   the effort picker, the Artifacts rows' phone menu)
 
 ```
 

@@ -1,10 +1,11 @@
 /**
  * The row at the top of the document: the outline toggle (≡), Find and,
  * while editing, undo / redo on the left (the user asked for them here, not
- * in the floating pill); on the right the comments button with the number
- * of open threads (Phase 4.4) and the mode menu — Editing or Viewing (plan
- * 44 §3; Suggesting joins in Phase 4.6). Find moved here from the header,
- * which keeps only the title, the save status, Export, full screen and close. An earlier version is always read-only, so there the
+ * in the floating pill); on the right the mode menu — Editing or Viewing
+ * (plan 44 §3; Suggesting joins in Phase 4.6). Comments have no button here:
+ * their marks sit in the text's margin, as in Claude Docs. Find moved here
+ * from the header, which keeps only the title, the save status, Export,
+ * full screen and close. An earlier version is always read-only, so there the
  * menu is a plain "Viewing" label. The row stays at the top as the document
  * scrolls (sticky), on the panel's own background so the text slides under
  * it cleanly.
@@ -14,7 +15,6 @@ import {
   PiArrowClockwise,
   PiArrowCounterClockwise,
   PiCaretDown,
-  PiChatCircle,
   PiCheck,
   PiEye,
   PiListDashes,
@@ -54,9 +54,6 @@ export function CanvasDocBar({
   onToggleOutline,
   findOpen,
   onToggleFind,
-  commentCount,
-  commentsOpen,
-  onToggleComments,
   mode,
   canEdit,
   onModeChange,
@@ -67,10 +64,6 @@ export function CanvasDocBar({
   onToggleOutline: () => void;
   findOpen: boolean;
   onToggleFind: () => void;
-  /** Open threads; null where the canvas keeps no comments (no button). */
-  commentCount: number | null;
-  commentsOpen: boolean;
-  onToggleComments?: () => void;
   mode: CanvasMode;
   /** False on an earlier version: those are read-only. */
   canEdit: boolean;
@@ -116,26 +109,6 @@ export function CanvasDocBar({
       </CanvasHint>
       {showUndoRedo ? <UndoRedo /> : null}
 
-      {commentCount !== null && onToggleComments ? (
-        <CanvasHint label={commentsOpen ? "Hide comments" : "Comments"}>
-          <button
-            type="button"
-            aria-label={commentCount > 0 ? `Comments, ${commentCount} open` : "Comments"}
-            aria-pressed={commentsOpen}
-            onClick={onToggleComments}
-            className={cn(
-              pill,
-              "ml-auto min-w-8 justify-center px-2 tabular-nums transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:min-w-10",
-              commentsOpen && "bg-muted text-foreground",
-              commentCount > 0 && "text-foreground/85",
-            )}
-          >
-            <PiChatCircle className="size-[18px] shrink-0" aria-hidden="true" />
-            {commentCount > 0 ? commentCount : null}
-          </button>
-        </CanvasHint>
-      ) : null}
-
       {canEdit ? (
         <DropdownMenu>
           <CanvasHint label="Change mode">
@@ -144,7 +117,7 @@ export function CanvasDocBar({
               className={cn(
                 pill,
                 "transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted data-[state=open]:text-foreground",
-                commentCount === null && "ml-auto",
+                "ml-auto",
                 mode === "editing" && "text-foreground",
               )}
             >
@@ -174,7 +147,7 @@ export function CanvasDocBar({
         </DropdownMenu>
       ) : (
         <span
-          className={cn(pill, commentCount === null && "ml-auto")}
+          className={cn(pill, "ml-auto")}
           title="Earlier versions are read-only"
         >
           <PiEye className="size-4" aria-hidden="true" />

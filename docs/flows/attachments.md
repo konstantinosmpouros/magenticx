@@ -256,6 +256,8 @@ Files that don't match any known type are shown as an unsupported preview with a
 - **Download** — `downloadAttachment()` with the row's ids.
 - **Open conversation** — navigates to `/c/:conversationId`.
 
+On a phone (under `sm`) the row's four icon buttons fold into one ⋯ menu with the same actions (modal, opened on the tap's click — `useTouchMenuTrigger`), so the file name keeps the row's width; the meta line puts the conversation on its own line under the Output / type / date / size line.
+
 ---
 
 ## Phase 5 — Attachment Lifecycle

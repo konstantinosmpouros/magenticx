@@ -3,7 +3,7 @@
  * conversation, open beside the chat. Its header switches between the
  * conversation's documents and holds the save status (nothing once saved),
  * Export, full screen and close; the document row holds the outline, Find
- * (also Ctrl/Cmd+F) and the comments; the byline's version chip opens the
+ * (also Ctrl/Cmd+F); the byline's version chip opens the
  * version history. The body is the document in the editor
  * (`CanvasDocumentView`) — editable at its latest version, read-only at an
  * earlier one — or a compare of two versions, or its loading skeleton, a
@@ -18,9 +18,9 @@
  * unlocks.
  *
  * Comments (Phase 4.4): a selection's menu (or the pill's Comment on touch)
- * starts a thread on the passage; the threads live in a side panel (a sheet
- * on a phone) that shares the history's slot, and their passages are painted
- * in the text. They are not edits: nothing about them is unsaved, and they
+ * starts a thread on the passage; its passage is painted in the text and a
+ * 💬 count in the margin opens a card with the line's threads, as in Claude
+ * Docs (no side panel). They are not edits: nothing about them is unsaved, and they
  * work while reading. Export (Phase 4.5) downloads a saved version as Word,
  * PDF or Markdown; with unsaved edits it asks Save and export / Export the
  * saved version / Cancel first.
@@ -65,7 +65,7 @@ import { useCanvasVersionText, useFetchCanvasVersionText } from "../hooks/useCan
 import { buildCanvasEdit } from "../lib/askAgent";
 import { documentTitle } from "../lib/documentTitle";
 import { isApplePlatform, isFindShortcut, isSaveShortcut } from "../lib/shortcuts";
-import { CanvasComments } from "./canvas_parts/CanvasComments";
+import { CanvasCommentThreads, CanvasOtherComments } from "./canvas_parts/CanvasComments";
 import { CanvasCompareView } from "./canvas_parts/CanvasCompareView";
 import { CanvasConflictDialog } from "./canvas_parts/CanvasConflictDialog";
 import { CanvasDocumentView } from "./canvas_parts/CanvasDocumentView";
@@ -131,11 +131,9 @@ function DocumentSession({
   const data = useCanvasDocument(userId, conversationId, path, revision);
   const [findOpen, setFindOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
-  // The side slot beside the document (a sheet on a phone): one panel at a time.
-  const [panel, setPanel] = useState<"history" | "comments" | null>(null);
-  const historyOpen = panel === "history";
-  const commentsOpen = panel === "comments";
-  const closePanel = () => setPanel(null);
+  // The side slot beside the document (a sheet on a phone): the history.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const closePanel = () => setHistoryOpen(false);
   // Desktop opens for editing; a phone opens for reading (✎ switches). Held
   // as "not chosen yet" until the user picks, because the phone check
   // settles after the first render.
@@ -372,7 +370,7 @@ function DocumentSession({
 
   const toggleHistory = () => {
     if (!historyOpen) loadVersions();
-    setPanel((open) => (open === "history" ? null : "history"));
+    setHistoryOpen((open) => !open);
   };
 
   // The version the user is looking at, saved: the editor's base while
@@ -383,32 +381,47 @@ function DocumentSession({
 
   // Comments (Phase 4.4).
   const comments = useCanvasComments(userId, conversationId, path);
+  // The thread whose card is open (null: none), and a nonce that scrolls
+  // its passage into view when bumped.
   const [active, setActive] = useState<{ id: string; nonce: number } | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
   const [placements, setPlacements] = useState<Record<string, CanvasAnchorPlacement> | null>(null);
-  const focusThread = (id: string) =>
-    setActive((current) => ({ id, nonce: (current?.nonce ?? 0) + 1 }));
+  const openCard = (id: string) => setActive((current) => ({ id, nonce: current?.nonce ?? 0 }));
   const commentControl: CanvasCommentControl = {
     onCreate: (anchor, body) => {
       const version = savedVersionShown();
       if (version === null) return;
-      setPanel("comments");
+      // The new thread's card opens under its mark once it is saved.
       void comments.createThread(version, anchor, body).then((saved) => {
-        if (saved) setActive((current) => ({ id: saved.id, nonce: current?.nonce ?? 0 }));
+        if (saved) openCard(saved.id);
       });
     },
   };
+  const detached = comments.open.filter((thread) => placements?.[thread.comment.id] === null);
+  const otherCount = detached.length + comments.resolved.length;
   const marks: CanvasCommentMarks = {
     threads: comments.open,
-    activeId: commentsOpen ? (active?.id ?? null) : null,
-    focusNonce: active?.nonce ?? 0,
-    onActivate: (id) => {
-      // While editing, a click in a commented passage is usually to place the
-      // caret: it brings the thread forward only if the panel is open. While
-      // reading it opens the panel on that thread.
-      if (mode === "editing" && data.isLatest && !commentsOpen) return;
-      setPanel("comments");
-      setActive((current) => ({ id, nonce: current?.nonce ?? 0 }));
+    activeId: active?.id ?? null,
+    focusNonce,
+    onActivate: openCard,
+    onOpen: (id) => {
+      openCard(id);
+      setFocusNonce((nonce) => nonce + 1);
     },
+    onClose: () => setActive(null),
+    renderThreads: (ids) => (
+      <CanvasCommentThreads
+        threads={comments.open.filter((thread) => ids.includes(thread.comment.id))}
+        comments={comments}
+      />
+    ),
+    others:
+      otherCount > 0
+        ? {
+            count: otherCount,
+            render: () => <CanvasOtherComments detached={detached} comments={comments} />,
+          }
+        : null,
     onPlaced: setPlacements,
   };
 
@@ -465,8 +478,6 @@ function DocumentSession({
     onModeChange: changeMode,
     comment: commentControl,
     marks,
-    commentsOpen,
-    onToggleComments: () => setPanel((open) => (open === "comments" ? null : "comments")),
   };
 
   const body = compare ? (
@@ -574,9 +585,8 @@ function DocumentSession({
         onClose={() => leave(onClose)}
       />
 
-      {/* A row: on desktop the history or comments panel takes its own
-          column, so the document and a compare narrow beside it instead of
-          sliding under. */}
+      {/* A row: on desktop the history takes its own column, so the document
+          and a compare narrow beside it instead of sliding under. */}
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
         <CanvasHistory
@@ -592,15 +602,6 @@ function DocumentSession({
           onToggleCompare={toggleCompare}
           onCompare={openCompare}
           onRestore={(version) => void restore(version)}
-          onClose={closePanel}
-        />
-        <CanvasComments
-          open={commentsOpen}
-          compact={compact}
-          comments={comments}
-          placements={compare ? null : placements}
-          activeId={active?.id ?? null}
-          onActivate={focusThread}
           onClose={closePanel}
         />
       </div>

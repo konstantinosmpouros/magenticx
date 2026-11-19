@@ -2,7 +2,7 @@
 import { renderHook } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { useTouchMenuTrigger } from "@/features/chat/hooks/useTouchMenuTrigger";
+import { useTouchMenuTrigger } from "@/shared/hooks/useTouchMenuTrigger";
 
 /**
  * A finger opens the sidebar's menus on the tap's click, not on pointerdown:

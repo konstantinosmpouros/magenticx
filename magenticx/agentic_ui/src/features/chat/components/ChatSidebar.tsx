@@ -59,7 +59,7 @@ import { AgentsIcon } from "@/shared/ui/agents-icon";
 import { BrandLogo } from "@/shared/ui/brand-logo";
 import { INTERACTIVE_SURFACE } from "@/shared/lib/consts";
 import type { RenderContextTrigger } from "@/features/chat/components/ContextMeter";
-import { useTouchMenuTrigger } from "@/features/chat/hooks/useTouchMenuTrigger";
+import { useTouchMenuTrigger } from "@/shared/hooks/useTouchMenuTrigger";
 import { loadSidebarSectionOpen, saveSidebarSectionOpen } from "@/shared/lib/sidebarStorage";
 import { RADIX_MOTION } from "@/shared/lib/motion/panels";
 import {

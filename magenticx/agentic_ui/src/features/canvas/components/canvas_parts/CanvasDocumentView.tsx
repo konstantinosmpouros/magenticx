@@ -16,9 +16,11 @@
  *
  * Comments (Phase 4.4) are painted here, not stored here: the view finds
  * each open thread's quote in its text (`lib/commentAnchors.ts`), reports
- * where (or "detached") to the parent's panel, paints the passages with the
- * CSS Custom Highlight API (`lib/commentHighlight.ts`), scrolls to the one
- * the panel asks for, and tells the panel which thread a click landed on.
+ * where (or "detached") to the parent, paints the passages with the CSS
+ * Custom Highlight API (`lib/commentHighlight.ts`), and measures them to
+ * place the marks in the right margin (`CanvasCommentMarkers`): a bubble and
+ * a count beside each commented line, opening a card with its threads. A
+ * click on a passage opens its card too.
  *
  * With a mouse, the selection bar floats over selected text
  * (`CanvasSelectionMenu`) and the orb at the caret (`CanvasCaretOrb`) offers
@@ -35,6 +37,7 @@ import type {
   CanvasAskControl,
   CanvasBylineValue,
   CanvasCommentControl,
+  CanvasCommentMarker,
   CanvasCommentMarks,
   CanvasMode,
   CanvasShineTexts,
@@ -49,12 +52,14 @@ import { CANVAS_NODE_ID, canvasEditorPlugins, findPlugin } from "../../lib/edito
 import { showAskHighlight } from "../../lib/askHighlight";
 import { buildTextIndex, locateAnchor, placementRange } from "../../lib/commentAnchors";
 import { caretAtPoint, paintCommentHighlights, scrollBehavior } from "../../lib/commentHighlight";
+import { measureCommentMarkers } from "../../lib/commentMarkers";
 import { countMatches } from "../../lib/find";
 import { markdownToValue, valueToMarkdown } from "../../lib/markdown";
 import { shineChanges, shineTexts as shineTextsIn } from "../../lib/changeShine";
 import { getHiddenBlocks, getOutline } from "../../lib/outline";
 import { CanvasByline } from "./CanvasByline";
 import { CanvasCaretOrb } from "./CanvasCaretOrb";
+import { CanvasCommentMarkers } from "./CanvasCommentMarkers";
 import { CanvasReadingCommentBar } from "./CanvasCommentButton";
 import { CanvasDocBar } from "./CanvasDocBar";
 import { CanvasFindBar } from "./CanvasFindBar";
@@ -85,8 +90,6 @@ export function CanvasDocumentView({
   ask = null,
   comment = null,
   marks = null,
-  commentsOpen = false,
-  onToggleComments,
   agentEdit = null,
   shineFrom = null,
   shineTexts = null,
@@ -116,12 +119,8 @@ export function CanvasDocumentView({
   ask?: CanvasAskControl | null;
   /** Comment on a selection (Phase 4.4), editing or reading. */
   comment?: CanvasCommentControl | null;
-  /** The open threads to paint in the text, and how a click on one reaches the panel. */
+  /** The open threads to paint in the text, their margin marks and cards. */
   marks?: CanvasCommentMarks | null;
-  /** The comments panel is open (the row's comments button shows it pressed). */
-  commentsOpen?: boolean;
-  /** The row's comments button; absent where the canvas keeps no comments. */
-  onToggleComments?: () => void;
   /** The agent is changing a passage: the editor is read-only and the passage tinted. */
   agentEdit?: CanvasAgentEdit | null;
   /** The text before the agent's version loaded: its changed blocks shine once on mount. */
@@ -223,6 +222,16 @@ export function CanvasDocumentView({
   // The passages as DOM ranges, kept for telling which one a click hit.
   const paintedRef = useRef<{ id: string; range: Range }[]>([]);
   const activeId = marks?.activeId ?? null;
+  const [markers, setMarkers] = useState<CanvasCommentMarker[]>([]);
+  // The column's width changes where lines wrap: re-measure the marks then.
+  const [layoutTick, setLayoutTick] = useState(0);
+  useEffect(() => {
+    const column = contentRef.current;
+    if (!column || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setLayoutTick((tick) => tick + 1));
+    observer.observe(column);
+    return () => observer.disconnect();
+  }, []);
   useEffect(() => {
     let stop: () => void = () => undefined;
     // After the paint: the ranges map onto the text the editor just rendered.
@@ -240,6 +249,10 @@ export function CanvasDocumentView({
         }
       }
       paintedRef.current = painted;
+      setMarkers((previous) => {
+        const next = measureCommentMarkers(painted, contentRef.current);
+        return JSON.stringify(next) === JSON.stringify(previous) ? previous : next;
+      });
       stop = paintCommentHighlights(
         painted.map((item) => item.range),
         painted.find((item) => item.id === activeId)?.range ?? null,
@@ -249,7 +262,7 @@ export function CanvasDocumentView({
       window.cancelAnimationFrame(frame);
       stop();
     };
-  }, [editor, placements, textIndex, activeId]);
+  }, [editor, placements, textIndex, activeId, layoutTick]);
 
   // The panel picked a thread: bring its passage into view. Only a new
   // request scrolls, not every repaint of the active passage.
@@ -334,7 +347,7 @@ export function CanvasDocumentView({
         <div className="relative min-h-0 flex-1">
           <div
             ref={scrollRef}
-            className="h-full overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+            className="h-full overflow-y-auto overflow-x-hidden overscroll-contain [scrollbar-gutter:stable]"
           >
             <CanvasDocBar
               showOutlineButton={!compact}
@@ -342,9 +355,6 @@ export function CanvasDocumentView({
               onToggleOutline={onToggleOutline}
               findOpen={findOpen}
               onToggleFind={onToggleFind}
-              commentCount={onToggleComments ? (threads?.length ?? 0) : null}
-              commentsOpen={commentsOpen}
-              onToggleComments={onToggleComments}
               mode={canEdit ? mode : "viewing"}
               canEdit={canEdit}
               onModeChange={onModeChange}
@@ -386,6 +396,16 @@ export function CanvasDocumentView({
                 </EditorContainer>
                 {writable && ask && !compact && !coarse ? (
                   <CanvasCaretOrb ask={ask} columnRef={contentRef} />
+                ) : null}
+                {marks ? (
+                  <CanvasCommentMarkers
+                    markers={markers}
+                    activeId={activeId}
+                    onOpen={marks.onOpen}
+                    onClose={marks.onClose}
+                    renderThreads={marks.renderThreads}
+                    others={marks.others}
+                  />
                 ) : null}
               </div>
             </div>
@@ -437,3 +457,4 @@ export function CanvasDocumentView({
     </CanvasBylineContext.Provider>
   );
 }
+

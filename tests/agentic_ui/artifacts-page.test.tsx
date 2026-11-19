@@ -221,6 +221,25 @@ describe("the Artifacts page", () => {
     expect(onOpenConversation).toHaveBeenCalledWith("conv-1");
   });
 
+  it("offers the same actions in one menu for a phone", async () => {
+    api.listUserFiles.mockResolvedValue(page([file()]));
+    api.downloadAttachment.mockResolvedValue(undefined);
+    const { onOpenConversation } = renderPage();
+    await screen.findAllByTestId("artifact-row");
+
+    // A finger: the menu opens on the tap's click (useTouchMenuTrigger).
+    const trigger = screen.getByRole("button", { name: "Actions for report.pdf" });
+    fireEvent.pointerDown(trigger, { pointerType: "touch" });
+    fireEvent.click(trigger, { detail: 1 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Download" }));
+    await waitFor(() => expect(api.downloadAttachment).toHaveBeenCalledTimes(1));
+
+    fireEvent.pointerDown(trigger, { pointerType: "touch" });
+    fireEvent.click(trigger, { detail: 1 });
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Open conversation" }));
+    expect(onOpenConversation).toHaveBeenCalledWith("conv-1");
+  });
+
   it("opens a generated .md in the canvas of its conversation, and only that", async () => {
     api.listUserFiles.mockResolvedValue(
       page([

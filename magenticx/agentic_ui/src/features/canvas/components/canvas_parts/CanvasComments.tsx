@@ -1,30 +1,28 @@
 /**
- * The document's comment threads (plan 44 §3, Phase 4.4): a panel on the
- * right of the document on wider screens, a bottom sheet on a phone — the
- * same slot as the version history, toggled from the 💬 count in the
- * document row. Cards aligned in the margin were weighed and left out: the
- * canvas is 520–900px wide and its reading column already takes 680, so
- * margin cards would squeeze the text or cover it.
+ * A document's comment threads as cards on the text (plan 44, Phase 4.4),
+ * the way Claude Docs shows them: no side panel. Each commented line has a
+ * 💬 mark in the margin (`CanvasCommentMarkers`); a click on it, or on a
+ * painted passage, opens a card under the mark with that line's threads:
+ * the author and time, the body, ⋯ (Edit / Delete on one's own) and ✓
+ * Resolve, the replies, and a Reply box at the bottom.
  *
- * Each open thread shows its passage (or "Detached" when the quote is no
- * longer in the text), its comments and replies, a reply box, Resolve, and
- * Edit / Delete on one's own comments; resolved threads fold under
- * "Resolved (n)" with Reopen. Clicking a thread scrolls the document to its
- * passage (`onActivate`); clicking a passage brings its thread here.
+ * Threads whose quote is no longer in the text ("detached") and resolved
+ * threads have no line to sit on: they are listed in the card of the mark at
+ * the top of the margin (`CanvasOtherComments`), resolved ones folded under
+ * "Resolved (n)" with Reopen.
  *
  * Shaped after Plate's registry discussion pieces (`block-discussion`,
- * `comment`: the quote, author and time, the body, the reply box, resolve),
- * built from the app's own buttons, menus, sheet and collapsible. Plate's
- * comment plugin itself is not used: it keeps comments as marks inside the
- * document's value, which would make every comment an unsaved edit and has
- * no place in the markdown the document is stored as. Here a comment is the
- * bridge's record, anchored by its quote (`lib/commentAnchors.ts`).
+ * `comment`), built from the app's own buttons, menus and collapsible.
+ * Plate's comment plugin itself is not used: it keeps comments as marks
+ * inside the document's value, which would make every comment an unsaved
+ * edit and has no place in the markdown the document is stored as. Here a
+ * comment is the bridge's record, anchored by its quote
+ * (`lib/commentAnchors.ts`).
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Check,
   ChevronRight,
-  MessageSquare,
   MoreHorizontal,
   Pencil,
   RotateCcw,
@@ -32,10 +30,9 @@ import {
   Trash2,
   Unlink,
   UserRound,
-  X,
 } from "lucide-react";
 
-import type { CanvasAnchorPlacement, CanvasComment, CanvasCommentThread } from "@/shared/lib/types";
+import type { CanvasComment, CanvasCommentThread } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/shared/ui/collapsible";
@@ -45,30 +42,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/shared/ui/dropdown-menu";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/shared/ui/sheet";
-import { Skeleton } from "@/shared/ui/skeleton";
 
 import { isLocalComment, type CanvasCommentsState } from "../../hooks/useCanvasComments";
-import { scrollBehavior } from "../../lib/commentHighlight";
 import { formatVersionMoment } from "../../lib/dates";
 import { CanvasCommentForm } from "./CanvasCommentForm";
 import { CanvasHint } from "./CanvasHint";
 
 const smallIconButton =
   "flex size-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-muted [@media(pointer:coarse)]:size-11 [&_svg]:size-4";
-
-export interface CanvasCommentsProps {
-  open: boolean;
-  /** Phone layout: a bottom sheet instead of the side panel. */
-  compact: boolean;
-  comments: CanvasCommentsState;
-  /** Where each open thread's passage is in the shown text; null while not known (a compare). */
-  placements: Record<string, CanvasAnchorPlacement> | null;
-  activeId: string | null;
-  /** A thread was picked: scroll the document to its passage. */
-  onActivate: (id: string) => void;
-  onClose: () => void;
-}
 
 function Author({ comment }: { comment: CanvasComment }) {
   const Icon = comment.author === "agent" ? Sparkles : UserRound;
@@ -225,18 +206,16 @@ function Quote({ quote, detached }: { quote: string; detached: boolean }) {
   );
 }
 
-function ThreadCard({
+/** One thread in a card: its comment with ✓ Resolve, the replies, the Reply box. */
+function ThreadItem({
   thread,
   comments,
   detached,
-  active,
-  onActivate,
 }: {
   thread: CanvasCommentThread;
   comments: CanvasCommentsState;
+  /** Its quote is no longer in the text: show the quote, struck through. */
   detached: boolean;
-  active: boolean;
-  onActivate: () => void;
 }) {
   const { comment, replies } = thread;
   const [replying, setReplying] = useState(false);
@@ -246,21 +225,13 @@ function ThreadCard({
     <li
       id={`canvas-thread-${comment.id}`}
       aria-label={`Comment on “${comment.anchor?.quote.slice(0, 60) ?? ""}”`}
-      className={cn(
-        "rounded-xl border bg-card p-3 transition-[border-color,box-shadow] duration-150",
-        active ? "border-warning/70 shadow-md shadow-foreground/5" : "border-border/70",
-      )}
+      className="px-3.5 py-3"
     >
-      <button
-        type="button"
-        onClick={onActivate}
-        aria-current={active ? "true" : undefined}
-        disabled={detached}
-        aria-label={detached ? undefined : "Show the passage in the document"}
-        className="mb-2.5 block w-full rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-      >
-        <Quote quote={comment.anchor?.quote ?? ""} detached={detached} />
-      </button>
+      {detached ? (
+        <div className="mb-2.5">
+          <Quote quote={comment.anchor?.quote ?? ""} detached />
+        </div>
+      ) : null}
 
       <CommentItem
         comment={comment}
@@ -283,7 +254,7 @@ function ThreadCard({
       />
 
       {replies.length > 0 ? (
-        <ul className="mt-3 space-y-3 border-t border-border/60 pt-3" aria-label="Replies">
+        <ul className="mt-3 space-y-3" aria-label="Replies">
           {replies.map((item) => (
             <li key={item.id}>
               <CommentItem comment={item} isThread={false} comments={comments} />
@@ -308,7 +279,7 @@ function ThreadCard({
         <button
           type="button"
           onClick={() => setReplying(true)}
-          className="mt-3 flex h-9 w-full items-center rounded-lg border border-border/70 bg-background px-3 text-left text-[13px] text-muted-foreground transition-colors duration-150 hover:border-border hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
+          className="mt-3 flex h-10 w-full items-center rounded-xl bg-muted/60 px-3 text-left text-[13px] text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11"
         >
           Reply…
         </button>
@@ -358,74 +329,48 @@ function ResolvedCard({
   );
 }
 
-function Body({
+/** The threads of one line, in the card under its margin mark. */
+export function CanvasCommentThreads({
+  threads,
   comments,
-  placements,
-  activeId,
-  onActivate,
-}: Omit<CanvasCommentsProps, "open" | "compact" | "onClose">) {
-  const { open, resolved } = comments;
-
-  // A passage clicked in the text: bring its card into view (without taking
-  // the focus from the editor).
-  useEffect(() => {
-    if (!activeId) return;
-    document
-      .getElementById(`canvas-thread-${activeId}`)
-      ?.scrollIntoView({ block: "nearest", behavior: scrollBehavior() });
-  }, [activeId]);
-
-  if (comments.loading) {
-    return (
-      <div className="space-y-3 px-4 py-3" aria-busy="true" aria-label="Loading comments">
-        <Skeleton className="h-24 w-full rounded-xl" />
-        <Skeleton className="h-24 w-full rounded-xl" />
-      </div>
-    );
-  }
-  if (comments.errorMessage) {
-    return (
-      <div className="space-y-3 px-4 py-6 text-center">
-        <p className="text-sm text-muted-foreground">{comments.errorMessage}</p>
-        <Button size="sm" variant="outline" onClick={() => void comments.retry()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
+}: {
+  threads: CanvasCommentThread[];
+  comments: CanvasCommentsState;
+}) {
   return (
-    <div className="space-y-4 px-3 py-3">
-      {open.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-            <MessageSquare className="size-5" aria-hidden="true" />
-          </span>
-          <p className="text-sm font-medium text-foreground">
-            {resolved.length > 0 ? "No open comments" : "No comments yet"}
-          </p>
-          <p className="max-w-[16rem] text-[13px] leading-relaxed text-muted-foreground">
-            Select text in the document, then choose <strong>Comment</strong> to start a thread.
-          </p>
-        </div>
-      ) : (
-        <ul className="space-y-3" aria-label="Open comments">
-          {open.map((thread) => (
-            <ThreadCard
-              key={thread.comment.id}
-              thread={thread}
-              comments={comments}
-              detached={placements !== null && placements[thread.comment.id] === null}
-              active={thread.comment.id === activeId}
-              onActivate={() => onActivate(thread.comment.id)}
-            />
+    <ul className="divide-y divide-border/60" aria-label="Comments">
+      {threads.map((thread) => (
+        <ThreadItem key={thread.comment.id} thread={thread} comments={comments} detached={false} />
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The threads with no line to sit on, in the card of the mark at the top of
+ * the margin: those whose text changed (detached), then the resolved ones,
+ * folded, with Reopen.
+ */
+export function CanvasOtherComments({
+  detached,
+  comments,
+}: {
+  detached: CanvasCommentThread[];
+  comments: CanvasCommentsState;
+}) {
+  const { resolved } = comments;
+  return (
+    <div className="divide-y divide-border/60">
+      {detached.length > 0 ? (
+        <ul aria-label="Comments on text that changed" className="divide-y divide-border/60">
+          {detached.map((thread) => (
+            <ThreadItem key={thread.comment.id} thread={thread} comments={comments} detached />
           ))}
         </ul>
-      )}
-
+      ) : null}
       {resolved.length > 0 ? (
-        <Collapsible>
-          <CollapsibleTrigger className="group flex h-9 w-full items-center gap-1.5 rounded-lg px-1.5 text-[13px] font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11">
+        <Collapsible className="p-1.5">
+          <CollapsibleTrigger className="group flex h-9 w-full items-center gap-1.5 rounded-lg px-2 text-[13px] font-medium text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-11">
             <ChevronRight
               className="size-4 transition-transform duration-150 group-data-[state=open]:rotate-90 motion-reduce:transition-none"
               aria-hidden="true"
@@ -433,7 +378,7 @@ function Body({
             Resolved ({resolved.length})
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <ul className="mt-2 space-y-2" aria-label="Resolved comments">
+            <ul className="mt-1 space-y-2 px-1 pb-1" aria-label="Resolved comments">
               {resolved.map((thread) => (
                 <ResolvedCard key={thread.comment.id} thread={thread} comments={comments} />
               ))}
@@ -442,85 +387,5 @@ function Body({
         </Collapsible>
       ) : null}
     </div>
-  );
-}
-
-function Heading({ count }: { count: number }) {
-  return (
-    <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
-      <MessageSquare className="size-4 text-muted-foreground" aria-hidden="true" />
-      Comments
-      {count > 0 ? (
-        <span className="rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-muted-foreground">
-          {count}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-export function CanvasComments(props: CanvasCommentsProps) {
-  const { open, compact, comments, onClose } = props;
-  const count = comments.open.length;
-  const busy = comments.loading;
-
-  if (compact) {
-    return (
-      <Sheet open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
-        <SheetContent
-          side="bottom"
-          hideClose
-          className="flex max-h-[85svh] flex-col gap-0 rounded-t-2xl p-0"
-        >
-          <div className="flex items-center justify-between px-4 pb-1 pt-4">
-            <SheetTitle asChild>
-              <span>
-                <Heading count={count} />
-              </span>
-            </SheetTitle>
-            <button
-              type="button"
-              aria-label="Close comments"
-              onClick={onClose}
-              className="flex size-11 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <X className="size-[18px]" />
-            </button>
-          </div>
-          <SheetDescription className="sr-only">
-            Comment threads on passages of the document.
-          </SheetDescription>
-          <div className="min-h-0 flex-1 overflow-y-auto pb-[env(safe-area-inset-bottom)]">
-            <Body {...props} />
-          </div>
-        </SheetContent>
-      </Sheet>
-    );
-  }
-
-  if (!open) return null;
-  return (
-    <aside
-      aria-label="Comments"
-      aria-busy={busy || undefined}
-      className="flex w-[min(21rem,46%)] shrink-0 flex-col border-l border-border/70 bg-background animate-in fade-in-0 slide-in-from-right-2 duration-200 motion-reduce:animate-none"
-    >
-      <div className="flex h-12 shrink-0 items-center justify-between pl-4 pr-2">
-        <Heading count={count} />
-        <CanvasHint label="Close comments">
-          <button
-            type="button"
-            aria-label="Close comments"
-            onClick={onClose}
-            className="flex size-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <X className="size-[18px]" />
-          </button>
-        </CanvasHint>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <Body {...props} />
-      </div>
-    </aside>
   );
 }

@@ -13,7 +13,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { EFFORT_HINTS, EFFORT_LABELS, EFFORT_SHORT_LABELS } from "@/shared/lib/consts";
 import type { EffortLevel } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
-import { useTouchMenuTrigger } from "@/features/chat/hooks/useTouchMenuTrigger";
+import { useTouchMenuTrigger } from "@/shared/hooks/useTouchMenuTrigger";
 
 type EffortPickerProps = {
   /** The levels the agent's model takes, in order; empty hides the picker. */

@@ -17,6 +17,7 @@ export type {
   CanvasStaleBase,
 } from "../schemas";
 
+import type { ReactNode } from "react";
 import type { TRange } from "platejs";
 
 import type { CanvasDocumentSaved, CanvasEditPreset, CanvasStaleBase } from "../schemas";
@@ -208,14 +209,35 @@ export interface CanvasCommentControl {
 export interface CanvasCommentMarks {
   /** The open threads, with their anchors. */
   threads: CanvasCommentThread[];
-  /** The thread the user is looking at (its passage is painted stronger). */
+  /** The thread whose card is open (its passage is painted stronger); null: none. */
   activeId: string | null;
   /** Bumped to scroll the active thread's passage into view. */
   focusNonce: number;
-  /** A click landed on a thread's passage. */
+  /** A click landed on a thread's passage: open its card. */
   onActivate: (id: string) => void;
+  /** A margin mark was clicked: open the card of its line. */
+  onOpen: (id: string) => void;
+  /** The open card was dismissed. */
+  onClose: () => void;
+  /** A card's content for a line's threads. */
+  renderThreads: (ids: string[]) => ReactNode;
+  /** The top-of-margin mark: threads with no line (detached, resolved); null: none. */
+  others: CanvasOtherCommentsMark | null;
   /** Where each thread's passage was found in the shown text (null: detached). */
   onPlaced: (placements: Record<string, CanvasAnchorPlacement>) => void;
+}
+
+/** The top-of-margin mark's threads (no line to sit on): how many, and the card's content. */
+export interface CanvasOtherCommentsMark {
+  count: number;
+  render: () => ReactNode;
+}
+
+/** A comment mark in the margin: the line's top in the column (px), its height, its threads in reading order. */
+export interface CanvasCommentMarker {
+  top: number;
+  height: number;
+  ids: string[];
 }
 
 /** The formats a canvas document exports to (Phase 4.5). */

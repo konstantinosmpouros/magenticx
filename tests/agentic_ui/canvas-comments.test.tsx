@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Comments in the canvas (plan 44, Phase 4.4), over a mocked bridge.
@@ -11,9 +11,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * its prefix and suffix, a quote that is gone is detached, and a quote over
  * the bridge's bound is refused; the wire contract (camelCase or snake_case,
  * rows that can't be placed dropped) and the four routes with their bodies;
- * in the canvas: Comment on a selection sends one thread on the shown saved
- * version and opens the panel, the panel lists the open threads with their
- * replies (a detached one says so) and folds the resolved ones, and reply,
+ * in the canvas: no comments button above the document; Comment on a
+ * selection sends one thread on the shown saved version and opens its card
+ * under its margin mark, a line's card holds its threads with their replies,
+ * the top mark holds the detached and (folded) resolved ones, and reply,
  * resolve, reopen, edit and delete reach the bridge — each shown at once and
  * rolled back when refused. A comment never makes the document unsaved.
  */
@@ -262,13 +263,35 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
   );
 }
 
-const openPanel = async () => {
-  fireEvent.click(await screen.findByRole("button", { name: /^Comments/ }));
-  return screen.findByRole("complementary", { name: "Comments" });
+/**
+ * happy-dom lays nothing out: every range would sit at 0,0 and share one
+ * margin mark. Each passage gets its own line instead, from its text, so a
+ * test reaches one thread's card through its own mark.
+ */
+const linesOf = new Map<string, number>();
+beforeAll(() => {
+  Range.prototype.getClientRects = function getClientRects(this: Range) {
+    const text = this.toString();
+    if (!linesOf.has(text)) linesOf.set(text, linesOf.size * 40 + 40);
+    const top = linesOf.get(text)!;
+    return [{ top, height: 24, width: 120, left: 0, right: 120, bottom: top + 24 }] as unknown as DOMRectList;
+  };
+});
+
+/** The margin mark of the line holding `count` threads (the first such). */
+const findMark = (count = 1) =>
+  screen.findByRole("button", {
+    name: count === 1 ? "1 comment on this line" : `${count} comments on this line`,
+  });
+
+/** Opens the card of the first line with one thread, returns the card. */
+const openCard = async () => {
+  fireEvent.click(await findMark());
+  return screen.findByRole("dialog", { name: "Comment" });
 };
 
-const threadCard = (panel: HTMLElement, quote: string) =>
-  within(panel).getByRole("listitem", { name: `Comment on “${quote}”` });
+const threadCard = (card: HTMLElement, quote: string) =>
+  within(card).getByRole("listitem", { name: `Comment on “${quote}”` });
 
 describe("comments in the canvas", () => {
   beforeEach(() => {
@@ -281,7 +304,14 @@ describe("comments in the canvas", () => {
     coarse.current = true;
   });
 
-  it("Comment on a selection starts one thread on the shown version and opens the panel", async () => {
+  it("has no comments button above the document: the marks are in the margin", async () => {
+    renderCanvas();
+    await screen.findByRole("heading", { level: 1, name: "The brief" });
+    expect(screen.queryByRole("button", { name: /^Comments/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "Comments" })).not.toBeInTheDocument();
+  });
+
+  it("Comment on a selection starts one thread on the shown version and opens its card", async () => {
     passage.current = {
       text: "Intro text.",
       headingPath: ["The brief"],
@@ -311,13 +341,12 @@ describe("comments in the canvas", () => {
         suffix: "\nThe plan is set. The plan is late.\nShip it.",
       },
     });
-    // Shown at once, while it is on its way.
-    const panel = await screen.findByRole("complementary", { name: "Comments" });
-    expect(within(panel).getByText("Sending…")).toBeInTheDocument();
+    // Its mark is in the margin at once, while it is on its way.
+    expect(await findMark()).toBeInTheDocument();
     await act(async () => answer(comment()));
-    expect(within(panel).queryByText("Sending…")).not.toBeInTheDocument();
-    expect(within(panel).getByText("Shorter here?")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Comments, 1 open" })).toBeInTheDocument();
+    // Saved: its card opens under the mark.
+    const card = await screen.findByRole("dialog", { name: "Comment" });
+    expect(within(card).getByText("Shorter here?")).toBeInTheDocument();
     // A comment is not an edit.
     expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
   });
@@ -333,21 +362,21 @@ describe("comments in the canvas", () => {
     await screen.findByRole("heading", { level: 1, name: "The brief" });
     const trigger = within(screen.getByRole("toolbar", { name: "Formatting" })).getByRole(
       "button",
-      {
-        name: "Comment",
-      },
+      { name: "Comment" },
     );
     fireEvent.pointerDown(trigger, { button: 0, pointerType: "touch" });
     fireEvent.click(trigger);
     const field = await screen.findByLabelText("Comment on the selected text");
     fireEvent.change(field, { target: { value: "Nope" } });
     fireEvent.keyDown(field, { key: "Enter", metaKey: true });
-    const panel = await screen.findByRole("complementary", { name: "Comments" });
-    await waitFor(() => expect(within(panel).queryByText("Nope")).not.toBeInTheDocument());
-    expect(within(panel).getByText("No comments yet")).toBeInTheDocument();
+    await waitFor(() => expect(api.createDocumentComment).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /on this line/ })).not.toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("dialog", { name: "Comment" })).not.toBeInTheDocument();
   });
 
-  it("lists open threads with replies, says which are detached, and folds the resolved ones", async () => {
+  it("shows a line's thread with its replies in the card, and the others under the top mark", async () => {
     api.listDocumentComments.mockResolvedValue([
       comment(),
       comment({ id: "r1", parentId: "c1", anchor: null, body: "Agreed.", author: "agent" }),
@@ -366,10 +395,9 @@ describe("comments in the canvas", () => {
     ]);
     renderCanvas();
     await screen.findByRole("heading", { level: 1, name: "The brief" });
-    expect(await screen.findByRole("button", { name: "Comments, 2 open" })).toBeInTheDocument();
-    const panel = await openPanel();
 
-    const first = threadCard(panel, "Intro text.");
+    const card = await openCard();
+    const first = threadCard(card, "Intro text.");
     expect(within(first).getByText("Shorter here?")).toBeInTheDocument();
     expect(within(first).getByText("Agreed.")).toBeInTheDocument();
     // Edit and Delete only on one's own comments: the agent's reply has none.
@@ -378,14 +406,21 @@ describe("comments in the canvas", () => {
     ).toBeInTheDocument();
     expect(within(first).queryByRole("button", { name: "More actions on this reply" })).toBeNull();
     expect(within(first).queryByText(/Detached/)).not.toBeInTheDocument();
-    const gone = threadCard(panel, "A passage that is gone");
-    expect(await within(gone).findByText(/Detached/)).toBeInTheDocument();
+    // Only that line's thread is in its card.
+    expect(within(card).queryByText("Old note")).not.toBeInTheDocument();
 
-    const folded = within(panel).getByRole("button", { name: "Resolved (1)" });
-    expect(within(panel).queryByText("Done")).not.toBeInTheDocument();
+    // The detached thread and the resolved one: the top mark (2).
+    fireEvent.click(
+      await screen.findByRole("button", { name: "2 more comments: on changed text or resolved" }),
+    );
+    const others = await screen.findByRole("dialog", { name: "Other comments" });
+    const gone = threadCard(others, "A passage that is gone");
+    expect(within(gone).getByText(/Detached/)).toBeInTheDocument();
+    const folded = within(others).getByRole("button", { name: "Resolved (1)" });
+    expect(within(others).queryByText("Done")).not.toBeInTheDocument();
     fireEvent.click(folded);
-    expect(within(panel).getByText("Done")).toBeInTheDocument();
-    expect(within(panel).getByText(/Resolved by you/)).toBeInTheDocument();
+    expect(within(others).getByText("Done")).toBeInTheDocument();
+    expect(within(others).getByText(/Resolved by you/)).toBeInTheDocument();
   });
 
   it("replies, resolves and reopens, rolling back a refused change", async () => {
@@ -395,13 +430,13 @@ describe("comments in the canvas", () => {
     );
     renderCanvas();
     await screen.findByRole("heading", { level: 1, name: "The brief" });
-    const panel = await openPanel();
-    const card = threadCard(panel, "Intro text.");
+    const card = await openCard();
+    const thread = () => threadCard(card, "Intro text.");
 
-    fireEvent.click(within(card).getByRole("button", { name: "Reply…" }));
-    const field = within(card).getByLabelText("Reply to the thread");
+    fireEvent.click(within(thread()).getByRole("button", { name: "Reply…" }));
+    const field = within(thread()).getByLabelText("Reply to the thread");
     fireEvent.change(field, { target: { value: "On it." } });
-    fireEvent.click(within(card).getByRole("button", { name: "Reply" }));
+    fireEvent.click(within(thread()).getByRole("button", { name: "Reply" }));
     await waitFor(() =>
       expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", {
         path: PATH,
@@ -410,31 +445,38 @@ describe("comments in the canvas", () => {
         body: "On it.",
       }),
     );
-    expect(await within(card).findByText("On it.")).toBeInTheDocument();
+    expect(await within(thread()).findByText("On it.")).toBeInTheDocument();
 
     // A refused resolve comes back open.
     api.updateDocumentComment.mockRejectedValueOnce(new ApiError("Down", { status: 503 }));
-    fireEvent.click(within(card).getByRole("button", { name: "Resolve thread" }));
+    fireEvent.click(within(thread()).getByRole("button", { name: "Resolve thread" }));
     await waitFor(() => expect(api.updateDocumentComment).toHaveBeenCalledTimes(1));
-    expect(await screen.findByRole("button", { name: "Comments, 1 open" })).toBeInTheDocument();
-    expect(threadCard(panel, "Intro text.")).toBeInTheDocument();
+    expect(await findMark()).toBeInTheDocument();
 
     api.updateDocumentComment.mockImplementation(async (_u, _c, _id, patch) =>
       comment({ ...patch, resolvedBy: patch.status === "resolved" ? "user" : null }),
     );
+    const card2 = await screen.findByRole("dialog", { name: "Comment" }).catch(openCard);
     fireEvent.click(
-      within(threadCard(panel, "Intro text.")).getByRole("button", { name: "Resolve thread" }),
+      within(threadCard(card2, "Intro text.")).getByRole("button", { name: "Resolve thread" }),
     );
     expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "c1", {
       status: "resolved",
     });
-    expect(await within(panel).findByText("No open comments")).toBeInTheDocument();
-    fireEvent.click(within(panel).getByRole("button", { name: "Resolved (1)" }));
-    fireEvent.click(within(panel).getByRole("button", { name: "Reopen" }));
+    // Resolved: off the line, under the top mark.
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /on this line/ })).not.toBeInTheDocument(),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "1 more comment: on changed text or resolved" }),
+    );
+    const others = await screen.findByRole("dialog", { name: "Other comments" });
+    fireEvent.click(within(others).getByRole("button", { name: "Resolved (1)" }));
+    fireEvent.click(within(others).getByRole("button", { name: "Reopen" }));
     expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "c1", {
       status: "open",
     });
-    expect(await screen.findByRole("button", { name: "Comments, 1 open" })).toBeInTheDocument();
+    expect(await findMark()).toBeInTheDocument();
   });
 
   it("edits and deletes one's own comment after a confirmation", async () => {
@@ -443,32 +485,34 @@ describe("comments in the canvas", () => {
     api.deleteDocumentComment.mockResolvedValue(undefined);
     renderCanvas();
     await screen.findByRole("heading", { level: 1, name: "The brief" });
-    const panel = await openPanel();
-    const card = () => threadCard(panel, "Intro text.");
+    const card = await openCard();
+    const thread = () => threadCard(card, "Intro text.");
     const openMore = () => {
-      const trigger = within(card()).getByRole("button", { name: "More actions on this thread" });
+      const trigger = within(thread()).getByRole("button", { name: "More actions on this thread" });
       fireEvent.pointerDown(trigger, { button: 0, pointerType: "mouse" });
     };
 
     openMore();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
-    const field = within(card()).getByLabelText("Edit the comment");
+    const field = within(thread()).getByLabelText("Edit the comment");
     fireEvent.change(field, { target: { value: "Much shorter here?" } });
-    fireEvent.click(within(card()).getByRole("button", { name: "Save" }));
+    fireEvent.click(within(thread()).getByRole("button", { name: "Save" }));
     expect(api.updateDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "c1", {
       body: "Much shorter here?",
     });
-    expect(await within(card()).findByText("Much shorter here?")).toBeInTheDocument();
+    expect(await within(thread()).findByText("Much shorter here?")).toBeInTheDocument();
 
     openMore();
     fireEvent.click(await screen.findByRole("menuitem", { name: "Delete" }));
-    const confirm = within(card()).getByRole("alertdialog", { name: "Delete this thread?" });
+    const confirm = within(thread()).getByRole("alertdialog", { name: "Delete this thread?" });
     expect(api.deleteDocumentComment).not.toHaveBeenCalled();
     fireEvent.click(within(confirm).getByRole("button", { name: "Delete" }));
     await waitFor(() =>
       expect(api.deleteDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "c1"),
     );
-    expect(await within(panel).findByText("No comments yet")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /on this line/ })).not.toBeInTheDocument(),
+    );
   });
 
   it("offers Comment while reading, and none of it marks the document unsaved", async () => {

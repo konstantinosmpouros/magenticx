@@ -1,10 +1,24 @@
-import type { ReactNode } from "react";
-import { Download, Eye, LoaderCircle, MessageSquareText, PanelRight } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import {
+  Download,
+  Eye,
+  LoaderCircle,
+  MessageSquareText,
+  MoreHorizontal,
+  PanelRight,
+} from "lucide-react";
 
 import { canvasDocumentPath } from "@/shared/lib/canvasDocuments";
 import { cn } from "@/shared/lib/utils";
 import type { UserFile } from "@/shared/lib/types";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/shared/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
+import { useTouchMenuTrigger } from "@/shared/hooks/useTouchMenuTrigger";
 import { formatBytes } from "@/features/attachments/components/attachment_preview_parts";
 import {
   FILE_TYPE_META,
@@ -51,9 +65,10 @@ function RowAction({
  * `.md`, plan 44), whose name opens it in the canvas of its conversation,
  * with an Open in canvas action first.
  *
- * On a phone the meta line wraps under the name and the actions stay a
- * fixed 40px strip on the right, so a long file name truncates rather than
- * pushing them off screen.
+ * On a phone the name gets the row's width: the actions fold into one ⋯
+ * menu (four 40px icons left ~90px for the name), and the meta line puts
+ * the conversation on a line of its own under "Output · MD · date · size",
+ * so no line starts with a stray separator.
  */
 export function ArtifactRow({
   file,
@@ -79,6 +94,8 @@ export function ArtifactRow({
   const output = file.kind === "output";
   const canvasPath = output ? canvasDocumentPath(file) : null;
   const open = () => (canvasPath ? onOpenCanvas(file.conversationId, canvasPath) : onPreview(file));
+  const [menuOpen, setMenuOpen] = useState(false);
+  const touchMenuTrigger = useTouchMenuTrigger();
 
   return (
     <li
@@ -120,7 +137,10 @@ export function ArtifactRow({
               {extension}
             </span>
           ) : null}
-          <span className="min-w-0 max-w-[16rem] truncate" title={conversation}>
+          <span
+            className="min-w-0 max-w-full truncate max-sm:order-last max-sm:basis-full sm:max-w-[16rem]"
+            title={conversation}
+          >
             {conversation}
           </span>
           {date ? (
@@ -138,7 +158,7 @@ export function ArtifactRow({
         </p>
       </div>
 
-      <div className="flex flex-shrink-0 items-center">
+      <div className="hidden flex-shrink-0 items-center sm:flex">
         {canvasPath ? (
           <RowAction label={`Open ${file.fileName} in canvas`} onClick={open}>
             <PanelRight size={17} aria-hidden />
@@ -165,6 +185,47 @@ export function ArtifactRow({
           <MessageSquareText size={17} aria-hidden />
         </RowAction>
       </div>
+
+      {/* Phone: the same actions in one menu. Modal, opened on the tap's
+          click (useTouchMenuTrigger explains why). */}
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild {...touchMenuTrigger(() => setMenuOpen((v) => !v))}>
+          <button
+            type="button"
+            aria-label={`Actions for ${file.fileName}`}
+            className="grid h-11 w-11 flex-shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-[hsl(var(--hover-surface))] hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 data-[state=open]:bg-[hsl(var(--hover-surface))] sm:hidden"
+          >
+            {previewBusy ? (
+              <LoaderCircle size={18} aria-hidden className="animate-spin" />
+            ) : (
+              <MoreHorizontal size={18} aria-hidden />
+            )}
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[13rem]">
+          {canvasPath ? (
+            <DropdownMenuItem className="min-h-11 gap-2.5" onSelect={open}>
+              <PanelRight size={16} aria-hidden /> Open in canvas
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuItem
+            className="min-h-11 gap-2.5"
+            disabled={previewBusy}
+            onSelect={() => onPreview(file)}
+          >
+            <Eye size={16} aria-hidden /> Preview
+          </DropdownMenuItem>
+          <DropdownMenuItem className="min-h-11 gap-2.5" onSelect={() => onDownload(file)}>
+            <Download size={16} aria-hidden /> Download
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            className="min-h-11 gap-2.5"
+            onSelect={() => onOpenConversation(file.conversationId)}
+          >
+            <MessageSquareText size={16} aria-hidden /> Open conversation
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
     </li>
   );
 }
