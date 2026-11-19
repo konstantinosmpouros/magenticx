@@ -135,3 +135,35 @@ export function buildCanvasEdit({
     ...(draft.preset ? { preset: draft.preset } : {}),
   };
 }
+
+/**
+ * The block the orb at the caret offers to change (plan 44 §3): the
+ * top-level block the caret is in, when there is a caret and nothing is
+ * selected (no text selection, no selected blocks) and that block has text.
+ * Null otherwise — the orb then stays hidden.
+ */
+export function caretBlockIndex(editor: SlateEditor): number | null {
+  const selection = editor.selection;
+  if (!selection || RangeApi.isExpanded(selection) || isSelectingBlocks(editor)) return null;
+  const index = selection.anchor.path[0];
+  const node = editor.children[index];
+  if (!node || !NodeApi.string(node).trim()) return null;
+  return index;
+}
+
+/**
+ * The passage of a whole top-level block (the orb at the caret's Ask agent):
+ * its text as the reader sees it and the headings above it — the same shape
+ * a selection makes, so `buildCanvasEdit` is unchanged. Null for an empty or
+ * missing block.
+ */
+export function blockPassage(editor: SlateEditor, index: number): CanvasAskPassage | null {
+  if (!editor.children[index]) return null;
+  const anchor = editor.api.start([index]);
+  const focus = editor.api.end([index]);
+  if (!anchor || !focus) return null;
+  const range = { anchor, focus };
+  const text = rangeText(editor, range);
+  if (!text) return null;
+  return { text, headingPath: headingPathAt(editor, index), range: structuredClone(range) };
+}

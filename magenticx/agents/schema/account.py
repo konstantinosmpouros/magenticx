@@ -42,6 +42,8 @@ class PurgeUserResponse(BaseModel):
     conversation_file_versions: int = 0
     # Which document version the agent last saw (plan 44 4.3), deleted with them.
     conversation_file_seen: int = 0
+    # Comments on canvas documents (plan 44 4.4), deleted with them.
+    conversation_file_comments: int = 0
     conversation_sources: int = 0
     workflows: int = 0
     workflow_versions: int = 0

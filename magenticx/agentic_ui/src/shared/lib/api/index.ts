@@ -109,6 +109,7 @@ export {
   downloadAttachment,
   fetchAttachmentBlob,
   fetchAttachmentPreviewBlob,
+  fetchAttachmentPreviewPdf,
   fetchDocxPreviewToken,
   listUserFiles,
 } from "./attachments";
@@ -191,6 +192,11 @@ export {
   listDocumentVersions,
   getDocumentVersion,
   saveDocumentVersion,
+  listDocumentComments,
+  createDocumentComment,
+  updateDocumentComment,
+  deleteDocumentComment,
+  exportDocument,
 } from "./documents";
 
 export { faviconUrl } from "./favicons";

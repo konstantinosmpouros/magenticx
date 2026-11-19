@@ -71,6 +71,25 @@ export async function fetchAttachmentPreviewBlob({
   });
 }
 
+/**
+ * An Office attachment (docx / xlsx / pptx) rendered to PDF in the sandbox box
+ * (plan 44, Phase 4.5), for the in-app PDF viewer instead of Microsoft's
+ * online viewer. Owner-checked like the download; 503 when the box can't run
+ * and 504 when it took too long — the caller falls back to the old preview.
+ */
+export async function fetchAttachmentPreviewPdf(
+  userId: string,
+  attachmentId: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const segments = [userId, attachmentId].map(encodeURIComponent);
+  return requestBlob(`${ATTACHMENTS_BASE_PATH}/${segments.join("/")}/preview.pdf`, {
+    accept: "application/pdf",
+    fallbackMessage: "Failed to render the preview",
+    signal,
+  });
+}
+
 export async function fetchDocxPreviewToken({
   userId,
   conversationId,

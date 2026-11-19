@@ -6,10 +6,19 @@
  * version on top of the latest, so history is never rewritten.
  *
  * A panel on the right of the document on wider screens, a bottom sheet on a
- * phone (where the document already covers the whole screen).
+ * phone (where the document already covers the whole screen). It opens from
+ * the version chip in the document's byline, the one way in.
  */
 import type { ReactNode } from "react";
-import { GitCompareArrows, History, RotateCcw, Sparkles, UserRound, X } from "lucide-react";
+import {
+  ArrowUpToLine,
+  GitCompareArrows,
+  History,
+  RotateCcw,
+  Sparkles,
+  UserRound,
+  X,
+} from "lucide-react";
 
 import type { CanvasDocumentVersionMeta } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
@@ -61,77 +70,93 @@ function Rows({
     );
   }
   const latest = versions[0]?.version;
+  const readingEarlier = shownVersion !== null && latest !== undefined && shownVersion !== latest;
   return (
-    <ul className="space-y-1 px-2 py-2" aria-label="Versions">
-      {versions.map((meta) => {
-        const shown = meta.version === shownVersion;
-        const ticked = compareSelection.includes(meta.version);
-        const AuthorIcon = meta.author === "agent" ? Sparkles : UserRound;
-        return (
-          <li
-            key={meta.version}
-            className={cn(
-              "rounded-lg border border-transparent transition-colors duration-150",
-              shown ? "border-border bg-muted/70" : "hover:bg-muted/50",
-            )}
+    <>
+      {readingEarlier ? (
+        <div className="px-3 pt-2">
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 w-full justify-start gap-1.5 text-primary hover:text-primary [@media(pointer:coarse)]:h-11"
+            onClick={() => onView(latest)}
           >
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onView(meta.version)}
-                aria-current={shown ? "true" : undefined}
-                className="flex min-w-0 flex-1 items-start gap-3 rounded-lg px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:py-3"
-              >
-                <span className="mt-px w-9 shrink-0 text-sm font-semibold tabular-nums text-foreground">
-                  v{meta.version}
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <span className="flex items-center gap-1.5 text-sm text-foreground">
-                    <AuthorIcon
-                      className="size-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden="true"
-                    />
-                    {meta.author === "agent" ? "Agent" : "You"}
-                    {meta.version === latest ? (
-                      <span className="rounded bg-primary/12 px-1.5 text-[11px] font-medium text-primary">
-                        Latest
-                      </span>
-                    ) : null}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {formatVersionMoment(meta.createdAt)}
-                    {meta.baseVersion !== null ? ` · from v${meta.baseVersion}` : ""}
-                  </span>
-                </span>
-              </button>
-              <label className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-muted [@media(pointer:coarse)]:size-11">
-                <input
-                  type="checkbox"
-                  checked={ticked}
-                  onChange={() => onToggleCompare(meta.version)}
-                  aria-label={`Select v${meta.version} to compare`}
-                  className="size-4 cursor-pointer rounded border-border accent-primary"
-                />
-              </label>
-            </div>
-            {shown && meta.version !== latest ? (
-              <div className="px-2.5 pb-2.5 pl-[3.6rem]">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 gap-1.5 [@media(pointer:coarse)]:h-11"
-                  disabled={restoring || !canRestore}
-                  onClick={() => onRestore(meta.version)}
+            <ArrowUpToLine className="size-3.5" aria-hidden="true" />
+            Back to the latest version
+          </Button>
+        </div>
+      ) : null}
+      <ul className="space-y-1 px-2 py-2" aria-label="Versions">
+        {versions.map((meta) => {
+          const shown = meta.version === shownVersion;
+          const ticked = compareSelection.includes(meta.version);
+          const AuthorIcon = meta.author === "agent" ? Sparkles : UserRound;
+          return (
+            <li
+              key={meta.version}
+              className={cn(
+                "rounded-lg border border-transparent transition-colors duration-150",
+                shown ? "border-border bg-muted/70" : "hover:bg-muted/50",
+              )}
+            >
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => onView(meta.version)}
+                  aria-current={shown ? "true" : undefined}
+                  className="flex min-w-0 flex-1 items-start gap-3 rounded-lg px-2.5 py-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:py-3"
                 >
-                  <RotateCcw className="size-3.5" aria-hidden="true" />
-                  {restoring ? "Restoring…" : "Restore this version"}
-                </Button>
+                  <span className="mt-px w-9 shrink-0 text-sm font-semibold tabular-nums text-foreground">
+                    v{meta.version}
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span className="flex items-center gap-1.5 text-sm text-foreground">
+                      <AuthorIcon
+                        className="size-3.5 shrink-0 text-muted-foreground"
+                        aria-hidden="true"
+                      />
+                      {meta.author === "agent" ? "Agent" : "You"}
+                      {meta.version === latest ? (
+                        <span className="rounded bg-primary/12 px-1.5 text-[11px] font-medium text-primary">
+                          Latest
+                        </span>
+                      ) : null}
+                    </span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {formatVersionMoment(meta.createdAt)}
+                      {meta.baseVersion !== null ? ` · from v${meta.baseVersion}` : ""}
+                    </span>
+                  </span>
+                </button>
+                <label className="flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-md hover:bg-muted [@media(pointer:coarse)]:size-11">
+                  <input
+                    type="checkbox"
+                    checked={ticked}
+                    onChange={() => onToggleCompare(meta.version)}
+                    aria-label={`Select v${meta.version} to compare`}
+                    className="size-4 cursor-pointer rounded border-border accent-primary"
+                  />
+                </label>
               </div>
-            ) : null}
-          </li>
-        );
-      })}
-    </ul>
+              {shown && meta.version !== latest ? (
+                <div className="px-2.5 pb-2.5 pl-[3.6rem]">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1.5 [@media(pointer:coarse)]:h-11"
+                    disabled={restoring || !canRestore}
+                    onClick={() => onRestore(meta.version)}
+                  >
+                    <RotateCcw className="size-3.5" aria-hidden="true" />
+                    {restoring ? "Restoring…" : "Restore this version"}
+                  </Button>
+                </div>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </>
   );
 }
 

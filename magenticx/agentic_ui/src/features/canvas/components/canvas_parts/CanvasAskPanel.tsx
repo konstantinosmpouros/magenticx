@@ -1,9 +1,9 @@
 /**
- * The two halves of Ask agent (plan 44 §3, Phase 4.3), shared by the
- * desktop's floating selection menu and the pill toolbar's Ask agent
- * popover: the one-tap presets (Shorter, Longer, Formal, Simpler, Polish)
- * and the compact input ("Ask the agent to change this…", Enter sends, Esc
- * closes).
+ * Ask agent's panel (plan 44 §3, Phase 4.3), shared by the desktop's
+ * floating selection bar, the orb at the caret and the pill toolbar's Ask
+ * agent popover: the compact input ("Ask the agent to change this…", Enter
+ * sends, Esc closes) with the one-tap presets (Shorter, Longer, Formal,
+ * Simpler, Polish) under it as chips (`CanvasAskCard`).
  *
  * Built on the app's own Button and Input (shadcn) rather than a new
  * prompt-input component: one line and a send button is all the canvas
@@ -110,5 +110,37 @@ export function CanvasAskForm({
         </button>
       </CanvasHint>
     </form>
+  );
+}
+
+/**
+ * The whole Ask agent panel: an optional caption (what it acts on), the
+ * input, and the presets as chips under it.
+ */
+export function CanvasAskCard({
+  onSend,
+  onClose,
+  caption,
+  className,
+}: {
+  onSend: (instruction: string, preset?: CanvasEditPreset) => void;
+  /** Esc: back to the document, nothing sent. */
+  onClose: () => void;
+  /** Says what the agent will change ("This paragraph"); none for a selection. */
+  caption?: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("space-y-2", className)}>
+      {caption ? (
+        <p className="px-1 text-xs font-medium text-muted-foreground">{caption}</p>
+      ) : null}
+      <CanvasAskForm onSubmit={(instruction) => onSend(instruction)} onClose={onClose} />
+      <CanvasAskPresets
+        className="flex-wrap gap-1"
+        buttonClassName="h-7 border border-border/70 px-2.5 text-xs"
+        onPick={(preset, instruction) => onSend(instruction, preset)}
+      />
+    </div>
   );
 }

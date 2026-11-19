@@ -25,6 +25,7 @@ const { api } = vi.hoisted(() => ({
     listDocumentVersions: vi.fn(),
     getDocumentVersion: vi.fn(),
     saveDocumentVersion: vi.fn(),
+    listDocumentComments: vi.fn(),
   },
 }));
 vi.mock("@/shared/lib/api", () => api);
@@ -276,6 +277,7 @@ const latest = (): CanvasDocumentVersion => ({
 describe("structural edits mark the document unsaved, like typing", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
+    api.listDocumentComments.mockResolvedValue([]);
     api.listConversationDocuments.mockResolvedValue([]);
     api.listDocumentVersions.mockResolvedValue([]);
     api.getLatestDocument.mockResolvedValue(latest());

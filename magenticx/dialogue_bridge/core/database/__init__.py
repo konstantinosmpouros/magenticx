@@ -16,6 +16,7 @@ from core.database.engine import (
 from core.database.models import (
     AccountDeletionTable,
     AgentTable,
+    AttachmentPdfPreviewTable,
     AttachmentTable,
     BlobTable,
     ConversationReportTable,
@@ -48,6 +49,7 @@ from core.database.models import (
 __all__ = [
     "AccountDeletionTable",
     "AgentTable",
+    "AttachmentPdfPreviewTable",
     "AttachmentTable",
     "Base",
     "BlobTable",

@@ -64,7 +64,13 @@ export function useArtifactActions(userId: string | null) {
       if (file.type !== "image") {
         setPreviewFile(file);
         openFilePreview(
-          { name: file.fileName, mime: file.mime, size: file.size ?? undefined, blobId: file.blobId },
+          {
+            id: file.attachmentId,
+            name: file.fileName,
+            mime: file.mime,
+            size: file.size ?? undefined,
+            blobId: file.blobId,
+          },
           { id: file.messageId },
         );
         return;

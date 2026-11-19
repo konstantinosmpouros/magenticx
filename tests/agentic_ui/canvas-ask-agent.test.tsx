@@ -23,21 +23,29 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * pinned on a real editor above.
  */
 
-const { api, passage, coarse } = vi.hoisted(() => ({
+const { api, passage, coarse, orbSpot } = vi.hoisted(() => ({
   api: {
     listConversationDocuments: vi.fn(),
     getLatestDocument: vi.fn(),
     listDocumentVersions: vi.fn(),
     getDocumentVersion: vi.fn(),
     saveDocumentVersion: vi.fn(),
+    listDocumentComments: vi.fn(),
   },
   passage: { current: null as null | Record<string, unknown> },
   // The pill's Ask agent is touch-only; the panel tests drive it as a phone.
   coarse: { current: true },
+  // The orb at the caret's spot (its idle wait and measuring are pinned in
+  // canvas-selection-bar.test.tsx); null: no orb.
+  orbSpot: { current: null as null | { index: number; top: number } },
 }));
 vi.mock("@/shared/lib/api", () => api);
 vi.mock("@/features/canvas/hooks/useCoarsePointer", () => ({
   useCoarsePointer: () => coarse.current,
+}));
+vi.mock("@/features/canvas/hooks/useCaretOrb", () => ({
+  CARET_ORB_IDLE_MS: 400,
+  useCaretOrb: () => orbSpot.current,
 }));
 vi.mock("@/features/canvas/lib/askAgent", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/features/canvas/lib/askAgent")>();
@@ -329,6 +337,7 @@ function openAsk() {
 describe("Ask agent in the canvas", () => {
   beforeEach(() => {
     for (const fn of Object.values(api)) fn.mockReset();
+    api.listDocumentComments.mockResolvedValue([]);
     api.listConversationDocuments.mockResolvedValue([]);
     api.listDocumentVersions.mockResolvedValue([]);
     api.getLatestDocument.mockResolvedValue(latest());
@@ -340,6 +349,7 @@ describe("Ask agent in the canvas", () => {
     });
     passage.current = INTRO as never;
     coarse.current = true;
+    orbSpot.current = null;
   });
 
   it("a preset sends the passage on the latest version as one request", async () => {
@@ -361,7 +371,7 @@ describe("Ask agent in the canvas", () => {
     expect(api.saveDocumentVersion).not.toHaveBeenCalled();
   });
 
-  it("the floating selection menu offers Ask agent and the presets above the selection", async () => {
+  it("the floating selection bar's Ask agent opens the panel, the presets inside it", async () => {
     const onAskAgent = vi.fn().mockResolvedValue(true);
     renderCanvas({ onAskAgent });
     await screen.findByRole("heading", { level: 1, name: "The brief" });
@@ -370,16 +380,18 @@ describe("Ask agent in the canvas", () => {
     // off screen and the menu is `visibility: hidden` here (no accessible
     // names): find it by its marker and its buttons by their text.
     const menu = await waitFor(() => {
-      const found = document.querySelector<HTMLElement>("[data-canvas-ask-menu]");
+      const found = document.querySelector<HTMLElement>("[data-canvas-selection-menu]");
       if (!found) throw new Error("no menu");
       return found;
     });
-    expect(menu).toHaveAttribute("aria-label", "Ask the agent about the selection");
+    expect(menu).toHaveAttribute("aria-label", "Selection actions");
+    // The presets are not in the bar itself: they live in the Ask panel.
+    expect(within(menu).queryByText("Shorter")).toBeNull();
+    fireEvent.click(within(menu).getByText("Ask agent"));
+    const input = await within(menu).findByPlaceholderText("Ask the agent to change this…");
     for (const label of ["Shorter", "Longer", "Formal", "Simpler", "Polish"]) {
       expect(within(menu).getByText(label)).toBeInTheDocument();
     }
-    fireEvent.click(within(menu).getByText("Ask agent"));
-    const input = await within(menu).findByPlaceholderText("Ask the agent to change this…");
     fireEvent.change(input, { target: { value: "Name the release" } });
     fireEvent.submit(input.closest("form")!);
     await waitFor(() => expect(onAskAgent).toHaveBeenCalledTimes(1));
@@ -500,7 +512,61 @@ describe("Ask agent in the canvas", () => {
     await screen.findByRole("heading", { level: 1, name: "The brief" });
     const pill = screen.getByRole("toolbar", { name: "Formatting" });
     expect(within(pill).queryByRole("button", { name: "Ask agent" })).not.toBeInTheDocument();
-    expect(document.querySelector("[data-canvas-ask-menu]")).not.toBeNull();
+    expect(document.querySelector("[data-canvas-selection-menu]")).not.toBeNull();
+  });
+
+  it("the orb at the caret asks about its whole block, on the latest version", async () => {
+    coarse.current = false;
+    passage.current = null;
+    orbSpot.current = { index: 1, top: 10 };
+    const onAskAgent = vi.fn().mockResolvedValue(true);
+    const { rerender } = renderCanvas({ onAskAgent });
+    await screen.findByRole("heading", { level: 1, name: "The brief" });
+
+    const orb = document.querySelector<HTMLElement>("[data-canvas-caret-orb]")!;
+    expect(orb).toHaveAttribute("aria-label", "Ask agent");
+    fireEvent.click(orb);
+    expect(await screen.findByText("Ask about this paragraph")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Simpler" }));
+    await waitFor(() => expect(onAskAgent).toHaveBeenCalledTimes(1));
+    expect(onAskAgent).toHaveBeenCalledWith({
+      path: PATH,
+      version: 2,
+      selection: "Intro text.",
+      headingPath: ["The brief"],
+      instruction: "Make it simpler",
+      preset: "simpler",
+    });
+    // While the agent edits that block, no orb.
+    rerender({ onAskAgent, runActive: true, revision: "3:1" });
+    await screen.findByLabelText("brief, read-only while the agent edits");
+    expect(document.querySelector("[data-canvas-caret-orb]")).toBeNull();
+  });
+
+  it("the orb is hidden while reading, on touch, and without a conversation", async () => {
+    passage.current = null;
+    orbSpot.current = { index: 1, top: 10 };
+    const orb = () => document.querySelector("[data-canvas-caret-orb]");
+
+    // Touch: never (the pill's Ask agent is the way in there).
+    coarse.current = true;
+    const { rerender } = renderCanvas({ onAskAgent: vi.fn() });
+    await screen.findByRole("heading", { level: 1, name: "The brief" });
+    expect(orb()).toBeNull();
+
+    coarse.current = false;
+    rerender({ onAskAgent: vi.fn(), revision: "1" });
+    await waitFor(() => expect(orb()).not.toBeNull());
+    // No conversation to send into.
+    rerender({ onAskAgent: null, revision: "2" });
+    await waitFor(() => expect(orb()).toBeNull());
+
+    // Reading: switch the mode to Viewing.
+    rerender({ onAskAgent: vi.fn(), revision: "3" });
+    await waitFor(() => expect(orb()).not.toBeNull());
+    fireEvent.keyDown(screen.getByRole("button", { name: /^Mode: Editing/ }), { key: "Enter" });
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Viewing/ }));
+    await waitFor(() => expect(orb()).toBeNull());
   });
 
   it("is read-only while the agent's run goes, then loads the agent's version and unlocks", async () => {

@@ -261,7 +261,7 @@ async def test_a_purge_takes_every_version_of_that_user_only(docs):
     counts = await docs.purge_user("u1")
 
     assert counts == {"conversation_files": 1, "conversation_file_versions": 1, "conversation_file_seen": 0,
-                      "conversation_file_blobs": 1}
+                      "conversation_file_comments": 0, "conversation_file_blobs": 1}
     assert (await docs.latest("u2", "c2", BRIEF)).content == "theirs"
 
 

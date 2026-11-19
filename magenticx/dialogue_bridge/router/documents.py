@@ -5,16 +5,21 @@ the path is ``/{user_id}/{conversation_id}/documents…``: ``validate_userId``
 binds the session to the path's user, ``validate_convId`` is the owner check
 (someone else's conversation, or a "Try it" trial, is a 404 with no upstream
 call, so existence never leaks), then the per-user rate limit — after auth on
-purpose, since the bucket is keyed on the path's user. The save also needs the
-CSRF token. A document's path is a query or body field, never a URL segment.
+purpose, since the bucket is keyed on the path's user. The save and the export
+(Phase 4.5, a POST) also need the CSRF token. A document's path is a query or body field, never a URL segment.
 """
-from fastapi import APIRouter, Depends, Path, Query, status
+from fastapi import APIRouter, Depends, Path, Query, Response, status
 
 from core.auth.session import AuthUser, require_csrf_protection
 from core.database import ConversationTable
 from core.logging import set_context
-from core.security.rate_limit import document_read_rate_limit, document_save_rate_limit
+from core.security.rate_limit import (
+    document_export_rate_limit,
+    document_read_rate_limit,
+    document_save_rate_limit,
+)
 from schema import (
+    DocumentExportIn,
     DocumentListOut,
     DocumentSaveIn,
     DocumentSaveOut,
@@ -23,6 +28,7 @@ from schema import (
 )
 from schema.documents import DOCUMENT_PATH_MAX_CHARS
 from utils import validate_convId, validate_userId
+from utils.document_export import export_document
 from utils.documents import (
     get_document_version,
     latest_document,
@@ -114,3 +120,22 @@ async def saveDocumentVersion(
     text when ``base_version`` is no longer the latest — never last-write-wins."""
     set_context(user_id=user_id, conversation_id=conversation_id)
     return await save_document_version(current_user.id, current_conv.id, payload)
+
+
+@router.post("/{user_id}/{conversation_id}/documents/export", summary="Export a canvas document as Word, PDF or Markdown",
+             responses={200: {"content": {"application/pdf": {}, "text/markdown": {}}},
+                        503: {"description": "sandbox_unavailable"}, 504: {"description": "conversion_timeout"}})
+async def exportDocument(
+    user_id: str,
+    conversation_id: str,
+    payload: DocumentExportIn,
+    current_user: AuthUser = Depends(validate_userId),
+    _csrf: None = Depends(require_csrf_protection),
+    _rate_limited: None = Depends(document_export_rate_limit),
+    current_conv: ConversationTable = Depends(validate_convId),
+) -> Response:
+    """One version (the latest by default) as a download (plan 44, Phase 4.5):
+    ``md`` as stored; ``docx`` / ``pdf`` rendered in the sandbox box. 503
+    ``sandbox_unavailable`` when the box cannot run, 504 on its timeout."""
+    set_context(user_id=user_id, conversation_id=conversation_id)
+    return await export_document(current_user.id, current_conv.id, payload)

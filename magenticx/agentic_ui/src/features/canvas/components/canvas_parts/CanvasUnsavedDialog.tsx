@@ -15,6 +15,9 @@
  * request is never sent against edits it cannot see — and never saved
  * silently. There is no Discard there: dropping edits to ask is not a
  * choice anyone makes on purpose.
+ *
+ * Export does not ask: its panel says unsaved edits aren't included and
+ * offers Save first (`CanvasExportPanel`).
  */
 import { useState } from "react";
 import { CircleDot, Loader2 } from "lucide-react";
@@ -40,7 +43,10 @@ export function CanvasUnsavedDialog({
   open: boolean;
   /** The document's title, for the question. */
   title: string;
-  /** Leaving the document (Save / Discard / Cancel), or sending Ask agent (Save and send / Cancel). */
+  /**
+   * Leaving the document (Save / Discard / Cancel), or sending Ask agent
+   * (Save and send / Cancel).
+   */
   purpose?: "leave" | "send";
   onCancel: () => void;
   /** Saves (then goes on); resolves when the save has landed (or failed). */

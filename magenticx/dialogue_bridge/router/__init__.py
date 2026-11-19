@@ -6,6 +6,7 @@ from router.inference import router as inference_router
 from router.preferences import router as preferences_router
 from router.conversations import router as conversations_router
 from router.documents import router as documents_router
+from router.document_comments import router as document_comments_router
 from router.account import router as account_router
 from router.commands import router as commands_router
 from router.export import router as export_router
@@ -35,6 +36,7 @@ __all__ = [
     "conversation_tasks_router",
     "conversations_router",
     "documents_router",
+    "document_comments_router",
     "account_router",
     "commands_router",
     "export_router",

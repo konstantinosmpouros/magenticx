@@ -91,6 +91,15 @@ from schema.compaction import (
     CompactConversationIn,
     CompactConversationOut,
 )
+from schema.document_export import DocumentExportIn, DocumentExportFormat
+from schema.document_comments import (
+    DocumentCommentAnchor,
+    DocumentCommentIn,
+    DocumentCommentOut,
+    DocumentCommentPatchIn,
+    DocumentCommentRefusal,
+    DocumentCommentsOut,
+)
 from schema.documents import (
     DocumentListOut,
     DocumentSaveIn,
@@ -229,6 +238,14 @@ from schema.workflows import (
 )
 
 __all__ = [
+    "DocumentExportIn",
+    "DocumentExportFormat",
+    "DocumentCommentAnchor",
+    "DocumentCommentIn",
+    "DocumentCommentOut",
+    "DocumentCommentPatchIn",
+    "DocumentCommentRefusal",
+    "DocumentCommentsOut",
     "DocumentListOut",
     "DocumentSaveIn",
     "DocumentSaveOut",

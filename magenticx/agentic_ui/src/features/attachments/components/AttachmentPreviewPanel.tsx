@@ -1,7 +1,11 @@
 import * as React from "react";
 import { Download, X } from "lucide-react";
 
-import { fetchAttachmentPreviewBlob, fetchDocxPreviewToken } from "@/shared/lib/api";
+import {
+  fetchAttachmentPreviewBlob,
+  fetchAttachmentPreviewPdf,
+  fetchDocxPreviewToken,
+} from "@/shared/lib/api";
 import type { AttachmentOut, MessageOut } from "@/shared/lib/types";
 import { Button } from "@/shared/ui/button";
 import { ModalLayer } from "@/shared/ui/modal-layer";
@@ -59,6 +63,8 @@ type PreviewState =
       meta: AttachmentPreviewMeta;
       descriptor: AttachmentPreviewDescriptor;
       previewUrl?: string;
+      /** An Office file rendered to PDF by the server: shown in the PDF viewer. */
+      asPdf?: boolean;
       blob?: Blob;
       text?: string;
     };
@@ -80,6 +86,8 @@ function extractAttachmentMeta(attachment: AttachmentLike): AttachmentPreviewMet
   const candidate = attachment as {
     name?: string;
     file_name?: string;
+    id?: string;
+    attachmentId?: string;
     mime?: string;
     mime_type?: string;
     blobId?: string;
@@ -93,6 +101,7 @@ function extractAttachmentMeta(attachment: AttachmentLike): AttachmentPreviewMet
     name: candidate.name ?? candidate.file_name ?? candidate.file?.name ?? "Unknown file",
     mime: candidate.mime ?? candidate.mime_type ?? candidate.file?.type ?? "",
     blobId: candidate.blobId ?? candidate.blob_id,
+    attachmentId: candidate.attachmentId ?? candidate.id,
     size: candidate.size ?? candidate.size_bytes ?? candidate.file?.size,
     file: candidate.file,
   };
@@ -109,7 +118,7 @@ function renderReadyState(state: Extract<PreviewState, { status: "ready" }>) {
     return null;
   }
 
-  if (descriptor.kind === "pdf" && previewUrl) {
+  if ((descriptor.kind === "pdf" || state.asPdf) && previewUrl) {
     return <PdfPreview name={meta.name} url={previewUrl} />;
   }
 
@@ -253,6 +262,25 @@ export default function AttachmentPreviewPanel({
         }
 
         setState({ status: "loading", meta, descriptor });
+
+        // Plan 44, Phase 4.5: the server renders the file to PDF in the
+        // sandbox box (LibreOffice), shown in the app's own PDF viewer — no
+        // file leaves for Microsoft's viewer. When the box can't (503), is
+        // too slow (504) or anything else fails, the old preview takes over.
+        if (meta.attachmentId) {
+          try {
+            const pdfBytes = await fetchAttachmentPreviewPdf(userId, meta.attachmentId);
+            if (cancelled) return;
+            // Typed as a PDF whatever came back: the iframe only ever renders
+            // it through the browser's PDF viewer (the same guard as above).
+            objectUrl = URL.createObjectURL(new Blob([pdfBytes], { type: "application/pdf" }));
+            setState({ status: "ready", meta, descriptor, previewUrl: objectUrl, asPdf: true });
+            return;
+          } catch {
+            if (cancelled) return;
+          }
+        }
+
         try {
           const { token } = await fetchDocxPreviewToken({
             userId,

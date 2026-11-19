@@ -642,6 +642,27 @@ class AttachmentTable(Base):
     blob = relationship("BlobTable", back_populates="attachment", cascade="all, delete-orphan", uselist=False, single_parent=True)
 
 
+class AttachmentPdfPreviewTable(Base):
+    """An Office attachment rendered as a PDF in the sandbox box (plan 44, Phase 4.5).
+
+    A cache, keyed for lookup by the SHA-256 of the source bytes
+    (``source_sha256``): the same file uploaded or forked twice by one user
+    renders once — the lookup is always scoped to the user's own attachments,
+    never across users. Each row hangs off the attachment it was rendered for
+    (``ON DELETE CASCADE``), so it lives and dies with it: a deleted message,
+    conversation or account takes its previews along. Stored like the
+    attachment blobs themselves (``chat_db``, bytea).
+    """
+
+    __tablename__ = "attachment_pdf_previews"
+
+    attachment_id = Column(String, ForeignKey("attachments.id", ondelete="CASCADE"), primary_key=True)
+    source_sha256 = Column(String(64), nullable=False, index=True)
+    data = Column(LargeBinary, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+
+
 class UserAvatarTable(Base):
     """The photo a user set in Edit profile: a 256 px WebP the bridge re-encoded.
 

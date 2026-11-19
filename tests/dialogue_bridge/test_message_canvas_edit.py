@@ -419,5 +419,12 @@ def test_the_canvas_edit_migration_is_the_single_head():
         revisions[revision] = down.group(1) if down else None
     parents = {down for down in revisions.values() if down}
     heads = [rev for rev in revisions if rev not in parents]
-    assert heads == ["0050_message_canvas_edit"]
+    # One head, with 0050 on its chain (a later migration, e.g. 0051's PDF
+    # previews, may sit on top of it).
+    assert len(heads) == 1
+    chain, rev = [], heads[0]
+    while rev:
+        chain.append(rev)
+        rev = revisions.get(rev)
+    assert "0050_message_canvas_edit" in chain
     assert revisions["0050_message_canvas_edit"] == "0049_attachment_source_path"

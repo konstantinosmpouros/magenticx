@@ -45,6 +45,7 @@ from router import (
     conversations_router,
     conversation_tasks_router,
     documents_router,
+    document_comments_router,
     tasks_router,
     export_router,
     favicons_router,
@@ -297,6 +298,12 @@ app.include_router(
 # the task routes, so they never shadow /{user_id}/{conversation_id}.
 app.include_router(
     documents_router,
+    prefix="/v1/conversations",
+    tags=["Documents"],
+)
+# Plan 44 Phase 4.4: comments on a canvas document, beside the document routes.
+app.include_router(
+    document_comments_router,
     prefix="/v1/conversations",
     tags=["Documents"],
 )

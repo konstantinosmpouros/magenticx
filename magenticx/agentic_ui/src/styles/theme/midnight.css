@@ -45,6 +45,11 @@
     --info: 211 100% 70%;
     --info-foreground: var(--midnight-1);
 
+    /* File-type marks: a touch lighter so they hold on navy. */
+    --file-word: 214 80% 52%;
+    --file-pdf: 0 72% 55%;
+    --file-mark-fg: 0 0% 100%;
+
     /* The roles the light themes set (light.css), for anything reading them
        directly. */
     --theme-primary: 262 94% 70%;

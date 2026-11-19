@@ -1,8 +1,10 @@
 /**
- * The document canvas (plan 44, Phases 4.1–4.2): one document of the
+ * The document canvas (plan 44, Phases 4.1–4.5): one document of the
  * conversation, open beside the chat. Its header switches between the
- * conversation's documents and holds the save status, find, history, full
- * screen and close; the body is the document in the editor
+ * conversation's documents and holds the save status (nothing once saved),
+ * Export, full screen and close; the document row holds the outline, Find
+ * (also Ctrl/Cmd+F) and the comments; the byline's version chip opens the
+ * version history. The body is the document in the editor
  * (`CanvasDocumentView`) — editable at its latest version, read-only at an
  * earlier one — or a compare of two versions, or its loading skeleton, a
  * failed load with Retry, or (when the document is gone) a way to the file's
@@ -14,6 +16,14 @@
  * Save and send / Cancel first). Until that run ends the editor is read-only
  * and the passage tinted; then the agent's version is loaded before it
  * unlocks.
+ *
+ * Comments (Phase 4.4): a selection's menu (or the pill's Comment on touch)
+ * starts a thread on the passage; the threads live in a side panel (a sheet
+ * on a phone) that shares the history's slot, and their passages are painted
+ * in the text. They are not edits: nothing about them is unsaved, and they
+ * work while reading. Export (Phase 4.5) downloads a saved version as Word,
+ * PDF or Markdown; with unsaved edits it asks Save and export / Export the
+ * saved version / Cancel first.
  *
  * Edits are saved as the user's versions by `useCanvasEditing`, only when
  * the user saves (Save, Ctrl+S); closing, switching documents or restoring
@@ -30,26 +40,36 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type {
   CanvasAgentEdit,
+  CanvasAnchorPlacement,
   CanvasAskControl,
   CanvasAskDraft,
   CanvasBylineValue,
+  CanvasCommentControl,
+  CanvasCommentMarks,
   CanvasCompareState,
   CanvasDocumentAuthor,
   CanvasEditRef,
+  CanvasExportFormat,
   CanvasMode,
 } from "@/shared/lib/types";
+import { useToast } from "@/shared/hooks/use-toast";
+import { toastError } from "@/shared/lib/toast";
 import { Button } from "@/shared/ui/button";
 
+import { useCanvasComments } from "../hooks/useCanvasComments";
 import { useCanvasDocument } from "../hooks/useCanvasDocument";
 import { useCanvasEditing } from "../hooks/useCanvasEditing";
+import { useCanvasExport } from "../hooks/useCanvasExport";
 import { useRequestedShine } from "../hooks/useRequestedShine";
 import { useCanvasVersionText, useFetchCanvasVersionText } from "../hooks/useCanvasVersionText";
 import { buildCanvasEdit } from "../lib/askAgent";
 import { documentTitle } from "../lib/documentTitle";
-import { isApplePlatform, isSaveShortcut } from "../lib/shortcuts";
+import { isApplePlatform, isFindShortcut, isSaveShortcut } from "../lib/shortcuts";
+import { CanvasComments } from "./canvas_parts/CanvasComments";
 import { CanvasCompareView } from "./canvas_parts/CanvasCompareView";
 import { CanvasConflictDialog } from "./canvas_parts/CanvasConflictDialog";
 import { CanvasDocumentView } from "./canvas_parts/CanvasDocumentView";
+import { CanvasExportPanel } from "./canvas_parts/CanvasExportPanel";
 import { CanvasHeader } from "./canvas_parts/CanvasHeader";
 import { CanvasHistory } from "./canvas_parts/CanvasHistory";
 import { CanvasAgentEditingStatus, CanvasSaveStatus } from "./canvas_parts/CanvasSaveStatus";
@@ -111,7 +131,11 @@ function DocumentSession({
   const data = useCanvasDocument(userId, conversationId, path, revision);
   const [findOpen, setFindOpen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  // The side slot beside the document (a sheet on a phone): one panel at a time.
+  const [panel, setPanel] = useState<"history" | "comments" | null>(null);
+  const historyOpen = panel === "history";
+  const commentsOpen = panel === "comments";
+  const closePanel = () => setPanel(null);
   // Desktop opens for editing; a phone opens for reading (✎ switches). Held
   // as "not chosen yet" until the user picks, because the phone check
   // settles after the first render.
@@ -162,6 +186,32 @@ function DocumentSession({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [flush]);
+
+  // Ctrl/Cmd+F opens Find while the canvas has the focus (or was the last
+  // place clicked); in the chat the browser's own find stays.
+  const sectionRef = useRef<HTMLElement>(null);
+  const canFind = Boolean(shown) && compare === null;
+  useEffect(() => {
+    let lastInside = false;
+    const onDown = (event: PointerEvent) => {
+      lastInside = Boolean(sectionRef.current?.contains(event.target as Node));
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (!canFind || !isFindShortcut(event)) return;
+      const target = event.target as Node | null;
+      const inside = target !== null && Boolean(sectionRef.current?.contains(target));
+      if (!inside && !(target === document.body && lastInside)) return;
+      event.preventDefault();
+      setFindOpen(true);
+      window.requestAnimationFrame(() => document.getElementById("canvas-find")?.focus());
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [canFind]);
 
   // Saving is the user's call: an action that would drop unsaved edits
   // (close, another document, restore) asks Save / Discard / Cancel first.
@@ -264,7 +314,7 @@ function DocumentSession({
   const viewVersion = (version: number) => {
     setCompare(null);
     data.pickVersion(version === data.latest?.version ? null : version);
-    if (compact) setHistoryOpen(false);
+    if (compact) closePanel();
   };
 
   const toggleCompare = (version: number) =>
@@ -278,7 +328,7 @@ function DocumentSession({
     const [from, to] = [...compareSelection].sort((a, b) => a - b);
     if (from === undefined || to === undefined) return;
     setCompare({ kind: "versions", from, to });
-    if (compact) setHistoryOpen(false);
+    if (compact) closePanel();
   };
 
   const restore = (version: number) => guard(() => void restoreNow(version));
@@ -320,6 +370,75 @@ function DocumentSession({
     void editing.keepMine();
   };
 
+  const toggleHistory = () => {
+    if (!historyOpen) loadVersions();
+    setPanel((open) => (open === "history" ? null : "history"));
+  };
+
+  // The version the user is looking at, saved: the editor's base while
+  // editing the latest, else the earlier version on screen. Comments are made
+  // on it, and Export reads it.
+  const savedVersionShown = (): number | null =>
+    data.isLatest ? (editing.headVersion() ?? shown?.version ?? null) : (shown?.version ?? null);
+
+  // Comments (Phase 4.4).
+  const comments = useCanvasComments(userId, conversationId, path);
+  const [active, setActive] = useState<{ id: string; nonce: number } | null>(null);
+  const [placements, setPlacements] = useState<Record<string, CanvasAnchorPlacement> | null>(null);
+  const focusThread = (id: string) =>
+    setActive((current) => ({ id, nonce: (current?.nonce ?? 0) + 1 }));
+  const commentControl: CanvasCommentControl = {
+    onCreate: (anchor, body) => {
+      const version = savedVersionShown();
+      if (version === null) return;
+      setPanel("comments");
+      void comments.createThread(version, anchor, body).then((saved) => {
+        if (saved) setActive((current) => ({ id: saved.id, nonce: current?.nonce ?? 0 }));
+      });
+    },
+  };
+  const marks: CanvasCommentMarks = {
+    threads: comments.open,
+    activeId: commentsOpen ? (active?.id ?? null) : null,
+    focusNonce: active?.nonce ?? 0,
+    onActivate: (id) => {
+      // While editing, a click in a commented passage is usually to place the
+      // caret: it brings the thread forward only if the panel is open. While
+      // reading it opens the panel on that thread.
+      if (mode === "editing" && data.isLatest && !commentsOpen) return;
+      setPanel("comments");
+      setActive((current) => ({ id, nonce: current?.nonce ?? 0 }));
+    },
+    onPlaced: setPlacements,
+  };
+
+  // Export (Phase 4.5): a saved version; unsaved edits ask first.
+  const exporter = useCanvasExport({
+    userId,
+    conversationId,
+    path: data.latest?.path ?? path,
+    title,
+  });
+  const { toast } = useToast();
+  // Any saved version exports; unsaved edits never do (the panel says so,
+  // with a Save first). Copy as Markdown reads that version's text.
+  const exportVersion = (format: CanvasExportFormat, version: number | null) =>
+    exporter.run(format, version ?? savedVersionShown());
+  const copyMarkdown = async (version: number | null): Promise<boolean> => {
+    try {
+      const wanted = version ?? savedVersionShown();
+      const text =
+        wanted === null || wanted === data.latest?.version
+          ? (data.latest?.content ?? "")
+          : await fetchVersionText(wanted);
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (error) {
+      toastError(toast, "Couldn't copy the document", error);
+      return false;
+    }
+  };
+
   const conflictAuthor = conflict ? authorOf(conflict.currentVersion) : null;
   const editingLatest = data.isLatest && save !== null;
   const byline: CanvasBylineValue | null = shown
@@ -328,11 +447,8 @@ function DocumentSession({
         author: editingLatest ? save.head.author : shown.author,
         createdAt: (editingLatest && save.head.createdAt) || shown.createdAt,
         isLatest: data.isLatest,
-        versions: data.versions,
-        versionsLoading: data.versionsLoading,
-        onLoadVersions: data.loadVersions,
-        onPickVersion: (version) =>
-          version === null ? data.pickVersion(null) : viewVersion(version),
+        historyOpen,
+        onToggleHistory: toggleHistory,
       }
     : null;
 
@@ -341,11 +457,16 @@ function DocumentSession({
     compact,
     findOpen,
     outlineOpen,
+    onToggleFind: () => setFindOpen((open) => !open),
     onCloseFind: () => setFindOpen(false),
     onToggleOutline: () => setOutlineOpen((open) => !open),
     onCloseOutline: () => setOutlineOpen(false),
     mode,
     onModeChange: changeMode,
+    comment: commentControl,
+    marks,
+    commentsOpen,
+    onToggleComments: () => setPanel((open) => (open === "comments" ? null : "comments")),
   };
 
   const body = compare ? (
@@ -404,6 +525,7 @@ function DocumentSession({
 
   return (
     <section
+      ref={sectionRef}
       aria-label={`Document: ${title}`}
       className="relative flex h-full min-h-0 w-full flex-col bg-background"
     >
@@ -414,13 +536,11 @@ function DocumentSession({
         showOutlineToggle={compact}
         showFullscreenToggle={canToggleFullscreen}
         fullscreen={fullscreen}
-        findOpen={findOpen}
         canFind={Boolean(shown)}
-        historyOpen={historyOpen}
         status={
           agentEdit ? (
             <CanvasAgentEditingStatus compact={compact} />
-          ) : save && (mode === "editing" || save.status !== "saved") ? (
+          ) : save ? (
             <CanvasSaveStatus
               status={save.status}
               errorMessage={save.errorMessage}
@@ -432,19 +552,31 @@ function DocumentSession({
             />
           ) : null
         }
+        exportMenu={
+          <CanvasExportPanel
+            title={title}
+            disabled={!shown}
+            defaultVersion={savedVersionShown()}
+            latestVersion={data.latest?.version ?? null}
+            versions={data.versions}
+            versionsLoading={data.versionsLoading}
+            onLoadVersions={data.loadVersions}
+            pending={exporter.pending}
+            unsaved={Boolean(save && save.status !== "saved")}
+            onSaveFirst={flush}
+            onExport={exportVersion}
+            onCopyMarkdown={copyMarkdown}
+          />
+        }
         onSelectDocument={selectDocument}
         onToggleOutline={() => setOutlineOpen((open) => !open)}
-        onToggleFind={() => setFindOpen((open) => !open)}
-        onToggleHistory={() => {
-          if (!historyOpen) loadVersions();
-          setHistoryOpen((open) => !open);
-        }}
         onToggleFullscreen={onToggleFullscreen}
         onClose={() => leave(onClose)}
       />
 
-      {/* A row: on desktop the history panel takes its own column, so the
-          document and a compare narrow beside it instead of sliding under. */}
+      {/* A row: on desktop the history or comments panel takes its own
+          column, so the document and a compare narrow beside it instead of
+          sliding under. */}
       <div className="relative flex min-h-0 flex-1">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">{body}</div>
         <CanvasHistory
@@ -460,7 +592,16 @@ function DocumentSession({
           onToggleCompare={toggleCompare}
           onCompare={openCompare}
           onRestore={(version) => void restore(version)}
-          onClose={() => setHistoryOpen(false)}
+          onClose={closePanel}
+        />
+        <CanvasComments
+          open={commentsOpen}
+          compact={compact}
+          comments={comments}
+          placements={compare ? null : placements}
+          activeId={active?.id ?? null}
+          onActivate={focusThread}
+          onClose={closePanel}
         />
       </div>
 

@@ -1,6 +1,6 @@
 # Attachments
 
-Attachments are binary files uploaded alongside chat messages. They are stored as raw bytes directly in PostgreSQL (not on disk or in object storage), with each attachment owning exactly one blob row containing its data. The upload path encodes files as base64 in the HTTP request body; the backend decodes and persists them. Download streams the blob back in 512KB chunks with HTTP byte-range support. Preview is handled client-side for most types (PDF, code, text). Word documents (`.docx`), Excel workbooks (`.xlsx`/`.xlsm`), and PowerPoint decks (`.ppt`/`.pptx`) all use Microsoft's free Office Online Viewer via a short-lived HMAC-signed token. Attachments are not indexed for RAG retrieval — they are chat artifacts only.
+Attachments are binary files uploaded alongside chat messages. They are stored as raw bytes directly in PostgreSQL (not on disk or in object storage), with each attachment owning exactly one blob row containing its data. The upload path encodes files as base64 in the HTTP request body; the backend decodes and persists them. Download streams the blob back in 512KB chunks with HTTP byte-range support. Preview is handled client-side for most types (PDF, code, text). Word documents (`.docx`), Excel workbooks (`.xlsx`/`.xlsm`), and PowerPoint decks (`.ppt`/`.pptx`) are first rendered to PDF in the sandbox box (`…/preview.pdf`, plan 44 Phase 4.5) and shown in the app's own PDF viewer; when that is not possible they fall back to Microsoft's free Office Online Viewer via a short-lived HMAC-signed token. Attachments are not indexed for RAG retrieval — they are chat artifacts only.
 
 ---
 
@@ -176,6 +176,42 @@ Response `UserFilesPage{items, nextCursor}`; each `UserFileOut` carries `attachm
 
 Left out on purpose: other users' files, **private (incognito) chats and "Try it" trials** (every list in the app hides them), and rows without a blob. Deleted conversations and messages drop out by themselves — deletes are hard, and attachments cascade. Archived chats are included. Auth: `validate_userId`, then `files_list_rate_limit` (120/60 per user). The query walks `conversations.user_id` → `messages.conversation_id` → `attachments.message_id`, all indexed; no new index or migration.
 
+### Office PDF previews (plan 44, 4.5)
+
+`GET /v1/attachments/{userId}/{attachmentId}/preview.pdf` → `200 application/pdf`: an Office attachment rendered by LibreOffice headless **in the sandbox box**, which the UI shows instead of the Microsoft Office Online viewer (and which also works locally, where that viewer cannot reach the file). Same box, same fixed-command machinery as the canvas export ([canvas § Phase 7](canvas.md#phase-7--export-45-backend)): `soffice --headless --norestore --convert-to pdf --outdir /conversation/output /conversation/input/source.<ext>`, the upload's bytes as the only input under a fixed name, never its file name.
+
+```mermaid
+sequenceDiagram
+  participant UI
+  participant BR as dialogue_bridge
+  participant DB as chat_db
+  participant AG as agents
+  participant RN as sandbox_runner
+  UI->>BR: GET /v1/attachments/{uid}/{aid}/preview.pdf
+  BR->>DB: attachment → message → conversation.user_id = uid (else 404)
+  BR->>DB: a preview with the same source SHA-256 among the user's attachments?
+  alt cache hit
+    BR-->>UI: the cached PDF
+  else miss
+    BR->>AG: POST /users/{uid}/conversations/{cid}/office-preview?extension=docx (raw bytes)
+    AG->>RN: POST /v1/exec (platform-preview, fixed command)
+    RN-->>AG: output/source.pdf
+    AG-->>BR: application/pdf
+    BR->>DB: INSERT attachment_pdf_previews
+    BR-->>UI: the PDF
+  end
+```
+
+| Rule | Value |
+| --- | --- |
+| Owner check | the download's join: attachment → message → conversation, `conversations.user_id` = the path's user (bound to the session by `validate_userId`); anyone else's or a missing id is a 404 with no upstream call |
+| Types | by extension first, else a canonical stored MIME: `docx`, `xlsx`, `pptx`, `odt`, `ods`, `odp`. Anything else (legacy `.doc/.xls/.ppt`, `.xlsm`, …) is `415` and keeps the existing preview |
+| Size | the source ≤ `ATTACHMENT_PDF_PREVIEW_MAX_SOURCE_BYTES` (20 MiB, the runner's input cap) else `413`; the PDF ≤ `ATTACHMENT_PDF_PREVIEW_MAX_BYTES` (30 MiB) |
+| Cache | `chat_db.attachment_pdf_previews` (migration `0051`): one row per attachment it was rendered for, looked up by `source_sha256` (the attachment's `content_sha256`, or the bytes' hash for older uploads) **within the user's own attachments** — a re-upload or a forked copy hits it, another user's identical file never does. `ON DELETE CASCADE` from the attachment, so a deleted message, conversation or account takes it along. Stored like the blobs themselves (bytea in `chat_db`, not app-encrypted). A failed or non-PDF render is never cached |
+| Rate limit | `OFFICE_PREVIEW` 30/60 s per user, after auth |
+| Response | `inline` disposition (`<name>.pdf`), `nosniff`, `Content-Security-Policy: sandbox; default-src 'none'`, `Cache-Control: private, max-age=ATTACHMENT_INLINE_CACHE_MAX_AGE_SECONDS` |
+| Errors | `503 {"detail": {"code": "sandbox_unavailable", "message"}}` when the box cannot run (execution off, no runner locally, runner down or busy) — the UI then falls back to its old preview; `504` `conversion_timeout`; `502` `conversion_failed` (e.g. a corrupt file) |
+
 ---
 
 ## Phase 4 — Client-Side Preview
@@ -189,9 +225,9 @@ The frontend classifies each attachment by MIME type and file extension, then ro
 | File Type | Extensions | Preview Kind | Size Limit | Renderer |
 | --- | --- | --- | --- | --- |
 | PDF | `.pdf` | `pdf` | — | `<iframe>` or PDF.js |
-| Word | `.docx` | `docx` | 25 MB | `/preview-token` → Microsoft Office Online Viewer `<iframe>` |
-| Excel | `.xlsx`, `.xlsm` | `xlsx` | 25 MB | `/preview-token` → Microsoft Office Online Viewer `<iframe>` |
-| PowerPoint | `.ppt`, `.pptx` | `pptx` | 25 MB | `/preview-token` → Microsoft Office Online Viewer `<iframe>` |
+| Word | `.docx` | `docx` | 25 MB | `…/preview.pdf` → the PDF `<iframe>`; on any failure `/preview-token` → Microsoft Office Online Viewer `<iframe>` |
+| Excel | `.xlsx`, `.xlsm` | `xlsx` | 25 MB | `…/preview.pdf` → the PDF `<iframe>`; on any failure `/preview-token` → Microsoft Office Online Viewer `<iframe>` |
+| PowerPoint | `.ppt`, `.pptx` | `pptx` | 25 MB | `…/preview.pdf` → the PDF `<iframe>`; on any failure `/preview-token` → Microsoft Office Online Viewer `<iframe>` |
 | Markdown | `.md`, `.mdx` | `markdown` | 5 MB | React Markdown renderer |
 | JSON | `.json` | `json` | 5 MB | Code block with syntax highlight |
 | CSV | `.csv` | `csv` | 5 MB | Table renderer (PapaParse) |
@@ -208,7 +244,7 @@ Files that don't match any known type are shown as an unsupported preview with a
 3. If file exceeds the size limit for its kind, shows "File too large to preview" with a download button
 4. For text kinds: `fetchAttachmentPreviewBlob()` fetches the blob, decodes as UTF-8, passes to the appropriate renderer
 5. For PDF: `fetchAttachmentPreviewBlob()` fetches the bytes, then renders them as an object URL whose MIME is **forced** to `application/pdf` (`URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }))`) used as the `<iframe src>`. Forcing the type guarantees the iframe renders through the browser's PDF viewer and can never execute a blob whose stored bytes are HTML/SVG — a same-origin stored-XSS guard.
-6. For Word / Excel / PowerPoint (`.docx`, `.xlsx`/`.xlsm`, `.ppt`/`.pptx`): calls `fetchDocxPreviewToken()` → `/preview-token/...` to get a 60-second signed token, constructs a `/api/v1/attachments/public/{token}` URL, then embeds it in `https://view.officeapps.live.com/op/embed.aspx?src=...` as an `<iframe>`
+6. For Word / Excel / PowerPoint (`.docx`, `.xlsx`/`.xlsm`, `.ppt`/`.pptx`): first `fetchAttachmentPreviewPdf(userId, attachmentId)` → `GET /v1/attachments/{userId}/{attachmentId}/preview.pdf` (the attachment's `id`; the Artifacts page passes its `attachmentId`). A PDF is shown exactly like step 5 (object URL forced to `application/pdf`, `PdfPreview`). Any failure — 503 (no box), 504, 502, 415 (a type the box does not render), 413, 429 — falls back silently to the old preview: calls `fetchDocxPreviewToken()` → `/preview-token/...` to get a 60-second signed token, constructs a `/api/v1/attachments/public/{token}` URL, then embeds it in `https://view.officeapps.live.com/op/embed.aspx?src=...` as an `<iframe>`
 
 `PreviewChrome.tsx` wraps every renderer with consistent controls: close button, download button, and filename display.
 
@@ -382,7 +418,8 @@ sequenceDiagram
 | Concept | File | What to look for |
 | --- | --- | --- |
 | DB tables | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) | `AttachmentTable`, `BlobTable`, FK cascade definitions |
-| Attachments router | [magenticx/dialogue_bridge/router/attachments.py](../../magenticx/dialogue_bridge/router/attachments.py) | download, preview, preview-token, public, images, files endpoints |
+| Attachments router | [magenticx/dialogue_bridge/router/attachments.py](../../magenticx/dialogue_bridge/router/attachments.py) | download, preview, preview-token, public, images, files, `preview.pdf` endpoints |
+| Office PDF previews (plan 44 4.5) | [magenticx/dialogue_bridge/utils/document_export.py](../../magenticx/dialogue_bridge/utils/document_export.py), [magenticx/agents/router/document_export.py](../../magenticx/agents/router/document_export.py), [magenticx/agents/harness/conversions/](../../magenticx/agents/harness/conversions/), migration [0051](../../magenticx/dialogue_bridge/core/database/migrations/versions/0051_attachment_pdf_previews.py) | `office_pdf_preview()`, `_cached_preview()`, `office_extension()`; `office_preview_job()`; `AttachmentPdfPreviewTable` |
 | Artifacts listing (bridge) | [magenticx/dialogue_bridge/utils/user_files.py](../../magenticx/dialogue_bridge/utils/user_files.py) | `list_user_files()`, `classify_file_type()` + its SQL twin `_type_filter()`, keyset cursor |
 | Artifacts page (frontend) | [magenticx/agentic_ui/src/features/artifacts/](../../magenticx/agentic_ui/src/features/artifacts/) | `ArtifactsPage`, `useUserFiles`, `useArtifactActions`, `lib/fileFilters.ts`, `lib/routes.ts` |
 | Upload persistence | [magenticx/dialogue_bridge/utils/conversations.py](../../magenticx/dialogue_bridge/utils/conversations.py) | `init_attachments()`, `clone_branch_to_conversation()` |

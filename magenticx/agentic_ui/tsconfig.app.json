@@ -35,6 +35,9 @@
       "@testing-library/*": ["./node_modules/@testing-library/*"],
       "react-router-dom": ["./node_modules/react-router-dom"],
       "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
+      // The canvas's selection bar / caret orb tests run on a real Plate editor.
+      "platejs": ["./node_modules/platejs"],
+      "platejs/react": ["./node_modules/platejs/dist/react/index.d.ts"],
       // A test that drives a hook through its own state (`useState`).
       "react": ["./node_modules/@types/react"],
       // Point at the TYPE declarations, not the .js: mapping these to the

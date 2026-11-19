@@ -20,3 +20,13 @@ export function isSaveShortcut(event: KeyboardEvent): boolean {
     event.key.toLowerCase() === "s"
   );
 }
+
+/** Ctrl+F, or ⌘F on a Mac: Find in the document instead of the browser's find. */
+export function isFindShortcut(event: KeyboardEvent): boolean {
+  return (
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === "f"
+  );
+}

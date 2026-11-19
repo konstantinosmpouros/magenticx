@@ -1,6 +1,6 @@
 # Database Schema
 
-This document describes the bridge's **`chat_db`** database (the render + relational store), accessed through an async SQLAlchemy engine backed by asyncpg. Its schema is defined in `magenticx/dialogue_bridge/core/database/models.py` via SQLAlchemy ORM models and **versioned with Alembic** — migration files live in `magenticx/dialogue_bridge/core/database/migrations/versions/` (`0001_baseline` → `0050_message_canvas_edit`), applied via `alembic upgrade head` automatically on bridge startup (see the CLAUDE.md schema-change workflow). A separate **`agent_runtime`** database on the same Postgres instance is owned by the agents service and holds five things: LangGraph `AsyncPostgresSaver` checkpoints, **`agent_memories`** (per-(user, agent) long-term memory — see [agent-memory](../flows/agent-memory.md)), the **skill tables** (`skill_pool`, `skill_files`, `agent_skills`, plus the remote-skill catalogue `skill_catalogue`, `remote_skill_manifest`, `remote_skill_files` and `remote_skill_sources` — see [remote-skills](../flows/remote-skills.md)), the **agent-definition tables** (`agent_definitions`, `agent_definition_files`, and their version history `agent_definition_versions` — see [agent-version-history](../flows/agent-version-history.md)), every conversation's files (**`conversation_files`** + **`conversation_file_blobs`**, plan 36) and its canvas documents' versions (**`conversation_file_versions`**, plan 44) with what the agent last saw of each (**`conversation_file_seen`**, plan 44 Phase 4.3), every conversation's citable sources (**`conversation_sources`**, plan 42), each branch's shared scratch files (**`branch_scratch_files`**, plan 41, + the one-shot marker `branch_scratch_imports`), the **workflow tables** (`workflow_definitions`, `workflow_versions`, `workflow_persisted_state`, plan 38 — see [workflows](../flows/workflows.md)), and the **background-task tables** (`async_tasks`, `async_task_runs`, plan 41 — see [async-subagents](../flows/async-subagents.md)). None of them is part of these ORM models; that database has no alembic chain and its tables are created by `setup()` calls on boot.
+This document describes the bridge's **`chat_db`** database (the render + relational store), accessed through an async SQLAlchemy engine backed by asyncpg. Its schema is defined in `magenticx/dialogue_bridge/core/database/models.py` via SQLAlchemy ORM models and **versioned with Alembic** — migration files live in `magenticx/dialogue_bridge/core/database/migrations/versions/` (`0001_baseline` → `0051_attachment_pdf_previews`), applied via `alembic upgrade head` automatically on bridge startup (see the CLAUDE.md schema-change workflow). A separate **`agent_runtime`** database on the same Postgres instance is owned by the agents service and holds five things: LangGraph `AsyncPostgresSaver` checkpoints, **`agent_memories`** (per-(user, agent) long-term memory — see [agent-memory](../flows/agent-memory.md)), the **skill tables** (`skill_pool`, `skill_files`, `agent_skills`, plus the remote-skill catalogue `skill_catalogue`, `remote_skill_manifest`, `remote_skill_files` and `remote_skill_sources` — see [remote-skills](../flows/remote-skills.md)), the **agent-definition tables** (`agent_definitions`, `agent_definition_files`, and their version history `agent_definition_versions` — see [agent-version-history](../flows/agent-version-history.md)), every conversation's files (**`conversation_files`** + **`conversation_file_blobs`**, plan 36) and its canvas documents' versions (**`conversation_file_versions`**, plan 44) with what the agent last saw of each (**`conversation_file_seen`**, plan 44 Phase 4.3) and the user's comments on them (**`conversation_file_comments`**, plan 44 Phase 4.4), every conversation's citable sources (**`conversation_sources`**, plan 42), each branch's shared scratch files (**`branch_scratch_files`**, plan 41, + the one-shot marker `branch_scratch_imports`), the **workflow tables** (`workflow_definitions`, `workflow_versions`, `workflow_persisted_state`, plan 38 — see [workflows](../flows/workflows.md)), and the **background-task tables** (`async_tasks`, `async_task_runs`, plan 41 — see [async-subagents](../flows/async-subagents.md)). None of them is part of these ORM models; that database has no alembic chain and its tables are created by `setup()` calls on boot.
 
 **Why those live there and not here.** The consumer owns the store. The agent reads its memory and its skills on *every run*, so putting them in the agents service's own database makes the hot path a local read and leaves the rare path — the Memories and Skills tabs — as an HTTP call the bridge already makes. Skills previously existed **twice**, as rows here and as directories on the agents volume, reconciled by a 900-second per-user pass that read and hashed every user's entire tree whether or not anything had changed — `O(content × users)`, which does not degrade gracefully. Migration `0024` dropped the four `chat_db` skill tables; there is now one copy and nothing to reconcile. The trade is that these tables have no FK to `users` (deleting a user does not cascade) and no versioned migration history. All primary keys are UUIDs generated by a server-side `gen_uuid()` helper. All timestamps are timezone-naive UTC. `updated_at` columns are maintained via SQLAlchemy's `onupdate=func.now()`.
 
@@ -450,6 +450,20 @@ Metadata for every file attached to a message. The binary data lives in the `blo
 
 ---
 
+### `attachment_pdf_previews`
+
+An Office attachment rendered as a PDF in the sandbox box (migration `0051`, plan 44 Phase 4.5) — the cache behind `GET /v1/attachments/{uid}/{attachment_id}/preview.pdf`. One row per attachment it was rendered for; a lookup is by `source_sha256` **within the user's own attachments** (joined through `messages` → `conversations.user_id`), so a re-upload or a forked copy of the same bytes hits it, another user's identical file never does. Deleted with its attachment, so a deleted message, conversation or account takes it along. Stored like the blobs (plain bytea, not app-encrypted). See [attachments](../flows/attachments.md#office-pdf-previews-plan-44-45).
+
+| Column | Type | Null | Default | Notes |
+| --- | --- | --- | --- | --- |
+| `attachment_id` | `String` | No | — | PK; FK → `attachments.id` `ON DELETE CASCADE` |
+| `source_sha256` | `String(64)` | No | — | SHA-256 of the Office bytes (`attachments.content_sha256`, or computed for older uploads); INDEXED |
+| `data` | `LargeBinary` | No | — | The PDF (≤ `ATTACHMENT_PDF_PREVIEW_MAX_BYTES`, 30 MiB) |
+| `size_bytes` | `Integer` | No | — | |
+| `created_at` | `DateTime` | No | `now()` | |
+
+---
+
 ### `user_avatars`
 
 The photo a user set in Edit profile (migration `0037`). One row per user at most. Never the uploaded file: the bridge decodes it, accepts only PNG, JPEG or WebP, crops a square and re-encodes a 256 px WebP, which drops EXIF and anything else the user did not see. Its own table rather than a column on `users`, because the users row is read on every request and the image must not ride along.
@@ -883,6 +897,7 @@ One "delete my account" request (plan 32): the purge's state machine **and** the
 | `conversation_shares.snapshot_until_message_id` | `messages.id` | SET NULL |
 | `attachments.message_id` | `messages.id` | CASCADE |
 | `attachments.blob_id` | `blobs.id` | CASCADE |
+| `attachment_pdf_previews.attachment_id` | `attachments.id` | CASCADE |
 | `scheduled_tasks.user_id` | `users.id` | CASCADE |
 | `account_deletions.user_id` | `users.id` | SET NULL — the deletion record outlives the user it deleted |
 | `scheduled_tasks.agent_id` | `agents.id` | SET NULL |
@@ -1179,6 +1194,32 @@ Which version of each canvas document the agent last saw (plan 44, Phase 4.3), s
 - **Run start** (`turn_state` + `mark_seen`): every document is marked at its latest version once the turn's note is in the message; no row yet = first look, marked without a diff. A turn whose last message is a task notification marks nothing.
 - **Run end** (`advance_after_run`, inside the capture call): the marker moves over the consecutive `agent` versions only and stops before the first unseen `user` version, so a save made during the run still reaches the next turn.
 - **Lifecycle:** copied on fork (`files/copy`, same transaction), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_seen` count).
+
+### `conversation_file_comments`
+
+Comments on a canvas document (plan 44, Phase 4.4): a **thread** (`parent_id` NULL) anchored to a passage of one version, and its **replies** (one level). The DDL is in `ConversationFileStore.setup()` beside the versions it names, the logic in `DocumentCommentStore` (`harness/conversation_files/comments.py`). See [canvas](../flows/canvas.md#phase-6--comments-44-backend).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` | PK; generated by the service (`uuid4`); a fork's copy is `md5(target:id)::uuid` |
+| `user_id` | `text` | Owner; every statement filters on it; index `conversation_file_comments_user_idx` (the purge) |
+| `conversation_id` | `text` | — |
+| `path` | `text COLLATE "C"` | CHECK `path ~ '^/conversation/output/.+[.]md$'` |
+| `version` | `integer` | The version the comment was made on; FK `(conversation_id, path, version)` → `conversation_file_versions` `ON DELETE CASCADE` |
+| `parent_id` | `uuid` NULL | NULL = a thread; else its thread — FK `(conversation_id, parent_id)` → `(conversation_id, id)` `ON DELETE CASCADE`, so a reply's thread is in the same conversation |
+| `cipher` | `text` | `none`, or the cipher that sealed `anchor`, `body` and `resolution_note` (`LANGGRAPH_AES_KEY`, as the blobs) |
+| `anchor` | `bytea` NULL | Sealed JSON `{quote ≤ 2000, prefix ≤ 200, suffix ≤ 200}`; threads only |
+| `body` | `bytea` | Sealed text, 1–4000 characters |
+| `author` | `text` | CHECK in (`agent`, `user`); v1 writes `user` only |
+| `status` | `text` NULL | Threads only: CHECK in (`open`, `resolved`) |
+| `resolved_by` | `text` NULL | CHECK in (`agent`, `user`), only when `status = 'resolved'` |
+| `resolution_note` | `bytea` NULL | Sealed, ≤ 1000 characters (v2: the agent's note) |
+| `created_at` / `updated_at` | `timestamptz` | `now()` |
+
+- **Shape CHECK** `conversation_file_comments_shape_ck`: `(parent_id IS NULL) = (anchor IS NOT NULL)` and `(parent_id IS NULL) = (status IS NOT NULL)`.
+- **Unique** `(conversation_id, id)` (the parent FK's target); index `conversation_file_comments_doc_idx (conversation_id, path, created_at)` for the list and the thread count; partial index `conversation_file_comments_parent_idx (conversation_id, parent_id) WHERE parent_id IS NOT NULL` for the reply count and the cascade.
+- **Limits** (200 threads per document, 50 replies per thread) are checked under `pg_advisory_xact_lock(hashtextextended('conversation_file_comments\n<conversation>\n<path>', 0))`.
+- **Lifecycle:** copied on fork (`files/copy`, same transaction, after the versions, `ON CONFLICT (id) DO NOTHING`), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_comments` count), both before the versions.
 
 ### `conversation_sources`
 

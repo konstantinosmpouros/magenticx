@@ -547,6 +547,13 @@ class AttachmentSettings(BaseSettings):
     docx_preview_token_ttl_seconds: int = Field(60, validation_alias="ATTACHMENT_DOCX_PREVIEW_TOKEN_TTL_SECONDS")
     inline_cache_max_age_seconds: int = Field(300, validation_alias="ATTACHMENT_INLINE_CACHE_MAX_AGE_SECONDS")
     stream_chunk_bytes: int = Field(512 * 1024, validation_alias="ATTACHMENT_STREAM_CHUNK_BYTES")
+    # PDF previews of Office files (plan 44, Phase 4.5), rendered in the
+    # sandbox box. The source cap is the runner's input cap (20 MiB); the PDF
+    # cap bounds what is held in memory, served and cached.
+    pdf_preview_max_source_bytes: int = Field(
+        20 * 1024 * 1024, ge=1, validation_alias="ATTACHMENT_PDF_PREVIEW_MAX_SOURCE_BYTES"
+    )
+    pdf_preview_max_bytes: int = Field(30 * 1024 * 1024, ge=1, validation_alias="ATTACHMENT_PDF_PREVIEW_MAX_BYTES")
 
 
 class OutputCaptureSettings(BaseSettings):
@@ -925,6 +932,10 @@ class HttpTimeoutSettings(BaseSettings):
     # conversation, made while the user waits — bounded below nginx's 300 s on
     # /api/ so the browser always gets the bridge's own answer.
     compaction_read_seconds: float = Field(240.0, validation_alias="HTTP_COMPACTION_READ_SECONDS")
+    # A document export or an Office PDF preview (plan 44, Phase 4.5): the
+    # agents service runs it in the sandbox box with a 60 s wall clock and a
+    # 75 s read timeout of its own, so the bridge waits just past that.
+    conversion_read_seconds: float = Field(90.0, validation_alias="HTTP_CONVERSION_READ_SECONDS")
 
     embeddings_connect_seconds: float = Field(10.0, validation_alias="HTTP_EMBEDDINGS_CONNECT_SECONDS")
     embeddings_read_seconds: float = Field(60.0, validation_alias="HTTP_EMBEDDINGS_READ_SECONDS")
@@ -992,6 +1003,15 @@ class HttpTimeoutSettings(BaseSettings):
             read=self.compaction_read_seconds,
             write=self.inference_write_seconds,
             pool=self.inference_pool_seconds,
+        )
+
+    @property
+    def conversion_timeout(self) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=self.agents_connect_seconds,
+            read=self.conversion_read_seconds,
+            write=self.agents_write_seconds,
+            pool=self.agents_pool_seconds,
         )
 
     @property
@@ -1278,6 +1298,16 @@ class RateLimitSettings(BaseSettings):
     document_read_window_seconds: int = Field(60, validation_alias="DOCUMENT_READ_RATE_LIMIT_WINDOW_SECONDS")
     document_save_max_attempts: int = Field(30, validation_alias="DOCUMENT_SAVE_RATE_LIMIT_MAX_ATTEMPTS")
     document_save_window_seconds: int = Field(60, validation_alias="DOCUMENT_SAVE_RATE_LIMIT_WINDOW_SECONDS")
+    # Plan 44 Phase 4.4 — comment writes (add, reply, resolve, edit, delete);
+    # reading the comments counts as a document read.
+    document_comment_max_attempts: int = Field(60, validation_alias="DOCUMENT_COMMENT_RATE_LIMIT_MAX_ATTEMPTS")
+    document_comment_window_seconds: int = Field(60, validation_alias="DOCUMENT_COMMENT_RATE_LIMIT_WINDOW_SECONDS")
+    # Plan 44 Phase 4.5: an export (docx / pdf run in the sandbox box) and an
+    # Office PDF preview (a box run on a cache miss) are the expensive reads.
+    document_export_max_attempts: int = Field(10, validation_alias="DOCUMENT_EXPORT_RATE_LIMIT_MAX_ATTEMPTS")
+    document_export_window_seconds: int = Field(60, validation_alias="DOCUMENT_EXPORT_RATE_LIMIT_WINDOW_SECONDS")
+    office_preview_max_attempts: int = Field(30, validation_alias="OFFICE_PREVIEW_RATE_LIMIT_MAX_ATTEMPTS")
+    office_preview_window_seconds: int = Field(60, validation_alias="OFFICE_PREVIEW_RATE_LIMIT_WINDOW_SECONDS")
     favicon_max_attempts: int = Field(600, validation_alias="FAVICON_RATE_LIMIT_MAX_ATTEMPTS")
     favicon_window_seconds: int = Field(60, validation_alias="FAVICON_RATE_LIMIT_WINDOW_SECONDS")
 

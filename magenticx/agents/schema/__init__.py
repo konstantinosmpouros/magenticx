@@ -33,6 +33,14 @@ from schema.conversation_sources import (
     CopyConversationSourcesRequest,
     InsertConversationSourcesRequest,
 )
+from schema.document_comments import (
+    CommentAnchorModel,
+    CreateCommentRequest,
+    DocumentCommentOut,
+    DocumentCommentsResponse,
+    UpdateCommentRequest,
+)
+from schema.document_export import ExportDocumentRequest
 from schema.documents import (
     CaptureDocumentsRequest,
     CaptureDocumentsResponse,
@@ -146,6 +154,12 @@ __all__ = [
     "CompactResponse",
     "ConversationSuggestions",
     "ConversationSourcesResponse",
+    "CommentAnchorModel",
+    "CreateCommentRequest",
+    "DocumentCommentOut",
+    "DocumentCommentsResponse",
+    "UpdateCommentRequest",
+    "ExportDocumentRequest",
     "CaptureDocumentsRequest",
     "CaptureDocumentsResponse",
     "CapturedDocument",

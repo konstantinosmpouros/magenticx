@@ -20,6 +20,12 @@ canvas documents' history (plan 44) that names the same blobs:
   last saw (plan 44 Phase 4.3), so the next turn's note carries only the
   user's edits since. No bytes; the logic lives in :mod:`.seen`. A row of the
   conversation like the versions: copied on fork, deleted by a reap and a purge.
+* ``conversation_file_comments`` — the user's comments on a canvas document
+  (plan 44 Phase 4.4): threads anchored to a passage of one version, and
+  their replies. The body, the anchor and the resolution note are encrypted
+  with the blobs' cipher; the logic lives in :mod:`.comments`. Rows of the
+  conversation too: copied on fork (new ids, same threads), deleted by a reap
+  and a purge.
 
 A blob lives while any row (a file or a version) names it. The foreign key from rows to blobs is the
 guard: a blob still referenced cannot be deleted, so garbage collection can be
@@ -127,6 +133,51 @@ _DDL = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS conversation_file_seen_user_idx ON conversation_file_seen (user_id)",
+    # Comments on a canvas document (plan 44 4.4). A thread (parent_id NULL)
+    # has an anchor and a status; a reply has neither, and its parent is a
+    # comment of the same conversation (the composite foreign key). The
+    # version must exist, so a comment can never name a document the
+    # conversation does not have. The text columns hold encrypted bytes.
+    """
+    CREATE TABLE IF NOT EXISTS conversation_file_comments (
+        id              uuid PRIMARY KEY,
+        user_id         text NOT NULL,
+        conversation_id text NOT NULL,
+        path            text COLLATE "C" NOT NULL,
+        version         integer NOT NULL,
+        parent_id       uuid,
+        cipher          text NOT NULL,
+        anchor          bytea,
+        body            bytea NOT NULL,
+        author          text NOT NULL,
+        status          text,
+        resolved_by     text,
+        resolution_note bytea,
+        created_at      timestamptz NOT NULL DEFAULT now(),
+        updated_at      timestamptz NOT NULL DEFAULT now(),
+        CONSTRAINT conversation_file_comments_conversation_id_key UNIQUE (conversation_id, id),
+        CONSTRAINT conversation_file_comments_parent_fk FOREIGN KEY (conversation_id, parent_id)
+            REFERENCES conversation_file_comments (conversation_id, id) ON DELETE CASCADE,
+        CONSTRAINT conversation_file_comments_version_fk FOREIGN KEY (conversation_id, path, version)
+            REFERENCES conversation_file_versions (conversation_id, path, version) ON DELETE CASCADE,
+        CONSTRAINT conversation_file_comments_author_ck CHECK (author IN ('agent', 'user')),
+        CONSTRAINT conversation_file_comments_shape_ck CHECK (
+            (parent_id IS NULL) = (anchor IS NOT NULL) AND (parent_id IS NULL) = (status IS NOT NULL)
+        ),
+        CONSTRAINT conversation_file_comments_status_ck CHECK (status IS NULL OR status IN ('open', 'resolved')),
+        CONSTRAINT conversation_file_comments_resolved_ck CHECK (
+            resolved_by IS NULL OR (resolved_by IN ('agent', 'user') AND status = 'resolved')
+        ),
+        CONSTRAINT conversation_file_comments_path_ck CHECK (path ~ '^/conversation/output/.+[.]md$')
+    )
+    """,
+    # A document's comments in order (the list, the per-document thread cap).
+    "CREATE INDEX IF NOT EXISTS conversation_file_comments_doc_idx "
+    "ON conversation_file_comments (conversation_id, path, created_at)",
+    # A thread's replies (the reply cap, the cascade from a deleted thread).
+    "CREATE INDEX IF NOT EXISTS conversation_file_comments_parent_idx "
+    "ON conversation_file_comments (conversation_id, parent_id) WHERE parent_id IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS conversation_file_comments_user_idx ON conversation_file_comments (user_id)",
 )
 
 _COMMENTS = (
@@ -142,6 +193,9 @@ _COMMENTS = (
     "'The version a save was based on (a user save must name the latest); NULL for a first version.'",
     "COMMENT ON TABLE conversation_file_seen IS "
     "'The version of each canvas document the agent last saw (plan 44 4.3); the next turn diffs from it.'",
+    "COMMENT ON TABLE conversation_file_comments IS "
+    "'Comments on a canvas document (plan 44 4.4): threads anchored to a passage, and replies. "
+    "anchor, body and resolution_note are encrypted (cipher).'",
 )
 
 _ENTRY_COLUMNS = "path, size_bytes, sha256, agent_slug, updated_at"
@@ -360,6 +414,21 @@ class ConversationFileStore:
                 params,
             )
             copied_versions = versions.rowcount or 0
+            # The comments come too, after the versions they name. A copy's id
+            # is derived from the target and the original, so a retried copy
+            # finds its rows (ON CONFLICT) and a reply still finds its thread.
+            await conn.execute(
+                "INSERT INTO conversation_file_comments "
+                "(id, user_id, conversation_id, path, version, parent_id, cipher, anchor, body, author, "
+                "status, resolved_by, resolution_note, created_at, updated_at) "
+                "SELECT md5(%(target)s || ':' || id::text)::uuid, user_id, %(target)s, path, version, "
+                "CASE WHEN parent_id IS NULL THEN NULL ELSE md5(%(target)s || ':' || parent_id::text)::uuid END, "
+                "cipher, anchor, body, author, status, resolved_by, resolution_note, created_at, updated_at "
+                "FROM conversation_file_comments "
+                "WHERE conversation_id = %(source)s AND user_id = %(user_id)s "
+                "ON CONFLICT (id) DO NOTHING",
+                params,
+            )
             # What the agent had seen comes too: the fork's agent has the same
             # history, so the user's edits it already saw are not repeated.
             await conn.execute(
@@ -375,10 +444,11 @@ class ConversationFileStore:
         return copied
 
     async def delete_conversation(self, user_id: str, conversation_id: str) -> tuple[int, int]:
-        """Delete every file, document version and seen marker of one conversation.
+        """Delete every file, document version, seen marker and comment of one conversation.
 
-        Returns ``(files, bytes)`` for the files. The versions and the seen
-        markers go in the same transaction, and the blobs either named go with them.
+        Returns ``(files, bytes)`` for the files. The versions, the seen
+        markers and the comments go in the same transaction, and the blobs
+        either named go with them.
         """
         async with self._pool.connection() as conn, conn.transaction():
             cur = await conn.execute(
@@ -386,6 +456,9 @@ class ConversationFileStore:
                 _scope(user_id, conversation_id),
             )
             rows = await cur.fetchall()
+            # Before the versions they name (the cascade would take them anyway).
+            await conn.execute(f"DELETE FROM conversation_file_comments WHERE {_SCOPE}",
+                               _scope(user_id, conversation_id))
             versions = await conn.execute(
                 f"DELETE FROM conversation_file_versions WHERE {_SCOPE} RETURNING sha256",
                 _scope(user_id, conversation_id),
@@ -400,9 +473,10 @@ class ConversationFileStore:
         return len(rows), removed
 
     async def purge_user(self, user_id: str) -> dict[str, int]:
-        """Account deletion: every file, version, seen marker and blob the user has, in one transaction."""
+        """Account deletion: every file, version, seen marker, comment and blob the user has, in one transaction."""
         async with self._pool.connection() as conn, conn.transaction():
             files = await conn.execute("DELETE FROM conversation_files WHERE user_id = %s", (user_id,))
+            comments = await conn.execute("DELETE FROM conversation_file_comments WHERE user_id = %s", (user_id,))
             versions = await conn.execute("DELETE FROM conversation_file_versions WHERE user_id = %s", (user_id,))
             seen = await conn.execute("DELETE FROM conversation_file_seen WHERE user_id = %s", (user_id,))
             blobs = await conn.execute("DELETE FROM conversation_file_blobs WHERE user_id = %s", (user_id,))
@@ -410,6 +484,7 @@ class ConversationFileStore:
             "conversation_files": files.rowcount or 0,
             "conversation_file_versions": versions.rowcount or 0,
             "conversation_file_seen": seen.rowcount or 0,
+            "conversation_file_comments": comments.rowcount or 0,
             "conversation_file_blobs": blobs.rowcount or 0,
         }
         logger.info("conversation_files_purged", "Deleted a user's conversation files", **counts)

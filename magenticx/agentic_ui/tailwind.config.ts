@@ -63,6 +63,11 @@ content: [
     				DEFAULT: 'hsl(var(--warning))',
     				foreground: 'hsl(var(--warning-foreground))'
     			},
+    			file: {
+    				word: 'hsl(var(--file-word))',
+    				pdf: 'hsl(var(--file-pdf))',
+    				fg: 'hsl(var(--file-mark-fg))'
+    			},
     			info: {
     				DEFAULT: 'hsl(var(--info))',
     				foreground: 'hsl(var(--info-foreground))'

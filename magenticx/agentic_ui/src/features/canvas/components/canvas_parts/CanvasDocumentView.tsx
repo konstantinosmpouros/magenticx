@@ -13,6 +13,16 @@
  * Saving is not this view's business: it hands its serializer to the parent
  * (`onAttach`) and reports edits and blur; the save controller decides when
  * to read the text and send it.
+ *
+ * Comments (Phase 4.4) are painted here, not stored here: the view finds
+ * each open thread's quote in its text (`lib/commentAnchors.ts`), reports
+ * where (or "detached") to the parent's panel, paints the passages with the
+ * CSS Custom Highlight API (`lib/commentHighlight.ts`), scrolls to the one
+ * the panel asks for, and tells the panel which thread a click landed on.
+ *
+ * With a mouse, the selection bar floats over selected text
+ * (`CanvasSelectionMenu`) and the orb at the caret (`CanvasCaretOrb`) offers
+ * Ask agent for the block the caret rests in.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Value } from "platejs";
@@ -21,27 +31,35 @@ import { Loader2, PencilLine } from "lucide-react";
 
 import type {
   CanvasAgentEdit,
+  CanvasAnchorPlacement,
   CanvasAskControl,
   CanvasBylineValue,
+  CanvasCommentControl,
+  CanvasCommentMarks,
   CanvasMode,
   CanvasShineTexts,
 } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import { Editor, EditorContainer } from "@/shared/ui/plate/editor";
 
+import { useCoarsePointer } from "../../hooks/useCoarsePointer";
 import { CanvasBylineContext } from "../../lib/bylineContext";
 import { canvasViewPlugin, refreshFolds, setFolds } from "../../lib/canvasView";
 import { CANVAS_NODE_ID, canvasEditorPlugins, findPlugin } from "../../lib/editorKit";
 import { showAskHighlight } from "../../lib/askHighlight";
+import { buildTextIndex, locateAnchor, placementRange } from "../../lib/commentAnchors";
+import { caretAtPoint, paintCommentHighlights, scrollBehavior } from "../../lib/commentHighlight";
 import { countMatches } from "../../lib/find";
 import { markdownToValue, valueToMarkdown } from "../../lib/markdown";
 import { shineChanges, shineTexts as shineTextsIn } from "../../lib/changeShine";
 import { getHiddenBlocks, getOutline } from "../../lib/outline";
-import { CanvasAskMenu } from "./CanvasAskMenu";
 import { CanvasByline } from "./CanvasByline";
+import { CanvasCaretOrb } from "./CanvasCaretOrb";
+import { CanvasReadingCommentBar } from "./CanvasCommentButton";
 import { CanvasDocBar } from "./CanvasDocBar";
 import { CanvasFindBar } from "./CanvasFindBar";
 import { CanvasOutline } from "./CanvasOutline";
+import { CanvasSelectionMenu } from "./CanvasSelectionMenu";
 import { CanvasToolbar } from "./CanvasToolbar";
 
 /** An empty document still needs one block for Plate to render. */
@@ -54,6 +72,7 @@ export function CanvasDocumentView({
   compact,
   findOpen,
   outlineOpen,
+  onToggleFind,
   onCloseFind,
   onToggleOutline,
   onCloseOutline,
@@ -64,6 +83,10 @@ export function CanvasDocumentView({
   onEdited,
   onBlur,
   ask = null,
+  comment = null,
+  marks = null,
+  commentsOpen = false,
+  onToggleComments,
   agentEdit = null,
   shineFrom = null,
   shineTexts = null,
@@ -76,6 +99,8 @@ export function CanvasDocumentView({
   compact: boolean;
   findOpen: boolean;
   outlineOpen: boolean;
+  /** Find's button in the document row (Ctrl/Cmd+F opens it too). */
+  onToggleFind: () => void;
   onCloseFind: () => void;
   onToggleOutline: () => void;
   onCloseOutline: () => void;
@@ -89,6 +114,14 @@ export function CanvasDocumentView({
   onBlur?: () => void;
   /** Ask agent on a selection (Phase 4.3), where the canvas can send one. */
   ask?: CanvasAskControl | null;
+  /** Comment on a selection (Phase 4.4), editing or reading. */
+  comment?: CanvasCommentControl | null;
+  /** The open threads to paint in the text, and how a click on one reaches the panel. */
+  marks?: CanvasCommentMarks | null;
+  /** The comments panel is open (the row's comments button shows it pressed). */
+  commentsOpen?: boolean;
+  /** The row's comments button; absent where the canvas keeps no comments. */
+  onToggleComments?: () => void;
   /** The agent is changing a passage: the editor is read-only and the passage tinted. */
   agentEdit?: CanvasAgentEdit | null;
   /** The text before the agent's version loaded: its changed blocks shine once on mount. */
@@ -109,10 +142,13 @@ export function CanvasDocumentView({
   const [value, setValue] = useState<Value>(initial);
   const [query, setQuery] = useState("");
   const contentRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const editing = canEdit && mode === "editing";
   // While the agent changes a passage nobody else writes: no conflict mid-run.
   const writable = editing && agentEdit === null;
   const agentRange = agentEdit?.range ?? null;
+  // The orb at the caret is a mouse's way in; touch has the pill's Ask agent.
+  const coarse = useCoarsePointer();
 
   const outline = useMemo(() => (outlineOpen ? getOutline(value) : []), [value, outlineOpen]);
   const titleFirst = value[0]?.type === "h1";
@@ -163,6 +199,102 @@ export function CanvasDocumentView({
     editor.api.redecorate();
   }, [editor, query, findOpen]);
 
+  // Comments: where each open thread's quote is in this text, reported to
+  // the panel ("detached" when it is gone), and painted.
+  const threads = marks?.threads;
+  const onPlaced = marks?.onPlaced;
+  const textIndex = useMemo(
+    () => buildTextIndex(editor),
+    // The index reads the editor's children, which `value` follows.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor, value],
+  );
+  const placements = useMemo(() => {
+    const found: Record<string, CanvasAnchorPlacement> = {};
+    for (const thread of threads ?? []) {
+      if (thread.comment.anchor) {
+        found[thread.comment.id] = locateAnchor(textIndex.text, thread.comment.anchor);
+      }
+    }
+    return found;
+  }, [threads, textIndex]);
+  useEffect(() => onPlaced?.(placements), [onPlaced, placements]);
+
+  // The passages as DOM ranges, kept for telling which one a click hit.
+  const paintedRef = useRef<{ id: string; range: Range }[]>([]);
+  const activeId = marks?.activeId ?? null;
+  useEffect(() => {
+    let stop: () => void = () => undefined;
+    // After the paint: the ranges map onto the text the editor just rendered.
+    const frame = window.requestAnimationFrame(() => {
+      const painted: { id: string; range: Range }[] = [];
+      for (const [id, placement] of Object.entries(placements)) {
+        if (!placement) continue;
+        const range = placementRange(textIndex, placement);
+        if (!range) continue;
+        try {
+          const dom = editor.api.toDOMRange(range);
+          if (dom) painted.push({ id, range: dom });
+        } catch {
+          // Folded away or not rendered: nothing to paint for it now.
+        }
+      }
+      paintedRef.current = painted;
+      stop = paintCommentHighlights(
+        painted.map((item) => item.range),
+        painted.find((item) => item.id === activeId)?.range ?? null,
+      );
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      stop();
+    };
+  }, [editor, placements, textIndex, activeId]);
+
+  // The panel picked a thread: bring its passage into view. Only a new
+  // request scrolls, not every repaint of the active passage.
+  const focusNonce = marks?.focusNonce ?? 0;
+  const focusTarget = useRef(activeId);
+  focusTarget.current = activeId;
+  useEffect(() => {
+    if (focusNonce === 0) return;
+    const frame = window.requestAnimationFrame(() => {
+      const id = focusTarget.current;
+      const target = paintedRef.current.find((item) => item.id === id)?.range;
+      const scroller = scrollRef.current;
+      if (!target || !scroller) return;
+      const rect = target.getBoundingClientRect();
+      const box = scroller.getBoundingClientRect();
+      scroller.scrollTo({
+        top: scroller.scrollTop + rect.top - box.top - box.height / 3,
+        behavior: scrollBehavior(),
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusNonce]);
+
+  // A click on a painted passage brings its thread forward (the innermost
+  // one, when passages overlap). A drag that selected text is not a click.
+  const onActivate = marks?.onActivate;
+  const clickPassage = (event: React.MouseEvent) => {
+    if (!onActivate || paintedRef.current.length === 0) return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+    const caret = caretAtPoint(event.clientX, event.clientY);
+    if (!caret) return;
+    let hit: { id: string; length: number } | null = null;
+    for (const { id, range } of paintedRef.current) {
+      try {
+        if (!range.isPointInRange(caret.node, caret.offset)) continue;
+      } catch {
+        continue;
+      }
+      const length = range.toString().length;
+      if (!hit || length < hit.length) hit = { id, length };
+    }
+    if (hit) onActivate(hit.id);
+  };
+
   const pickHeading = (index: number) => {
     // Unfold whatever hides the heading, then bring it under the sticky row.
     const folded = editor.getOption(canvasViewPlugin, "folded");
@@ -200,11 +332,19 @@ export function CanvasDocumentView({
         ) : null}
 
         <div className="relative min-h-0 flex-1">
-          <div className="h-full overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
+          <div
+            ref={scrollRef}
+            className="h-full overflow-y-auto overscroll-contain [scrollbar-gutter:stable]"
+          >
             <CanvasDocBar
               showOutlineButton={!compact}
               outlineOpen={outlineOpen}
               onToggleOutline={onToggleOutline}
+              findOpen={findOpen}
+              onToggleFind={onToggleFind}
+              commentCount={onToggleComments ? (threads?.length ?? 0) : null}
+              commentsOpen={commentsOpen}
+              onToggleComments={onToggleComments}
               mode={canEdit ? mode : "viewing"}
               canEdit={canEdit}
               onModeChange={onModeChange}
@@ -217,7 +357,13 @@ export function CanvasDocumentView({
                 editing || (compact && canEdit) ? "pb-36" : "pb-24",
               )}
             >
-              <div ref={contentRef} className="relative w-full min-w-0 max-w-[680px]">
+              {/* A click on a commented passage opens its thread; the
+                  keyboard reaches every thread from the panel. */}
+              <div
+                ref={contentRef}
+                className="relative w-full min-w-0 max-w-[680px]"
+                onClick={clickPassage}
+              >
                 {titleFirst ? null : <CanvasByline className="mb-8" />}
                 {/* While editing, the editable reaches into the side margins:
                     a drag that starts there selects whole blocks (Plate's
@@ -238,6 +384,9 @@ export function CanvasDocumentView({
                     onBlur={onBlur}
                   />
                 </EditorContainer>
+                {writable && ask && !compact && !coarse ? (
+                  <CanvasCaretOrb ask={ask} columnRef={contentRef} />
+                ) : null}
               </div>
             </div>
           </div>
@@ -246,8 +395,13 @@ export function CanvasDocumentView({
             <CanvasOutline items={outline} onPick={pickHeading} onClose={onCloseOutline} />
           ) : null}
 
-          {writable ? <CanvasToolbar ask={ask} /> : null}
-          {writable && ask && !compact ? <CanvasAskMenu ask={ask} /> : null}
+          {writable ? <CanvasToolbar ask={ask} comment={comment} /> : null}
+          {!compact && (writable || comment) ? (
+            <CanvasSelectionMenu ask={writable ? ask : null} comment={comment} />
+          ) : null}
+          {!writable && comment && !(editing && agentEdit) ? (
+            <CanvasReadingCommentBar comment={comment} />
+          ) : null}
           {editing && agentEdit ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-3 sm:bottom-6">
               <p

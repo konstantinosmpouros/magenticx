@@ -18,3 +18,7 @@ export const canvasContentKey = (
   path: string,
   version: number | "latest",
 ) => [...canvasKey(userId, conversationId), "content", path, version] as const;
+
+/** A document's comment threads and replies (Phase 4.4). */
+export const canvasCommentsKey = (userId: string, conversationId: string, path: string) =>
+  [...canvasKey(userId, conversationId), "comments", path] as const;

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,10 +10,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * markdown with its title, the author and version in the byline; on a desktop
  * it opens for editing (the mode menu says Editing, the surface is editable,
  * the toolbar is there), on a phone for reading with the ✎ button that
- * switches; the title's ▾ menu switching documents; an earlier version read
- * from the version menu, read-only, with a way back; a 404 says the document
- * is gone and offers the file's normal preview; any other failure offers
- * Retry. Saving itself is pinned in `canvas-editing.test.tsx`.
+ * switches; the title's ▾ menu switching documents; the header showing no
+ * save status once saved, no Find and no history button (Find is in the
+ * document row, history opens from the byline's version chip); an earlier
+ * version read from the history panel, read-only, with a way back; a 404
+ * says the document is gone and offers the file's normal preview; any other
+ * failure offers Retry. Saving itself is pinned in `canvas-editing.test.tsx`.
  */
 
 const { api } = vi.hoisted(() => ({
@@ -23,6 +25,7 @@ const { api } = vi.hoisted(() => ({
     listDocumentVersions: vi.fn(),
     getDocumentVersion: vi.fn(),
     saveDocumentVersion: vi.fn(),
+    listDocumentComments: vi.fn(),
   },
 }));
 vi.mock("@/shared/lib/api", () => api);
@@ -72,6 +75,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
 
 beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
+  api.listDocumentComments.mockResolvedValue([]);
   api.listConversationDocuments.mockResolvedValue([
     { path: PATH, name: "brief.md", version: 2, author: "agent", updatedAt: "", sizeBytes: 80 },
     {
@@ -103,8 +107,30 @@ describe("document canvas", () => {
     expect(screen.getByRole("button", { name: "Mode: Editing. Change mode" })).toBeInTheDocument();
     expect(screen.getByLabelText("brief, editing")).toHaveAttribute("contenteditable", "true");
     expect(screen.getByRole("toolbar", { name: "Formatting" })).toBeInTheDocument();
-    expect(screen.getByText("Saved")).toBeInTheDocument();
+    // Nothing unsaved: the header says nothing about saving.
+    expect(screen.queryByText("Saved")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Loading the document")).not.toBeInTheDocument();
+  });
+
+  it("keeps the header to title, Export, full screen and close; Find lives in the document row", async () => {
+    api.getLatestDocument.mockResolvedValue(version());
+    renderCanvas();
+    await screen.findByRole("heading", { level: 1, name: "The brief" });
+
+    const header = screen.getByRole("banner");
+    const names = within(header)
+      .getAllByRole("button")
+      .map((button) => button.getAttribute("aria-label"));
+    expect(names).toEqual(["Document: brief. Switch document", "Export", "Full screen", "Close document"]);
+    expect(within(header).queryByRole("button", { name: "Version history" })).toBeNull();
+    // Find, in the row above the text, and its shortcut.
+    fireEvent.click(screen.getByRole("button", { name: "Find in document" }));
+    expect(screen.getByPlaceholderText("Find in document")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close find" }));
+    expect(screen.queryByPlaceholderText("Find in document")).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByLabelText("brief, editing"), { key: "f", ctrlKey: true });
+    expect(await screen.findByPlaceholderText("Find in document")).toBeInTheDocument();
   });
 
   it("opens for reading on a phone, and the pencil switches to editing", async () => {
@@ -138,7 +164,7 @@ describe("document canvas", () => {
     expect(onSelectPath).toHaveBeenCalledWith("/conversation/output/notes.md");
   });
 
-  it("reads an earlier version from the version menu, and goes back", async () => {
+  it("reads an earlier version from the history the version chip opens, and goes back", async () => {
     api.getLatestDocument.mockResolvedValue(version());
     api.listDocumentVersions.mockResolvedValue([
       {
@@ -162,11 +188,10 @@ describe("document canvas", () => {
     renderCanvas();
     await screen.findByRole("heading", { level: 1, name: "The brief" });
 
-    fireEvent.pointerDown(screen.getByRole("button", { name: /^Version 2/ }), {
-      button: 0,
-      pointerType: "mouse",
-    });
-    fireEvent.click(await screen.findByRole("menuitem", { name: /^v1/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Version 2, the latest\. Version history/ }));
+    const history = await screen.findByRole("complementary", { name: "Version history" });
+    expect(api.listDocumentVersions).toHaveBeenCalled();
+    fireEvent.click(await within(history).findByRole("button", { name: /^v1/ }));
 
     expect(
       await screen.findByRole("heading", { level: 1, name: "The first draft" }),

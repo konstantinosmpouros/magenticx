@@ -6,6 +6,8 @@ export type AttachmentPreviewMeta = {
   mime: string;
   size?: number;
   blobId?: string;
+  /** The attachment's id: the Office PDF preview is keyed by it (`…/{attachmentId}/preview.pdf`). */
+  attachmentId?: string;
   file?: File;
 };
 

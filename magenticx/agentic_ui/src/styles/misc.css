@@ -42,6 +42,22 @@
   background-color: hsl(var(--primary) / 0.18);
 }
 
+/* Comment threads' passages in the canvas (plan 44, Phase 4.4), painted by
+   features/canvas/lib/commentHighlight.ts: every open thread's passage with a
+   warm tint and an underline (colour is not the only cue), the thread being
+   read stronger. */
+::highlight(canvas-comment) {
+  background-color: hsl(var(--warning) / 0.16);
+  text-decoration: underline 2px hsl(var(--warning) / 0.75);
+  text-underline-offset: 3px;
+}
+
+::highlight(canvas-comment-active) {
+  background-color: hsl(var(--warning) / 0.38);
+  text-decoration: underline 2px hsl(var(--warning));
+  text-underline-offset: 3px;
+}
+
 /* Plan 44, Phase 4.3: what the agent just changed in the canvas shines once
    (lib/changeShine.ts sets the data attribute and a per-block stagger,
    --canvas-shine-delay). Three layers over ~2 s:

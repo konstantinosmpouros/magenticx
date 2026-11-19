@@ -53,6 +53,12 @@
     --info: 212 85% 50%;
     --info-foreground: 0 0% 100%;
 
+    /* File-type marks (export panel, file icons): the colours people know
+       Word and PDF files by, the same in every light theme. */
+    --file-word: 214 82% 45%;
+    --file-pdf: 0 72% 50%;
+    --file-mark-fg: 0 0% 100%;
+
     /* A sub-agent at work (styles/subagent.css): its status chip and the light
        that runs round its card. The primary holds AA for the chip text on
        white; the glow is the theme's lighter swatch. */

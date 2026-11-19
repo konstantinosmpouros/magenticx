@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
 from core.auth.session import AuthUser
-from core.security.rate_limit import files_list_rate_limit
+from core.security.rate_limit import files_list_rate_limit, office_preview_rate_limit
 from core.settings import settings
 from schema import DocxPreviewTokenOut, ImageOut, UserFilesPage
 from utils import validate_userId
@@ -22,6 +22,7 @@ from utils.attachments import (
     stream_blob_response,
     validate_docx_preview_token,
 )
+from utils.document_export import office_pdf_preview
 from utils.user_files import list_user_files
 
 
@@ -80,6 +81,29 @@ async def previewBlobInline(
         db=db,
         disposition="inline",
     )
+
+
+@router.get(
+    "/{user_id}/{attachment_id}/preview.pdf",
+    summary="An Office attachment (docx/xlsx/pptx, odt/ods/odp) rendered as a PDF in the sandbox box",
+    responses={200: {"content": {"application/pdf": {}}}, 503: {"description": "sandbox_unavailable"},
+               504: {"description": "conversion_timeout"}},
+)
+async def getOfficePdfPreview(
+    user_id: str,
+    attachment_id: str,
+    _current_user: AuthUser = Depends(validate_userId),
+    # After auth on purpose: the bucket is keyed on the path's {user_id}.
+    __: None = Depends(office_preview_rate_limit),
+    db: AsyncSession = Depends(get_db),
+):
+    """Plan 44 Phase 4.5: the PDF the UI shows for an Office file instead of the
+    Microsoft viewer. Owner-checked like the download (the attachment's
+    conversation must be the caller's — else 404); cached by the source bytes'
+    hash; 503 ``sandbox_unavailable`` (the UI falls back to its old preview),
+    504 on the box's timeout, 415 for a non-Office file, 413 over the size cap."""
+    set_context(user_id=user_id)
+    return await office_pdf_preview(db, user_id, attachment_id)
 
 
 @router.get(

@@ -1,27 +1,18 @@
 /**
  * The canvas panel's header: the document title (a menu of the
- * conversation's documents), the save status while editing (Phase 4.2),
- * then find, history, full screen (not on a phone, where the canvas is
- * always full screen) and close. Minimal chrome: no formatting
- * here, the document owns the panel. On a phone it starts with the outline
- * toggle, which the document row keeps on wider screens.
+ * conversation's documents), the save status when there is something to say
+ * (Phase 4.2: nothing once everything is saved), Export (Phase 4.5), full
+ * screen (not on a phone, where the canvas is always full screen) and close.
+ * Minimal chrome: no formatting here, the document owns the panel. Find sits
+ * in the document row and the version history opens from the byline's
+ * version chip. On a phone the header starts with the outline toggle, which
+ * the document row keeps on wider screens.
  */
-import {
-  Check,
-  ChevronDown,
-  FileSearch,
-  FileText,
-  History,
-  Maximize2,
-  Minimize2,
-  PanelLeft,
-  X,
-} from "lucide-react";
+import { Check, ChevronDown, FileText, Maximize2, Minimize2, PanelLeft, X } from "lucide-react";
 
 import type { ReactNode } from "react";
 
 import type { CanvasDocumentSummary } from "@/shared/lib/types";
-import { cn } from "@/shared/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,14 +34,11 @@ export function CanvasHeader({
   showOutlineToggle,
   showFullscreenToggle,
   fullscreen,
-  findOpen,
   canFind,
-  historyOpen,
   status,
+  exportMenu,
   onSelectDocument,
   onToggleOutline,
-  onToggleFind,
-  onToggleHistory,
   onToggleFullscreen,
   onClose,
 }: {
@@ -64,16 +52,14 @@ export function CanvasHeader({
   /** Not when the canvas already covers the chat (a phone, a narrow window). */
   showFullscreenToggle: boolean;
   fullscreen: boolean;
-  findOpen: boolean;
-  /** Find and the outline need a loaded document. */
+  /** The outline needs a loaded document. */
   canFind: boolean;
-  historyOpen: boolean;
-  /** The save status and Save button, while the latest version is being edited. */
+  /** The save status and Save button, while there is something to say about saving. */
   status: ReactNode;
+  /** The Export button and its menu. */
+  exportMenu: ReactNode;
   onSelectDocument: (path: string) => void;
   onToggleOutline: () => void;
-  onToggleFind: () => void;
-  onToggleHistory: () => void;
   onToggleFullscreen: () => void;
   onClose: () => void;
 }) {
@@ -134,30 +120,7 @@ export function CanvasHeader({
 
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         {status}
-        <CanvasHint label="Find in document">
-          <button
-            type="button"
-            className={cn(iconButton, findOpen && "bg-muted text-foreground")}
-            aria-label="Find in document"
-            aria-pressed={findOpen}
-            disabled={!canFind}
-            onClick={onToggleFind}
-          >
-            <FileSearch />
-          </button>
-        </CanvasHint>
-        <CanvasHint label="Version history">
-          <button
-            type="button"
-            className={cn(iconButton, historyOpen && "bg-muted text-foreground")}
-            aria-label="Version history"
-            aria-pressed={historyOpen}
-            disabled={!canFind}
-            onClick={onToggleHistory}
-          >
-            <History />
-          </button>
-        </CanvasHint>
+        {exportMenu}
         {showFullscreenToggle ? (
           <CanvasHint label={fullscreen ? "Exit full screen" : "Full screen"}>
             <button

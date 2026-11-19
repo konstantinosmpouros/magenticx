@@ -9,13 +9,21 @@
  * path, so a nested path needs no escaping rules of its own.
  */
 import type {
+  CanvasComment,
+  CanvasCommentDraft,
+  CanvasCommentPatch,
   CanvasDocumentSummary,
+  CanvasExportFile,
+  CanvasExportFormat,
   CanvasDocumentVersion,
   CanvasDocumentVersionMeta,
   CanvasSaveResult,
 } from "../types";
-import { ApiError, requestJson } from "../http";
+import { getFilenameFromDisposition } from "../download";
+import { ApiError, requestJson, requestRaw, requestVoid } from "../http";
 import {
+  CanvasCommentListSchema,
+  CanvasCommentSchema,
   CanvasDocumentListSchema,
   CanvasDocumentSavedSchema,
   CanvasDocumentVersionSchema,
@@ -136,4 +144,147 @@ export async function getDocumentVersion(
     },
   );
   return CanvasDocumentVersionSchema.parse(data);
+}
+
+// ---------------------------------------------------------------------------
+// Comments (plan 44, Phase 4.4): the user's threads on passages of a document,
+// and their replies. Reads share the documents' read limit; every write
+// carries the CSRF token and has its own limit (DOCUMENT_COMMENT, 60/60s).
+// ---------------------------------------------------------------------------
+
+/**
+ * A refused comment says why: the agents service's 422 carries
+ * `{code: invalid_comment | thread_limit | reply_limit, message}` and its
+ * `message` becomes the error's (`requestJson` reads it); a 422 without one
+ * (FastAPI's shape list) falls back to each call's own words.
+ */
+const COMMENT_ERRORS = { 429: "Commenting too often. Wait a moment, then try again." };
+
+/** A document's threads and replies, oldest first; resolved ones included (the canvas filters). */
+export async function listDocumentComments(
+  userId: string,
+  conversationId: string,
+  path: string,
+  signal?: AbortSignal,
+): Promise<CanvasComment[]> {
+  return requestJson(documentsUrl(userId, conversationId, "/comments", path), {
+    schema: CanvasCommentListSchema,
+    fallbackMessage: "Failed to load the comments",
+    signal,
+  });
+}
+
+/**
+ * Start a thread on a passage (`anchor`, no `parentId`) or reply to one
+ * (`parentId`, no `anchor`). Re-parsed like a save: a fail-open body without
+ * an id could never be replied to or resolved.
+ */
+export async function createDocumentComment(
+  userId: string,
+  conversationId: string,
+  draft: CanvasCommentDraft,
+): Promise<CanvasComment> {
+  const data = await requestJson(documentsUrl(userId, conversationId, "/comments"), {
+    method: "POST",
+    csrf: true,
+    body: {
+      path: draft.path,
+      version: draft.version,
+      body: draft.body,
+      ...(draft.anchor ? { anchor: draft.anchor } : {}),
+      ...(draft.parentId ? { parentId: draft.parentId } : {}),
+    },
+    schema: CanvasCommentSchema,
+    fallbackMessage: "That comment cannot be saved.",
+    errorMessages: COMMENT_ERRORS,
+  });
+  return CanvasCommentSchema.parse(data);
+}
+
+/** Resolve or reopen a thread, or edit one's own comment. */
+export async function updateDocumentComment(
+  userId: string,
+  conversationId: string,
+  commentId: string,
+  patch: CanvasCommentPatch,
+): Promise<CanvasComment> {
+  const data = await requestJson(
+    documentsUrl(userId, conversationId, `/comments/${encodeURIComponent(commentId)}`),
+    {
+      method: "PATCH",
+      csrf: true,
+      body: patch,
+      schema: CanvasCommentSchema,
+      fallbackMessage: "That comment cannot be saved.",
+      errorMessages: COMMENT_ERRORS,
+    },
+  );
+  return CanvasCommentSchema.parse(data);
+}
+
+/** Delete one's own comment; a thread goes with its replies. */
+export async function deleteDocumentComment(
+  userId: string,
+  conversationId: string,
+  commentId: string,
+): Promise<void> {
+  await requestVoid(
+    documentsUrl(userId, conversationId, `/comments/${encodeURIComponent(commentId)}`),
+    {
+      method: "DELETE",
+      csrf: true,
+      fallbackMessage: "Failed to delete the comment",
+      errorMessages: COMMENT_ERRORS,
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Export (plan 44, Phase 4.5): a version of the document as Word, PDF or
+// Markdown. Word and PDF are converted in the sandbox box by a fixed command,
+// so they can be unavailable (503) or slow (504); Markdown is the stored text.
+// ---------------------------------------------------------------------------
+
+const EXPORT_ACCEPT: Record<CanvasExportFormat, string> = {
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  pdf: "application/pdf",
+  md: "text/markdown",
+};
+
+/**
+ * Export one version (the latest when `version` is absent) and hand back the
+ * file with the server's name for it (`Content-Disposition`), or
+ * `fallbackName` when it sent none. A state change only in what it costs (a
+ * box run), so it is a POST with the CSRF token.
+ */
+export async function exportDocument(
+  userId: string,
+  conversationId: string,
+  request: { path: string; format: CanvasExportFormat; version?: number },
+  fallbackName: string,
+): Promise<CanvasExportFile> {
+  const res = await requestRaw(documentsUrl(userId, conversationId, "/export"), {
+    method: "POST",
+    csrf: true,
+    accept: EXPORT_ACCEPT[request.format],
+    body: {
+      path: request.path,
+      format: request.format,
+      ...(request.version === undefined ? {} : { version: request.version }),
+    },
+    fallbackMessage: "The export failed",
+    errorMessages: {
+      429: "Exporting too often. Wait a moment, then try again.",
+      // The box ran the conversion but it made no file.
+      502: "The export failed",
+      // The box can't run (or is busy), or the agents service is unreachable.
+      503: "Export needs the sandbox, which isn't available right now",
+      504: "The export took too long. Try again in a moment.",
+    },
+  });
+  const blob = await res.blob();
+  return {
+    blob,
+    filename: getFilenameFromDisposition(res.headers.get("Content-Disposition"), fallbackName),
+  };
 }

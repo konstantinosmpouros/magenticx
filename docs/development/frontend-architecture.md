@@ -93,26 +93,36 @@ src/
                    #   features/attachments' panel + ImageLightbox; useDebouncedValue,
                    #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters); a generated
                    #   `.md` row opens in the canvas of its conversation (`/c/:id?doc=`)
-    canvas/        # the document canvas (plan 44, Phases 4.1–4.3): CanvasDock (docks the
+    canvas/        # the document canvas (plan 44, Phases 4.1–4.5): CanvasDock (docks the
                    #   canvas beside the chat at ~55%, resizable; covers the chat full screen, on a
                    #   phone and below a 760px card), DocumentCanvas (the panel, lazy-loaded so
                    #   Plate and the diff stay out of the main chunk; one session per document,
-                   #   keyed by path), canvas_parts/* (CanvasHeader with the ▾ document switcher,
-                   #   the save status, find, history and full screen; CanvasDocumentView, the Plate
+                   #   keyed by path), canvas_parts/* (CanvasHeader: the ▾ document switcher,
+                   #   the save status (nothing once saved), Export, full screen, close;
+                   #   CanvasExportPanel (version picker, Word / PDF / Markdown rows, Copy as Markdown, unsaved note); CanvasDocumentView, the Plate
                    #   editor — editable at the latest version, read-only at an earlier one;
-                   #   CanvasDocBar with the Editing / Viewing menu; CanvasToolbar, the floating pill
+                   #   CanvasDocBar (≡, Find, undo / redo, the 💬 count, the Editing / Viewing menu); CanvasToolbar, the floating pill
                    #   toolbar adapted from Plate's registry (keeps the selection on touch, rises
-                   #   above a phone's keyboard; its first button is Ask agent); CanvasAskMenu (the
-                   #   desktop's floating selection menu, `@platejs/floating` like Plate's registry
-                   #   floating-toolbar: Ask agent + the presets), CanvasAskPanel (the presets and
-                   #   the compact "Ask the agent to change this…" input, shared by the menu and
-                   #   the pill's popover); CanvasTablePicker (the size grid); CanvasBlockMenu
+                   #   above a phone's keyboard; its first buttons are Ask agent and Comment, on touch);
+                   #   CanvasFormatControls (the formatting controls the pill and the selection
+                   #   bar share: text style, the four marks, lists, list menu, link); CanvasSelectionMenu
+                   #   (the desktop's floating selection bar, `@platejs/floating` like Plate's
+                   #   registry floating-toolbar: Comment, Ask agent (the orb), text style, B I S
+                   #   code, list menu, link; Comment alone while reading); CanvasCaretOrb (the app's
+                   #   orb at the caret's line after an idle wait: Ask agent for that block);
+                   #   CanvasComments (the comment threads: side panel / phone sheet, replies,
+                   #   resolve / reopen, edit / delete, detached, Resolved (n)); CanvasCommentForm
+                   #   (the composer); CanvasCommentButton (Comment on touch: in the pill, and a
+                   #   bar while reading); CanvasAskPanel (CanvasAskCard: the compact
+                   #   "Ask the agent to change this…" input with the presets as chips, shared by
+                   #   the bar, the orb and the pill's popover); CanvasTablePicker (the size grid); CanvasBlockMenu
                    #   (the ⋮⋮ handle + block menu: Delete / Duplicate / Move / Turn into);
                    #   CanvasTableElement (a table + its floating row / column / delete toolbar);
                    #   CanvasSaveStatus (+ CanvasAgentEditingStatus while Ask agent's run goes);
-                   #   CanvasUnsavedDialog (Save / Discard / Cancel, or Save and send / Cancel
-                   #   before Ask agent); CanvasHistory (side
-                   #   panel, a sheet on a phone: read / compare / restore); CanvasCompareView (the
+                   #   CanvasUnsavedDialog (Save / Discard / Cancel; Save and send / Cancel
+                   #   before Ask agent; Save and export / Export the saved version / Cancel);
+                   #   CanvasHistory (side panel, a sheet on a phone: read / compare / restore;
+                   #   opened from the byline's version chip); CanvasCompareView (the
                    #   word-level diff); CanvasConflictDialog (the 409); CanvasOutline, CanvasFindBar,
                    #   CanvasBlockFrame (heading folds, the block handle, the selected-block tint),
                    #   CanvasByline, CanvasStates (skeleton, error +
@@ -122,7 +132,10 @@ src/
                    #   editor's source text, the reload-or-banner rule for a newer version;
                    #   useCanvasVersionText; useCanvasRoute — `?doc=<path>` in the URL;
                    #   useKeyboardInset — the on-screen keyboard's overlap, from visualViewport;
-                   #   useSelectedPassage — the passage Ask agent would act on), lib/
+                   #   useSelectedPassage — the passage Ask agent would act on;
+                   #   useCaretOrb — where the orb at the caret shows (idle, focused, no selection);
+                   #   useCanvasComments — the threads, optimistic with rollback;
+                   #   useCanvasExport — one export at a time, download + toast), lib/
                    #   (saveController — saved only on the user's Save, single flight, base version, 409 → conflict;
                    #   markdown — the markdown ⇄ Plate value pipeline, no MDX, plus normalizeMarkdown;
                    #   documentDiff — jsdiff lines refined to words; editorCommands — quote, link
@@ -131,9 +144,13 @@ src/
                    #   and the table toolbar's actions; editorDelete — Backspace / Delete across
                    #   tables, rules, images, code; pasteCleanup — Word / web HTML cleaned before
                    #   Plate reads it; selectionMemory — the selection a toolbar tap remembers and
-                   #   puts back; askAgent — the passage (text, heading path), the presets and the
-                   #   `canvasEdit` request; askHighlight — the passage's tint (CSS Custom
-                   #   Highlight API); shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
+                   #   puts back; toolbarControls — the controls' shared look and press handlers;
+                   #   askAgent — the passage (text, heading path; a whole block's for the orb),
+                   #   the presets and the `canvasEdit` request; caretOrb — the caret line's
+                   #   height, the block's noun; askHighlight — the passage's tint (CSS Custom
+                   #   Highlight API); commentAnchors — quote + context capture and finding it
+                   #   again (detached when gone); commentHighlight — the threads' passages
+                   #   painted with the Custom Highlight API; shortcuts; queryKeys; editorKit (with Plate's BlockSelection),
                    #   canvasView, outline, find, documentTitle, dates, bylineContext, canvasFile)
     auth/          # useSessionEffects + auth handler (Login page stays in pages/)
     catalog/       # agents handler (agent/tool discovery)

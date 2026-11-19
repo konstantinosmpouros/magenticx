@@ -155,6 +155,9 @@ Who signs session JWTs and which public keys verify them. Production signs with 
 | `SOURCES_READ_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `120` / `60` | Reading a conversation's citation sources (`GET /v1/conversations/{user}/{conversation}/sources`, plan 42), per user, after auth — each read is one agents-service call. |
 | `DOCUMENT_READ_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `120` / `60` | Opening a canvas document, its history or one version (`GET /v1/conversations/{user}/{conversation}/documents…`, plan 44), per user, after auth — each read is one agents-service call. |
 | `DOCUMENT_SAVE_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `30` / `60` | Saving a canvas document version (`POST …/documents/versions`, plan 44), per user, after auth + CSRF — each save writes a version. |
+| `DOCUMENT_EXPORT_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `10` / `60` | Exporting a canvas document (`POST …/documents/export`, plan 44 4.5), per user, after auth + CSRF — docx / pdf run in the sandbox box. |
+| `OFFICE_PREVIEW_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `30` / `60` | An Office PDF preview (`GET /v1/attachments/{uid}/{aid}/preview.pdf`, plan 44 4.5), per user, after auth — a box run on a cache miss. |
+| `DOCUMENT_COMMENT_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `60` / `60` | Writing a canvas comment — add, reply, resolve / reopen, edit, delete (`…/documents/comments`, plan 44 4.4), per user, after auth + CSRF. Reading the comments counts as a document read. |
 | `FAVICON_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `600` / `60` | Site icons for the source chips (`GET /v1/favicons/{user}?host=`, plan 42), per user, after auth — an answer can show dozens; most are served from Redis. |
 | `FAVICONS_ENABLED` | `true` | Fetch site icons for the source chips at all; off → every chip shows the site's initial. |
 | `FAVICON_SERVICE_URLS` | DuckDuckGo `ip3`, then Google `s2` | Comma-separated icon services tried in order, `{host}` = the validated hostname (the bridge never contacts the sites themselves). |
@@ -248,6 +251,8 @@ See [account-deletion](../flows/account-deletion.md). The batch and rate bounds 
 | `ATTACHMENT_DOCX_PREVIEW_TOKEN_TTL_SECONDS` | `60` | Lifetime of a signed DOCX-preview token. |
 | `ATTACHMENT_INLINE_CACHE_MAX_AGE_SECONDS` | `300` | `Cache-Control max-age` on inline attachment responses. |
 | `ATTACHMENT_STREAM_CHUNK_BYTES` | `524288` (512 KB) | Chunk size when streaming a blob. |
+| `ATTACHMENT_PDF_PREVIEW_MAX_SOURCE_BYTES` | `20971520` (20 MiB) | Largest Office file rendered as a PDF preview (the sandbox runner's input cap); larger → 413. |
+| `ATTACHMENT_PDF_PREVIEW_MAX_BYTES` | `31457280` (30 MiB) | Largest PDF (preview or export) the bridge accepts from the agents service, serves and caches. |
 | `OUTPUT_CAPTURE_BATCH_FILES` | `20` | Presented files fetched per request for the run-end snapshot (≤ 20, the agents service's per-request cap). |
 | `SPEECH_DICTATION_MAX_BYTES` | `26214400` (25 MB) | Max dictation upload. |
 | `SPEECH_DICTATION_READ_CHUNK_BYTES` | `1048576` (1 MB) | Read-chunk size for dictation. |
@@ -315,6 +320,8 @@ Per-destination `httpx` timeouts, in seconds. Each destination has four knobs: `
 | `HTTP_INFERENCE_` | 30 / 180 / 180 / 30 |
 
 `HTTP_COMPACTION_READ_SECONDS` (default `240`) is the read timeout of a manual compaction (plan 34): one summary call over most of the conversation while the user waits, bounded below nginx's 300 s on `/api/` so the browser always gets the bridge's own answer. Connect/write/pool follow `HTTP_INFERENCE_`.
+
+`HTTP_CONVERSION_READ_SECONDS` (default `90`) is the read timeout of a canvas export or an Office PDF preview (plan 44 4.5): the agents service runs it in the sandbox box with a 60 s wall clock and waits 75 s itself. Connect/write/pool follow `HTTP_AGENTS_`.
 
 `HTTP_SKILLS_REMOTE_ADD_READ_SECONDS` (default `75`) overrides only the read timeout for adding a remote skill: the agents service may download and verify up to 128 files before answering and caps that at 60 s, so the bridge waits just past it. That call is never retried.
 
@@ -488,6 +495,7 @@ A model newer than the pinned `langchain-openai` needs both facts stated. An unk
 | `SANDBOX_RUNNER_URL` | `""` (no `execute`) | The sandbox runner's base URL (sibling project [sandbox](https://github.com/konstantinosmpouros/sandbox)). `execute` exists only when this is set **and** `SANDBOX_EXECUTION_ENABLED` is true. Locally `${SANDBOX_RUNNER_URL:-}`; set `http://sandbox_runner:8090` in `magenticx/.env` when the runner runs. `docker-compose-denis.yaml` sets `https://sandbox_runner:8090` (mTLS over the `sandbox` overlay). |
 | `SANDBOX_RUNNER_TIMEOUT_SECONDS` | `330` | HTTP read timeout for one `execute` call (0 < x ≤ 3600). Must exceed the runner's own 300 s wall-clock kill, so a slow command comes back as the runner's `timeout` result rather than a client error. |
 | `SANDBOX_RUNNER_CONNECT_TIMEOUT_SECONDS` | `10` | Connect timeout to the runner (0 < x ≤ 120). |
+| `SANDBOX_CONVERSION_TIMEOUT_SECONDS` | `60` | Wall clock of the platform's own conversions in the box — canvas export, Office PDF preview (plan 44 4.5; 5 ≤ x ≤ 300). They run only when `execute` may (`SANDBOX_EXECUTION_ENABLED` + `SANDBOX_RUNNER_URL`). |
 | `SUMMARIZATION_TRIGGER_FRACTION` | `0.95` | Compact automatically when the context reaches this fraction of a model's window (models with a known window — see **Models**, `context_window`). |
 | `SUMMARIZATION_KEEP_FRACTION` | `0.30` | Only bounds deepagents' overflow clipping: every compaction, automatic or manual, folds everything before the latest question. |
 | `SUMMARIZATION_TRIGGER_TOKENS` | `200000` | Fallback token trigger for profile-less models. |

@@ -91,6 +91,10 @@ os.environ.setdefault("WORKFLOW_BUILDER_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("WORKFLOW_RUN_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("TASK_READ_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("TASK_MUTATE_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
+os.environ.setdefault("DOCUMENT_READ_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
+os.environ.setdefault("DOCUMENT_COMMENT_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
+os.environ.setdefault("DOCUMENT_EXPORT_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
+os.environ.setdefault("OFFICE_PREVIEW_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 
 from main import app as bridge_app
 

@@ -11,11 +11,13 @@ is now rows, and lives exactly as long as the conversation:
   deepagents filesystem behind ``/conversation/``, ``/large_tool_results/``
   and ``/conversation_history/``.
 * ``versions`` — a canvas document's append-only versions (plan 44), over
-  the same blobs.
+  the same blobs; ``seen`` — what the agent last saw of each; ``comments`` —
+  the user's comment threads on a document (Phase 4.4).
 * ``paths`` — the one normaliser every path goes through; ``cipher`` — the
   checkpointer's AES key and cipher, reused for the bytes.
 """
 from harness.conversation_files.backend import ConversationFilesBackend
+from harness.conversation_files.comments import DocumentCommentStore
 from harness.conversation_files.files import ConversationFiles
 from harness.conversation_files.inputs import InputsUnavailable
 from harness.conversation_files.store import ConversationFileStore
@@ -25,6 +27,7 @@ __all__ = [
     "ConversationFileStore",
     "ConversationFiles",
     "ConversationFilesBackend",
+    "DocumentCommentStore",
     "DocumentVersionStore",
     "InputsUnavailable",
 ]

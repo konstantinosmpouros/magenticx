@@ -5,6 +5,8 @@
  * the canvas's own view types.
  */
 export type {
+  CanvasComment,
+  CanvasCommentAnchor,
   CanvasDocumentAuthor,
   CanvasDocumentSaved,
   CanvasDocumentSummary,
@@ -27,7 +29,7 @@ import type { CanvasDocumentSaved, CanvasEditPreset, CanvasStaleBase } from "../
 export type CanvasSaveResult =
   ({ kind: "saved" } & CanvasDocumentSaved) | ({ kind: "conflict" } & CanvasStaleBase);
 
-import type { CanvasDocumentAuthor, CanvasDocumentVersionMeta } from "../schemas";
+import type { CanvasDocumentAuthor } from "../schemas";
 
 /** The canvas's mode (plan 44 §3): edit the text, or read it. Suggesting is Phase 4.6. */
 export type CanvasMode = "editing" | "viewing";
@@ -82,7 +84,7 @@ export interface CanvasOutlineItem {
 
 /**
  * The byline under the document's title: the shown version, who wrote it and
- * when, and the document's version history to switch between (read-only).
+ * when. Its version chip is the way into the document's history panel.
  */
 export interface CanvasBylineValue {
   version: number;
@@ -91,13 +93,10 @@ export interface CanvasBylineValue {
   createdAt: string;
   /** Whether the shown version is the document's latest. */
   isLatest: boolean;
-  /** The document's versions, newest first, once loaded (null while not). */
-  versions: CanvasDocumentVersionMeta[] | null;
-  versionsLoading: boolean;
-  /** Asks for the version list (the menu opened). */
-  onLoadVersions: () => void;
-  /** Shows version `n`, or the latest for `null`. */
-  onPickVersion: (version: number | null) => void;
+  /** Whether the history panel is open (the chip shows it pressed). */
+  historyOpen: boolean;
+  /** Opens (or closes) the history panel: versions, compare, restore. */
+  onToggleHistory: () => void;
 }
 
 // The compare view's diff (features/canvas/lib/documentDiff.ts).
@@ -164,4 +163,66 @@ export interface CanvasAskControl {
   /** Why Ask agent can't be used now (a reply is streaming), or null. */
   disabledReason: string | null;
   onAsk: (draft: CanvasAskDraft) => void;
+}
+
+import type { CanvasComment, CanvasCommentAnchor } from "../schemas";
+
+/** A comment thread (Phase 4.4): its first comment and its replies, oldest first. */
+export interface CanvasCommentThread {
+  comment: CanvasComment;
+  replies: CanvasComment[];
+}
+
+/** A new thread or a reply, as the canvas sends it (`POST …/documents/comments`). */
+export interface CanvasCommentDraft {
+  path: string;
+  /** The version the comment was made on. */
+  version: number;
+  body: string;
+  /** A thread's passage; absent on a reply. */
+  anchor?: CanvasCommentAnchor;
+  /** The thread a reply belongs to; absent on a thread. */
+  parentId?: string;
+}
+
+/** A change to a comment (`PATCH`): reopen or resolve a thread, or edit one's own body. */
+export interface CanvasCommentPatch {
+  status?: CanvasComment["status"];
+  body?: string;
+}
+
+/**
+ * Where a thread's passage sits in the shown text: its character offsets in
+ * the editor's plain text (`lib/commentAnchors.ts`), or detached — the quote
+ * is no longer there.
+ */
+export type CanvasAnchorPlacement = { start: number; end: number } | null;
+
+/** What the editor needs to offer Comment on a selection. */
+export interface CanvasCommentControl {
+  /** Starts a thread on the passage with this body (shown at once, rolled back if refused). */
+  onCreate: (anchor: CanvasCommentAnchor, body: string) => void;
+}
+
+/** The comments the shown text paints, and how a click on a passage reaches its thread. */
+export interface CanvasCommentMarks {
+  /** The open threads, with their anchors. */
+  threads: CanvasCommentThread[];
+  /** The thread the user is looking at (its passage is painted stronger). */
+  activeId: string | null;
+  /** Bumped to scroll the active thread's passage into view. */
+  focusNonce: number;
+  /** A click landed on a thread's passage. */
+  onActivate: (id: string) => void;
+  /** Where each thread's passage was found in the shown text (null: detached). */
+  onPlaced: (placements: Record<string, CanvasAnchorPlacement>) => void;
+}
+
+/** The formats a canvas document exports to (Phase 4.5). */
+export type CanvasExportFormat = "docx" | "pdf" | "md";
+
+/** An exported document: its bytes and the name the server gave it. */
+export interface CanvasExportFile {
+  blob: Blob;
+  filename: string;
 }

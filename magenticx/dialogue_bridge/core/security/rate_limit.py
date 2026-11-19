@@ -323,6 +323,32 @@ document_save_rate_limit = rate_limit(
     emit_headers=True,
 )
 
+# Plan 44 Phase 4.4 — comment writes on a canvas document, per user, after
+# auth + CSRF. Its own bucket so a burst of replies never eats the saves.
+document_comment_rate_limit = rate_limit(
+    (settings.rate_limit.document_comment_max_attempts, settings.rate_limit.document_comment_window_seconds),
+    scope="document-comment",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
+# Plan 44 Phase 4.5 — per user, after auth. An export runs pandoc / LibreOffice
+# in the sandbox box, so the tightest window; an Office PDF preview runs it
+# only on a cache miss, so a roomier one.
+document_export_rate_limit = rate_limit(
+    (settings.rate_limit.document_export_max_attempts, settings.rate_limit.document_export_window_seconds),
+    scope="document-export",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
+office_preview_rate_limit = rate_limit(
+    (settings.rate_limit.office_preview_max_attempts, settings.rate_limit.office_preview_window_seconds),
+    scope="office-preview",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
+
 # Site icons for the source chips (plan 42) — per user, after auth. An answer
 # can show dozens at once, so a roomier budget; most are served from Redis.
 favicon_rate_limit = rate_limit(

@@ -351,6 +351,8 @@ async def seen(pg_pool, agents_service, monkeypatch):
     canvas_turn = importlib.import_module("utils.canvas_turn")
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: True)
     monkeypatch.setattr(canvas_turn, "_seen_store", lambda: store)
+    comments = importlib.import_module("harness.conversation_files.comments").DocumentCommentStore(pg_pool, cipher)
+    monkeypatch.setattr(canvas_turn, "_comment_store", lambda: comments)
     return store
 
 

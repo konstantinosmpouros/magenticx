@@ -594,6 +594,14 @@ class FilesystemSettings(BaseSettings):
     sandbox_runner_connect_timeout_seconds: float = Field(
         10.0, gt=0, le=120, validation_alias="SANDBOX_RUNNER_CONNECT_TIMEOUT_SECONDS"
     )
+    # Plan 44 Phase 4.5: the platform's own conversions in the box (a canvas
+    # document → docx/pdf, an Office upload → pdf preview). A fixed command,
+    # so a short wall clock of its own: the user is waiting on a download.
+    # Runs only where `execute` may (`sandbox_execution_active`): the kill
+    # switch stops every use of the box at once.
+    sandbox_conversion_timeout_seconds: int = Field(
+        60, ge=5, le=300, validation_alias="SANDBOX_CONVERSION_TIMEOUT_SECONDS"
+    )
 
     @field_validator("sandbox_runner_url", mode="before")
     @classmethod

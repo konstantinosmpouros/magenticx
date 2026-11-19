@@ -54,6 +54,10 @@ export default defineConfig({
       "@tanstack/react-query": path.resolve(__dirname, "node_modules/@tanstack/react-query"),
       // The agent map's flow view: its test swaps React Flow for a light stand-in.
       "@xyflow/react": path.resolve(__dirname, "node_modules/@xyflow/react"),
+      // The canvas's selection bar and caret orb are tested on a real Plate
+      // editor. The subpath first: an alias also matches `<key>/…`.
+      "platejs/react": path.resolve(__dirname, "node_modules/platejs/dist/react/index.js"),
+      platejs: path.resolve(__dirname, "node_modules/platejs/dist/index.js"),
     },
   },
   test: {

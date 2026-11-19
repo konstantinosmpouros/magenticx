@@ -131,6 +131,13 @@ def build_conversation_documents_url(user_id: str, conversation_id: str) -> str:
     return f"{base}/users/{user_id}/conversations/{conversation_id}/documents"
 
 
+def build_conversation_office_preview_url(user_id: str, conversation_id: str) -> str:
+    """POST endpoint that renders an Office attachment as a PDF in the sandbox
+    box (plan 44, Phase 4.5); the conversation is the runner's audit key."""
+    base = AGENTS_SERVICE_URL.rstrip("/")
+    return f"{base}/users/{user_id}/conversations/{conversation_id}/office-preview"
+
+
 def build_conversation_reap_url(user_id: str, conversation_id: str) -> str:
     """POST endpoint that drops a deleted conversation's threads and files."""
     base = AGENTS_SERVICE_URL.rstrip("/")

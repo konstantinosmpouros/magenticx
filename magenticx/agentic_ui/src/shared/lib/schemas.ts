@@ -830,6 +830,75 @@ export const CanvasStaleBaseSchema = z
 export type CanvasStaleBase = z.output<typeof CanvasStaleBaseSchema>;
 
 // ---------------------------------------------------------------------------
+// Canvas comments (plan 44, Phase 4.4): threads on a passage of a document and
+// their replies, one level deep. The bridge answers camelCase; the snake_case
+// spelling is read too, like the documents above. A comment without its id or
+// body is a contract break (it could never be replied to, resolved or shown),
+// so it fails loudly in development and is dropped from a list in production.
+// ---------------------------------------------------------------------------
+/** The bounds of a comment (the bridge's): a thread's quote, its context, a body. */
+export const CANVAS_COMMENT_LIMITS = {
+  quote: 2000,
+  context: 200,
+  body: 4000,
+} as const;
+
+const toCommentAnchor = (value: unknown) => {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const quote = typeof raw.quote === "string" ? raw.quote : "";
+  if (!quote) return null;
+  return {
+    quote,
+    prefix: typeof raw.prefix === "string" ? raw.prefix : "",
+    suffix: typeof raw.suffix === "string" ? raw.suffix : "",
+  };
+};
+
+const toCanvasComment = (raw: Record<string, unknown>) => {
+  const resolvedBy = wireField(raw, "resolved_by", "resolvedBy");
+  return {
+    id: toFileText(raw.id) ?? "",
+    path: toFileText(raw.path) ?? "",
+    version: toCanvasVersionNo(raw.version) ?? 0,
+    parentId: toFileText(wireField(raw, "parent_id", "parentId")),
+    anchor: toCommentAnchor(raw.anchor),
+    body: typeof raw.body === "string" ? raw.body : "",
+    author: toCanvasAuthor(raw.author),
+    status: raw.status === "resolved" ? ("resolved" as const) : ("open" as const),
+    resolvedBy:
+      resolvedBy === "user" || resolvedBy === "agent" ? (resolvedBy as CanvasDocumentAuthor) : null,
+    resolutionNote: toFileText(wireField(raw, "resolution_note", "resolutionNote")),
+    createdAt: toFileText(wireField(raw, "created_at", "createdAt")) ?? "",
+    updatedAt: toFileText(wireField(raw, "updated_at", "updatedAt")) ?? "",
+  };
+};
+
+/** One comment (`201` of a create, `200` of a change). */
+export const CanvasCommentSchema = z
+  .record(z.unknown())
+  .superRefine((raw, ctx) => {
+    if (!toFileText(raw.id)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["id"], message: "id is required" });
+    }
+    if (typeof raw.body !== "string") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["body"], message: "body must be a string" });
+    }
+  })
+  .transform(toCanvasComment);
+export type CanvasComment = z.output<typeof CanvasCommentSchema>;
+export type CanvasCommentAnchor = NonNullable<CanvasComment["anchor"]>;
+
+/** `{"comments": [...]}`: a document's threads and replies, oldest first, resolved ones too. */
+export const CanvasCommentListSchema = z.record(z.unknown()).transform((raw) =>
+  (Array.isArray(raw.comments) ? raw.comments : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map(toCanvasComment)
+    // A thread without its anchor, or a reply without its thread, can't be placed.
+    .filter((comment) => comment.id && (comment.parentId !== null || comment.anchor !== null)),
+);
+
+// ---------------------------------------------------------------------------
 // Realtime voice session (WebRTC SDP answer)
 // ---------------------------------------------------------------------------
 export const RealtimeVoiceSessionResponseSchema = z.record(z.unknown()).transform((raw) => ({

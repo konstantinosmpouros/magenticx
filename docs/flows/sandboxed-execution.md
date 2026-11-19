@@ -71,6 +71,26 @@ Kill reasons come back in plain words: `timeout`, `memory`, `output_limit`, `dis
 
 ---
 
+## Phase 3 — Platform-run conversions (plan 44, 4.5)
+
+The platform itself uses the box for two fixed jobs: exporting a canvas document to Word / PDF ([canvas § Phase 7](canvas.md#phase-7--export-45-backend)) and rendering an Office attachment as a PDF preview ([attachments § Office PDF previews](attachments.md#office-pdf-previews-plan-44-45)). They are **not** `execute`: no model and no user writes the command, so no approval is asked.
+
+| | `execute` | Platform conversion |
+| --- | --- | --- |
+| Command | written by the model | a constant of `harness/conversions/commands.py` (pandoc / `soffice`), picked from a closed set (`docx`, `pdf`; `docx`, `xlsx`, `pptx`, `odt`, `ods`, `odp`) |
+| Approval | always | none (plan 44 §9) |
+| Files in | the conversation's `input/` + `output/` | only the job's own: `input/document.md` + `input/reference.docx`, or `input/source.<ext>` — fixed names; user text reaches the box only as file content |
+| Files out | every new / changed `output/` file, written back to the conversation | only the job's one output (`output/document.docx`, `output/document.pdf`, `output/source.pdf`), returned to the caller; nothing is written to the conversation |
+| `agent_slug` in the runner's audit | the agent's | `platform-export` / `platform-preview` |
+| Timeout | the model's or the runner's default (≤ 300 s) | `SANDBOX_CONVERSION_TIMEOUT_SECONDS` (60) |
+| Box controls | the runner's | the same, unchanged — same runner call (`POST /v1/exec`), same box |
+| Available | `sandbox_execution_active` | the same check: the kill switch stops conversions too |
+| Failure | an error result for the model | typed: `ConversionUnavailable` → 503 `sandbox_unavailable`, `ConversionTimeout` → 504, `ConversionFailed` → 502; never retried, never run anywhere else |
+
+The client is `harness/conversions/client.py` (`run_conversion`); it needs no runner change and no box change — the reference document travels as an input file.
+
+---
+
 ## Sharp Edges and Behavioral Notes
 
 - **`noexec` on the bind mounts does not hold under gVisor.** It holds on `/tmp`, but gVisor ignores it on `/conversation/input` and `/conversation/output`, so a script written to `output/` and `chmod +x`-ed runs. Accepted: `sh` and `python` can run anything in the box already; the boundary is gVisor, the network and the limits, not exec bits.
@@ -96,6 +116,7 @@ Kill reasons come back in plain words: `timeout`, `memory`, `output_limit`, `dis
 | Wiring + guard | [magenticx/agents/harness/filesystem/workspace.py](../../magenticx/agents/harness/filesystem/workspace.py) | sandbox default when active, fail-closed otherwise |
 | Default file operations | [magenticx/agents/harness/filesystem/scratch_backend.py](../../magenticx/agents/harness/filesystem/scratch_backend.py), [scratch_store.py](../../magenticx/agents/harness/filesystem/scratch_store.py) | `BranchScratchBackend` (the sandbox backend's base), the branch scratch rows |
 | Forced approval | [magenticx/agents/harness/tools/gates.py](../../magenticx/agents/harness/tools/gates.py) | `resolve_interrupt_on` |
+| Platform conversions (plan 44 4.5) | [magenticx/agents/harness/conversions/](../../magenticx/agents/harness/conversions/) | `commands.py` (the fixed jobs, `reference.docx`), `client.py` (`run_conversion`) |
 | Prompt guidance | [magenticx/agents/harness/prompt_engineering/prompts/capabilities_prompt.py](../../magenticx/agents/harness/prompt_engineering/prompts/capabilities_prompt.py) | `_SANDBOX` |
 | UI | [magenticx/agentic_ui/src/features/chat/components/message_parts/ToolCallViews.tsx](../../magenticx/agentic_ui/src/features/chat/components/message_parts/ToolCallViews.tsx), [lib/approvalPresentation.ts](../../magenticx/agentic_ui/src/features/chat/lib/approvalPresentation.ts) | terminal view, the execute approval |
 | Proof | [sandbox/spike/run_spike.sh](https://github.com/konstantinosmpouros/sandbox/blob/main/spike/run_spike.sh), [sandbox/.github/workflows/pipeline.yml](https://github.com/konstantinosmpouros/sandbox/blob/main/.github/workflows/pipeline.yml) | ARM64 / x86 containment + timing |

@@ -1,26 +1,18 @@
 /**
  * Where the open document's edits stand, in the canvas header (plan 44,
- * Phase 4.2): Saved, Saving…, Unsaved changes, Save failed with Retry, or
- * the conflict waiting in its dialog — always an icon and a word, never a
- * colour alone — and the Save button (also Ctrl/Cmd+S). On a phone the word
- * is left to screen readers so the header keeps its buttons.
+ * Phase 4.2): Saving…, Unsaved changes, Save failed with Retry, or the
+ * conflict waiting in its dialog — always an icon and a word, never a colour
+ * alone — and the Save button (also Ctrl/Cmd+S). Once everything is saved it
+ * shows nothing: the header stays quiet until there is something to do. On a
+ * phone the word is left to screen readers so the header keeps its buttons.
  */
-import {
-  AlertTriangle,
-  Check,
-  CircleDot,
-  GitCompareArrows,
-  Loader2,
-  RotateCw,
-  Save,
-} from "lucide-react";
+import { AlertTriangle, CircleDot, GitCompareArrows, Loader2, RotateCw, Save } from "lucide-react";
 
 import type { CanvasSaveStatus as Status } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
-const LABEL: Record<Status, string> = {
-  saved: "Saved",
+const LABEL: Record<Exclude<Status, "saved">, string> = {
   unsaved: "Unsaved changes",
   saving: "Saving…",
   failed: "Save failed",
@@ -45,16 +37,15 @@ export function CanvasSaveStatus({
   onRetry: () => void;
   onResolveConflict: () => void;
 }) {
+  if (status === "saved") return null;
   const Icon =
-    status === "saved"
-      ? Check
-      : status === "saving"
-        ? Loader2
-        : status === "unsaved"
-          ? CircleDot
-          : status === "conflict"
-            ? GitCompareArrows
-            : AlertTriangle;
+    status === "saving"
+      ? Loader2
+      : status === "unsaved"
+        ? CircleDot
+        : status === "conflict"
+          ? GitCompareArrows
+          : AlertTriangle;
 
   return (
     <div className="flex shrink-0 items-center gap-0.5">
@@ -64,7 +55,6 @@ export function CanvasSaveStatus({
         title={status === "failed" && errorMessage ? errorMessage : undefined}
         className={cn(
           "flex h-8 items-center gap-1.5 rounded-md px-1.5 text-[13px]",
-          status === "saved" && "text-muted-foreground",
           status === "saving" && "text-muted-foreground",
           status === "unsaved" && "text-foreground/80",
           (status === "failed" || status === "conflict") && "font-medium text-destructive",

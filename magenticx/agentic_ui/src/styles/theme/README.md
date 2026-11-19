@@ -9,6 +9,7 @@ colors, so changing a palette or adding a theme only touches these files.
 | `palette.css` | The six palettes, four swatches each (`--daylight-1` ... `--citrus-4`), and the shared ink. |
 | `light.css` | The tokens every light theme shares, written in terms of each theme's roles. |
 | `daylight.css`, `aurora.css`, `sunset.css`, `sage.css`, `citrus.css` | One light theme each: only its roles (primary, glow, gradient, surface tint, orb halo). Daylight is also the default (`:root`). |
+| `light.css` / `midnight.css` (file marks) | `--file-word`, `--file-pdf`, `--file-mark-fg`: the colours Word and PDF files are known by, for `FileTypeIcon`; the same in every light theme. |
 | `midnight.css` | The dark theme, in full; also the always-dark scope (`.dark`). |
 | `themes.ts` | The list of themes (id, label, tagline, light or dark, picker colors, optional `logo`, `orb` and `mark`), `themeFor`, `logoFor`, `orbFor`, `markFor`. |
 
