@@ -30,7 +30,7 @@ from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
 from core.logging import get_context, get_logger
 from schema import MemoryMessageMatch
-from engine.inference.runs import ACTIVE_RUN_STATUSES
+from engine.inference.runs.state import ACTIVE_RUN_STATUSES
 
 logger = get_logger(__name__)
 

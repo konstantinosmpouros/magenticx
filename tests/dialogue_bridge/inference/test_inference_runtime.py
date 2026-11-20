@@ -1,4 +1,4 @@
-"""Coverage for ``engine.inference.runs`` — the pure ``InferenceRunRuntime``
+"""Coverage for ``engine.inference.runs`` (the package) — the pure ``InferenceRunRuntime``
 accumulator and the DB-backed create / cancel / finish helpers.
 
 The live SSE streaming paths (``_do_stream`` / ``_do_resume`` and the manager
@@ -7,7 +7,7 @@ testing. Everything here is either pure (no I/O) or DB-only.
 
 DB helpers that open their own ``SessionLocal()`` (``_finish_run`` and friends,
 ``cleanup_orphaned_inference_runs``) are pointed at the per-test sqlite engine
-by monkeypatching ``engine.inference.runs.SessionLocal`` with the test
+by monkeypatching ``SessionLocal`` on each run module that opens a session with the test
 ``session_factory``. Functions that take an explicit ``db`` session are driven
 with ``session_factory`` directly.
 
@@ -24,22 +24,29 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from core.database import ConversationTable, MessageTable
-import engine.inference.runs as ir
-from engine.inference.runs import (
-    InferenceRunRuntime,
-    SNAPSHOT_SEQ_SENTINEL,
+import engine.inference.runs.state as run_state
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
+from engine.inference.runs.runtime import InferenceRunRuntime
+from engine.inference.runs.stream import SNAPSHOT_SEQ_SENTINEL, stream_run_events
+from engine.inference.runs.records import (
     _fail_stale_queued_runs_for_conversation,
     _is_active_run_integrity_conflict,
-    _load_message,
-    _load_run,
-    _message_payload_from_runtime,
-    build_run_event_payload,
-    build_run_out_from_message,
     cleanup_orphaned_inference_runs,
     create_inference_run_record,
-    mark_run_launch_failed,
     request_run_cancel,
-    stream_run_events,
+)
+from engine.inference.runs.payloads import (
+    _load_message,
+    _load_run,
+    build_run_event_payload,
+    build_run_out_from_message,
+)
+from engine.inference.runs.finish import (
+    _message_payload_from_runtime,
+    mark_run_launch_failed,
     _mark_run_completed,
     _mark_run_failed,
 )
@@ -48,7 +55,9 @@ from engine.inference.runs import (
 @pytest.fixture
 def patch_session_local(monkeypatch, session_factory):
     """Route the helpers that open their own SessionLocal() at the test DB."""
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     return session_factory
 
 
@@ -325,7 +334,7 @@ async def test_create_inference_run_record_conflict_when_active_exists(session_f
             sender="ai",
             content="",
             streaming_status="running",
-            streaming_started_at=ir._now(),
+            streaming_started_at=run_state._now(),
         )
         session.add(active)
         await session.commit()
@@ -346,7 +355,7 @@ async def test_create_inference_run_record_conflict_when_active_exists(session_f
 
 
 async def test_create_inference_run_record_too_many_active_429(session_factory, seeded_user, seeded_agent, monkeypatch):
-    monkeypatch.setattr(ir, "MAX_ACTIVE_RUNS_PER_USER", 1)
+    monkeypatch.setattr(run_records, "MAX_ACTIVE_RUNS_PER_USER", 1)
     # One active run in another conversation pushes the user to the cap.
     async with session_factory() as session:
         other = ConversationTable(
@@ -363,7 +372,7 @@ async def test_create_inference_run_record_too_many_active_429(session_factory, 
                 sender="ai",
                     content="",
                 streaming_status="running",
-                streaming_started_at=ir._now(),
+                streaming_started_at=run_state._now(),
             )
         )
         await session.commit()
@@ -402,7 +411,7 @@ async def test_request_run_cancel_no_live_task_marks_cancelled(session_factory, 
             sender="ai",
             content="partial",
             streaming_status="running",
-            streaming_started_at=ir._now(),
+            streaming_started_at=run_state._now(),
         )
         session.add(run)
         conversation.active_assistant_message_id = run.id
@@ -419,7 +428,7 @@ async def test_request_run_cancel_no_live_task_marks_cancelled(session_factory, 
 
 
 async def test_request_run_cancel_with_live_task_sets_cancelling(session_factory, seeded_user, seeded_agent, monkeypatch):
-    monkeypatch.setattr(ir.inference_run_manager, "request_cancel", lambda run_id: True)
+    monkeypatch.setattr(run_manager.inference_run_manager, "request_cancel", lambda run_id: True)
     async with session_factory() as session:
         conversation = ConversationTable(
             user_id=seeded_user.id,
@@ -434,7 +443,7 @@ async def test_request_run_cancel_with_live_task_sets_cancelling(session_factory
             sender="ai",
             content="",
             streaming_status="running",
-            streaming_started_at=ir._now(),
+            streaming_started_at=run_state._now(),
         )
         session.add(run)
         await session.commit()
@@ -487,8 +496,8 @@ async def _seed_active_run(session_factory, seeded_user, seeded_agent, status="r
             sender="ai",
             content="",
             streaming_status=status,
-            streaming_started_at=ir._now(),
-            streaming_cancel_requested_at=ir._now() if cancel_requested else None,
+            streaming_started_at=run_state._now(),
+            streaming_cancel_requested_at=run_state._now() if cancel_requested else None,
         )
         session.add(run)
         conversation.active_assistant_message_id = run.id
@@ -580,8 +589,8 @@ async def test_cleanup_orphaned_inference_runs(patch_session_local, session_fact
 # _fail_stale_queued_runs_for_conversation
 # ---------------------------------------------------------------------------
 async def test_fail_stale_queued_runs(session_factory, seeded_user, seeded_agent, monkeypatch):
-    monkeypatch.setattr(ir.inference_run_manager, "has_live_task", lambda run_id: False)
-    stale_start = ir._now() - ir.STALE_QUEUED_RUN_AFTER - timedelta(minutes=1)
+    monkeypatch.setattr(run_manager.inference_run_manager, "has_live_task", lambda run_id: False)
+    stale_start = run_state._now() - run_records.STALE_QUEUED_RUN_AFTER - timedelta(minutes=1)
     async with session_factory() as session:
         conversation = ConversationTable(
             user_id=seeded_user.id,
@@ -738,7 +747,7 @@ async def _seed_running_run(session_factory, seeded_user, seeded_agent):
             sender="ai",
             content="",
             streaming_status="running",
-            streaming_started_at=ir._now(),
+            streaming_started_at=run_state._now(),
         )
         session.add(run)
         await session.commit()
@@ -751,7 +760,7 @@ def _patch_read_since(monkeypatch, events):
         for idx, event in enumerate(events):
             yield (str(idx), event)
 
-    monkeypatch.setattr(ir.event_log, "read_since", fake_read_since)
+    monkeypatch.setattr(run_manager.event_log, "read_since", fake_read_since)
 
 
 async def test_stream_run_events_live_tail_passes_through_entry_ids(
@@ -780,7 +789,7 @@ async def test_fail_stale_queued_runs_skips_recent(session_factory, seeded_user,
             sender="ai",
             content="",
             streaming_status="queued",
-            streaming_started_at=ir._now(),
+            streaming_started_at=run_state._now(),
         )
         session.add(recent)
         await session.commit()
@@ -808,7 +817,7 @@ async def test_fail_stale_queued_runs_skips_recent(session_factory, seeded_user,
 
 
 def _truncate(event):
-    from engine.inference.runs import truncate_tool_result
+    from engine.inference.runs.runtime import truncate_tool_result
 
     return truncate_tool_result(event)
 

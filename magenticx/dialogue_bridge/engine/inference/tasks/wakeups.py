@@ -74,7 +74,8 @@ from engine.inference.tasks.tasks import (
 )
 from engine.inference.composer_queue import pending_queue_conversations, send_queued_message
 from engine.inference.channel import publish_run_started
-from engine.inference.runs import inference_run_manager, register_run_finished_hook
+from engine.inference.runs.manager import inference_run_manager
+from engine.inference.runs.finish import register_run_finished_hook
 from engine.inference.start import create_run_and_respond
 from utils.validators import load_conversation_full
 

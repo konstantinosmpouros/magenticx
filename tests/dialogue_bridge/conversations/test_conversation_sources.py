@@ -37,7 +37,11 @@ from schema import (
     keep_valid_sources,
 )
 from engine.conversations.sources import copy_conversation_sources, insert_conversation_sources
-from engine.inference.runs import InferenceRunRuntime, append_coalesced, truncate_tool_result
+from engine.inference.runs.runtime import (
+    InferenceRunRuntime,
+    append_coalesced,
+    truncate_tool_result,
+)
 from engine.inference.tasks.streams import task_events_key, task_streams
 from utils.validators import validate_userId
 

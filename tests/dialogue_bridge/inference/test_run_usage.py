@@ -17,9 +17,14 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 from core.database import ConversationTable, MessageTable, MessageUsageTable, UsageDailyGroupTable, UsageDailyTable
-from engine.inference.runs import InferenceRunRuntime, _mark_run_completed
+from engine.inference.runs.runtime import InferenceRunRuntime
+from engine.inference.runs.finish import _mark_run_completed
 from engine.inference.activity import count_run_activity
 
 
@@ -50,7 +55,9 @@ def _model_usage(mid, model, *, inp, out, cached=0, latency=0):
 @pytest.fixture
 def patch_session_local(monkeypatch, session_factory):
     """Route _finish_run's own SessionLocal() at the test database."""
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     return session_factory
 
 
@@ -159,8 +166,8 @@ async def _start_run(session_factory, conversation_id, agent):
     async with session_factory() as session:
         run = MessageTable(conversation_id=conversation_id, sender="ai", content="",
                            agent_id=agent.id, agent_name=agent.name,
-                           streaming_status="running", streaming_started_at=ir._now(),
-                           created_at=ir._now())
+                           streaming_status="running", streaming_started_at=run_state._now(),
+                           created_at=run_state._now())
         session.add(run)
         await session.commit()
         return run.id
@@ -229,7 +236,7 @@ async def test_a_run_that_spent_nothing_leaves_no_trace(
         session.add(conversation)
         await session.flush()
         run = MessageTable(conversation_id=conversation.id, sender="ai", content="",
-                           streaming_status="running", streaming_started_at=ir._now())
+                           streaming_status="running", streaming_started_at=run_state._now())
         session.add(run)
         await session.commit()
         conversation_id, run_id = conversation.id, run.id

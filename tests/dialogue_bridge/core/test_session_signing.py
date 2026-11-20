@@ -37,7 +37,7 @@ from core.auth.signing import KMS_SIGNING_ALGORITHM, SigningConfigError, build_k
 from core.auth.tokens import ACCESS_TYPE, REFRESH_TYPE, TokenError, mint_tokens, verify
 from core.settings import AppSettings, Settings, SigningSettings
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 # Generated once: RSA key generation is the slow part of this file.
 _HSM_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)

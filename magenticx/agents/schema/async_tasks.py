@@ -1,7 +1,7 @@
 """The internal task API for the bridge (plan 41 §14.1, §14.3) — ``TaskOut``, ``OutboxItem``.
 
 These are the cross-service contract: the bridge validates the same shapes
-(``dialogue_bridge/schema/tasks.py``). ``user_id`` is in every request so each
+(``dialogue_bridge/schema/inference/tasks.py``). ``user_id`` is in every request so each
 call is checked against the task row's owner (a mismatch is a 404, never a
 hint that the task exists).
 """

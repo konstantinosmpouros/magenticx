@@ -456,7 +456,7 @@ Detached runs are the primary inference path. The run lifecycle is fully owned b
 
 ### 11.1 Run creation
 
-`start_inference_flow(...)` (in `engine/inference/start.py`) orchestrates persistence, then calls `create_inference_run_record(...)` (in `engine/inference/runs.py`) in the same transaction:
+`start_inference_flow(...)` (in `engine/inference/start.py`) orchestrates persistence, then calls `create_inference_run_record(...)` (in `engine/inference/runs/records.py`) in the same transaction:
 
 1. persists the user-side action for `new`, `send`, `edit`, `retry`, or `shared_continue`
 2. creates an AI placeholder `MessageTable` row with `streaming_status='queued'`, `streaming_started_at=now()`, and snapshots of the message path and tool preferences in the `streaming_*` columns
@@ -881,7 +881,8 @@ magenticx/dialogue_bridge/
 │   ├── inference/
 │   │   ├── history.py             Branch resolution and agent payload serialization
 │   │   ├── start.py               Backend-owned inference start orchestration
-│   │   ├── runs.py                Detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/stream/cleanup
+│   │   ├── runs/                  Detached run lifecycle, one module per concern: state, runtime (InferenceRunRuntime),
+│   │   │                          decisions (HITL), payloads, finish, manager (InferenceRunManager), stream, records
 │   │   ├── event_log.py           Redis-Streams-backed per-run AG-UI event log (RedisEventLog: append / read_since / mark_terminal)
 │   │   ├── speech.py              Speech proxy helpers
 │   │   ├── voice.py               Realtime voice helper logic
@@ -892,7 +893,9 @@ magenticx/dialogue_bridge/
 │   ├── validators.py              Ownership validators
 │   ├── citations.py               Citation markers → numbered references
 │   ├── zip_stream.py              Streamed zip archives
-│   └── pricing.py                 Model price table, call_cost_micros
+│   ├── pricing.py                 Model price table, call_cost_micros
+│   ├── sse.py                     parse_sse_bytes — SSE byte stream → JSON events
+│   └── http.py                    Content-Disposition builders
 ├── observability/                 Logging, metrics, middleware, redaction
 ├── requirements.txt
 └── Dockerfile
@@ -980,5 +983,5 @@ Configured environment there includes:
 - `router/inference/runs.py`: backend-owned inference start, WebSocket observation (`inference_run_websocket`), deprecated SSE fallback, cancellation, and active-run listing
 - `router/inference/speech.py`: speech and dictation endpoints
 - `engine/inference/history.py`: branch resolution and multimodal serialization
-- `engine/inference/runs.py`: detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/observe/cleanup
+- `engine/inference/runs/`: detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/observe/cleanup
 - `engine/agents/catalog.py`: agent cache and catalog sync; `engine/agents/tools.py`: per-agent tools proxy helpers

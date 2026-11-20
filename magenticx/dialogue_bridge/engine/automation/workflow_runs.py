@@ -69,7 +69,7 @@ from schema import (
     WorkflowTriggerKind,
 )
 from engine.inference.event_log import RedisEventLog
-from engine.inference.runs import _parse_sse_bytes
+from utils.sse import parse_sse_bytes
 from engine.automation.workflows import get_workflow, workflows_base_url
 
 logger = get_logger(__name__)
@@ -779,7 +779,7 @@ async def _read_stream(body: dict[str, Any], user_id: str, queue: asyncio.Queue[
             response.raise_for_status()
             buffer = ""
             async for chunk in response.aiter_bytes():
-                buffer, events = _parse_sse_bytes(buffer, chunk)
+                buffer, events = parse_sse_bytes(buffer, chunk)
                 for event in events:
                     await queue.put(event)
         await queue.put(_EOF)

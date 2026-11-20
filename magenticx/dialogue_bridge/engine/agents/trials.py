@@ -42,7 +42,7 @@ from core.logging import get_logger
 from core.settings import settings
 from schema import AgentTrialStart, InferenceStartResponse, MessageIn
 from engine.conversations.conversations import _preview, init_message
-from engine.inference.runs import inference_run_manager
+from engine.inference.runs.manager import inference_run_manager
 from engine.inference.start import create_run_and_respond
 from engine.conversations.runtime_reaps import delete_conversation, drain_runtime_reaps, enqueue_runtime_reap
 from engine.agents.trial_drafts import TrialDraft, trial_drafts

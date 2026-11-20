@@ -63,7 +63,7 @@ python -m pytest tests/integration -q
 Run a single test file:
 
 ```bash
-python -m pytest tests/dialogue_bridge/test_conversations.py -q
+python -m pytest tests/dialogue_bridge/conversations/test_conversations.py -q
 ```
 
 ## Notes

@@ -18,11 +18,11 @@ from fastapi.responses import StreamingResponse
 
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
 from engine.conversations.attachments import (
-    encode_disposition,
     generate_docx_preview_token,
     stream_blob_response,
     validate_docx_preview_token,
 )
+from utils.http import encode_disposition
 
 
 async def _seed_blob(*, session_factory, seeded_user, seeded_agent, file_name, mime_type, data):

@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
 from core.settings import settings
 from core.auth.signing import get_keyring
-from engine.inference.runs import cleanup_orphaned_inference_runs
+from engine.inference.runs.records import cleanup_orphaned_inference_runs
 from engine.automation.scheduled_tasks import scheduler
 from engine.account.deletion import run_account_purger
 from engine.agents.trials import run_trial_sweeper

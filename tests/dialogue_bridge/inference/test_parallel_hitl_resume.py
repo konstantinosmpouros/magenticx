@@ -22,13 +22,18 @@ import httpx
 import pytest
 import pytest_asyncio
 
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.runtime as run_runtime
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 from core.cache import client as cache_client
 from core.database import ConversationTable, MessageTable
 from core.settings import settings
 from engine.inference import event_log as event_log_module
 from engine.inference.hitl import EXPIRED_DECISION, HitlDecisionQueue, ResumeOutcome, StaleDecisions
-from engine.inference.runs import inference_run_manager
+from engine.inference.runs.manager import inference_run_manager
 
 IDS = ("int-helper-1", "int-helper-2", "int-helper-3")
 
@@ -167,7 +172,7 @@ async def seeded_run(session_factory, seeded_user, seeded_agent, monkeypatch):
         run = MessageTable(
             conversation_id=conversation.id, parent_message_id=question.id, sender="ai", content="",
             raw_events=[], agent_id=seeded_agent.id, agent_name=seeded_agent.name,
-            streaming_status="queued", streaming_started_at=ir._now(),
+            streaming_status="queued", streaming_started_at=run_state._now(),
         )
         session.add(run)
         await session.flush()
@@ -176,14 +181,16 @@ async def seeded_run(session_factory, seeded_user, seeded_agent, monkeypatch):
         await session.commit()
         run_id = run.id
 
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
 
     async def _agent(agent_id):
         return seeded_agent
 
-    monkeypatch.setattr(ir, "get_agent_by_id", _agent)
-    monkeypatch.setattr(ir, "build_agent_stream_url", lambda agent: "http://agents.test/stream")
-    monkeypatch.setattr(ir, "build_agent_resume_url", lambda agent: "http://agents.test/resume")
+    monkeypatch.setattr(run_manager, "get_agent_by_id", _agent)
+    monkeypatch.setattr(run_manager, "build_agent_stream_url", lambda agent: "http://agents.test/stream")
+    monkeypatch.setattr(run_manager, "build_agent_resume_url", lambda agent: "http://agents.test/resume")
     return run_id
 
 
@@ -197,8 +204,8 @@ def fake_agents(monkeypatch):
     async def _do_resume(self, *args):
         return await fake.resume(self, *args)
 
-    monkeypatch.setattr(ir.InferenceRunManager, "_do_stream", _do_stream)
-    monkeypatch.setattr(ir.InferenceRunManager, "_do_resume", _do_resume)
+    monkeypatch.setattr(run_manager.InferenceRunManager, "_do_stream", _do_stream)
+    monkeypatch.setattr(run_manager.InferenceRunManager, "_do_resume", _do_resume)
     return fake
 
 
@@ -354,14 +361,14 @@ def captured_resume_body(monkeypatch):
 
     real = httpx.AsyncClient
     monkeypatch.setattr(
-        ir.httpx, "AsyncClient",
+        run_manager.httpx, "AsyncClient",
         lambda *args, **kwargs: real(transport=httpx.MockTransport(handler), timeout=kwargs.get("timeout")),
     )
     return bodies
 
 
 async def _resume_once(payloads) -> None:
-    runtime = ir.InferenceRunRuntime()
+    runtime = run_runtime.InferenceRunRuntime()
     config = {"run_config": {"configurable": {"thread_id": "thread-1"}}, "context": {"run_id": "r"}}
     result = await inference_run_manager._do_resume("r", {}, runtime, "http://agents.test/resume", config, payloads)
     assert result == "completed"
@@ -496,7 +503,7 @@ def agents_conflict(monkeypatch):
         return httpx.Response(409, json=reply["body"])
 
     monkeypatch.setattr(
-        ir.httpx, "AsyncClient",
+        run_manager.httpx, "AsyncClient",
         lambda *args, **kwargs: real(transport=httpx.MockTransport(handler), timeout=kwargs.get("timeout")),
     )
     return reply
@@ -514,9 +521,11 @@ async def test_a_stale_409_is_raised_for_recovery_not_turned_into_a_failure(agen
 
 
 async def test_any_other_409_still_fails_the_resume(agents_conflict, session_factory, monkeypatch):
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     agents_conflict["body"] = {"detail": "Something else."}
-    runtime = ir.InferenceRunRuntime()
+    runtime = run_runtime.InferenceRunRuntime()
     config = {"run_config": {"configurable": {"thread_id": "thread-1"}}, "context": {"run_id": "r"}}
     result = await inference_run_manager._do_resume(
         "r", {}, runtime, "http://agents.test/resume", config, [_decision("int-helper-1")]

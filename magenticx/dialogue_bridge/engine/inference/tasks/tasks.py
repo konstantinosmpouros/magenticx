@@ -44,12 +44,8 @@ from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
 from schema import ActiveConversationsOut, OutboxItem, TaskOut, TaskResumeIn, TaskStatusEntry
 from engine.inference.channel import publish_task_frame
-from engine.inference.runs import (
-    append_coalesced,
-    hitl_resolved_value,
-    overall_hitl_decision,
-    truncate_tool_result,
-)
+from engine.inference.runs.runtime import append_coalesced, truncate_tool_result
+from engine.inference.runs.decisions import hitl_resolved_value, overall_hitl_decision
 from utils.pricing import call_cost_micros
 from engine.inference.tasks.streams import task_streams
 from engine.account.usage_rollups import add_answer_to_rollups

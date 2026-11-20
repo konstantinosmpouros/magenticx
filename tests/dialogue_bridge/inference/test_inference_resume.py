@@ -23,12 +23,9 @@ import pytest_asyncio
 from core.database import ConversationTable, MessageTable, UserTable
 from router.inference import runs as inference_router
 from engine.inference.hitl import HitlDecisionQueue, ResumeOutcome
-from engine.inference.runs import (
-    InferenceRunRuntime,
-    hitl_resolved_value,
-    inference_run_manager,
-    run_is_interactive,
-)
+from engine.inference.runs.runtime import InferenceRunRuntime
+from engine.inference.runs.decisions import hitl_resolved_value, run_is_interactive
+from engine.inference.runs.manager import inference_run_manager
 
 
 def _utcnow() -> datetime:

@@ -23,7 +23,12 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.payloads as run_payloads
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import utils.pricing as model_pricing
 from core.database import (
     ConversationTable,
@@ -36,11 +41,9 @@ from core.database import (
 )
 from core.settings import PricingSettings, settings
 from schema import MessageOut
-from engine.inference.runs import (
-    InferenceRunRuntime,
-    _mark_run_completed,
-    build_run_out_from_message,
-)
+from engine.inference.runs.runtime import InferenceRunRuntime
+from engine.inference.runs.finish import _mark_run_completed
+from engine.inference.runs.payloads import build_run_out_from_message
 from utils.pricing import call_cost_micros, lookup_price, parse_price_table
 
 # ---------------------------------------------------------------------------
@@ -280,7 +283,9 @@ def test_an_approval_before_the_first_text_leaves_first_token_unmeasured():
 @pytest.fixture
 def patch_session_local(monkeypatch, session_factory):
     """Route _finish_run's own SessionLocal() at the test database."""
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     return session_factory
 
 
@@ -296,8 +301,8 @@ async def _conversation(session_factory, user, agent) -> str:
 async def _start_run(session_factory, conversation_id, agent) -> str:
     async with session_factory() as session:
         run = MessageTable(conversation_id=conversation_id, sender="ai", content="", agent_id=agent.id,
-                           agent_name=agent.name, streaming_status="running", streaming_started_at=ir._now(),
-                           created_at=ir._now())
+                           agent_name=agent.name, streaming_status="running", streaming_started_at=run_state._now(),
+                           created_at=run_state._now())
         session.add(run)
         await session.commit()
         return run.id
@@ -384,7 +389,7 @@ async def test_finishing_a_run_books_every_metric_everywhere(
         }
 
         # The chat message and the run carry the answer's figures.
-        message = MessageOut.model_validate(await ir._load_message(session, first_id)).model_dump()
+        message = MessageOut.model_validate(await run_payloads._load_message(session, first_id)).model_dump()
         run = build_run_out_from_message(answer, user_id=seeded_user.id).model_dump()
         for out in (message, run):
             assert (out["costMicros"], out["unpricedCalls"], out["truncatedCalls"]) == (FIRST_COST, 1, 1)

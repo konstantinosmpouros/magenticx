@@ -616,7 +616,7 @@ Structured, async, per-request-context logging.
 
 - **agents → rag_service** — only from LangGraph nodes, over mTLS + `internal_service_headers`. HR/Orthodox POST `/retrieve/{collection}` (parallel `asyncio.gather`); Retail GET `/excel/{table}/schema` + POST `/excel/{table}/query/sql`.
 - **agents → dialogue_bridge** (reverse) — the `search_past_conversations` tool POSTs to `/v1/internal/memory/search` (mTLS + proxy header); also `POST /embed` lets the bridge proxy embeddings (it has no OpenAI key).
-- **dialogue_bridge → agents** — `engine/inference/runs.py` builds `{run_config.configurable.thread_id, context:{user_id, conversation_id, run_id, use_memory, search_past_convs, interactive, personalization?}, tools, fork_from?}` and streams `POST /stream` (or `/resume`) over `httpx.AsyncClient(verify=SSLContext, cert=None)` with `internal_service_headers` + `Accept: text/event-stream`, parsing SSE bytes → Redis delta publish. A `RUN_ERROR` frame marks the run failed.
+- **dialogue_bridge → agents** — `engine/inference/runs/manager.py` builds `{run_config.configurable.thread_id, context:{user_id, conversation_id, run_id, use_memory, search_past_convs, interactive, personalization?}, tools, fork_from?}` and streams `POST /stream` (or `/resume`) over `httpx.AsyncClient(verify=SSLContext, cert=None)` with `internal_service_headers` + `Accept: text/event-stream`, parsing SSE bytes → Redis delta publish. A `RUN_ERROR` frame marks the run failed.
 
 ---
 

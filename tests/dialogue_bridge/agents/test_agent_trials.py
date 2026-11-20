@@ -25,7 +25,13 @@ from sqlalchemy.exc import IntegrityError
 
 import engine.agents.trials as agent_trials
 import engine.account.data_export as data_export
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.runtime as run_runtime
+import engine.inference.runs.payloads as run_payloads
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import engine.conversations.runtime_reaps as runtime_reaps
 from core.database import (
     AgentTable,
@@ -36,12 +42,12 @@ from core.database import (
     UserAgentToolPrefTable,
     UserTable,
 )
-from engine.inference.runs import inference_run_manager
+from engine.inference.runs.manager import inference_run_manager
 from engine.agents.trial_drafts import TrialDraft, overlay_approvals, trial_drafts
 from engine.account.usage import compute_usage_summary, list_usage_conversations
 
 VERSIONS = (
-    Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
+    Path(__file__).resolve().parents[3] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
 )
 
 
@@ -284,15 +290,17 @@ def fake_upstream(monkeypatch, session_factory):
     async def _do_resume(self, *args, **kwargs):
         return await fake.resume(self, *args, **kwargs)
 
-    monkeypatch.setattr(ir.InferenceRunManager, "_do_stream", _do_stream)
-    monkeypatch.setattr(ir.InferenceRunManager, "_do_resume", _do_resume)
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    monkeypatch.setattr(run_manager.InferenceRunManager, "_do_stream", _do_stream)
+    monkeypatch.setattr(run_manager.InferenceRunManager, "_do_resume", _do_resume)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     return fake
 
 
 def _launch(run_id: str) -> None:
     """The real launch (the ``launched`` fixture stubs the route's)."""
-    ir.InferenceRunManager.launch(inference_run_manager, run_id)
+    run_manager.InferenceRunManager.launch(inference_run_manager, run_id)
 
 
 async def _run_to_end(run_id: str, session_factory) -> MessageTable:
@@ -322,7 +330,7 @@ async def test_a_new_draft_runs_from_its_definition_with_memory_off(
     assert await trial_drafts.get(run.id) is None
     # The terminal frame describes the agentless conversation by the draft.
     async with session_factory() as session:
-        frame = await ir.build_run_event_payload(session, run.id, "terminal")
+        frame = await run_payloads.build_run_event_payload(session, run.id, "terminal")
     assert frame["summary"]["agent"]["name"] == "Draft Bot" and frame["summary"]["isPrivate"] is True
 
 
@@ -343,7 +351,7 @@ async def test_an_existing_agent_runs_with_real_memory_and_its_tool_rows_overlai
     async def agent_by_id(agent_id):
         return my_agent if agent_id == my_agent.id else None
 
-    monkeypatch.setattr(ir, "get_agent_by_id", agent_by_id)
+    monkeypatch.setattr(run_manager, "get_agent_by_id", agent_by_id)
     run = await _run_to_end(body["run"]["id"], session_factory)
 
     assert run.streaming_status == "completed"
@@ -391,16 +399,16 @@ async def test_the_resume_body_sends_the_definition_on_the_wire(monkeypatch):
         return httpx.Response(200, text="", headers={"content-type": "text/event-stream"})
 
     real = httpx.AsyncClient
-    monkeypatch.setattr(ir.httpx, "AsyncClient",
+    monkeypatch.setattr(run_manager.httpx, "AsyncClient",
                         lambda *a, **k: real(transport=httpx.MockTransport(handler), timeout=k.get("timeout")))
     config = {"run_config": {"configurable": {"thread_id": "t"}}, "context": {"run_id": "r"}}
     decision = {"interrupt_id": "int-1", "decision": "approve", "reason": None, "value": None, "decisions": None}
     await inference_run_manager._do_resume(
-        "r", {}, ir.InferenceRunRuntime(), "http://agents.test/agents/x/resume", config, [decision],
+        "r", {}, run_runtime.InferenceRunRuntime(), "http://agents.test/agents/x/resume", config, [decision],
         definition=_draft(),
     )
     await inference_run_manager._do_resume(
-        "r", {}, ir.InferenceRunRuntime(), "http://agents.test/agents/x/resume", config, [decision],
+        "r", {}, run_runtime.InferenceRunRuntime(), "http://agents.test/agents/x/resume", config, [decision],
     )
     assert bodies[0]["definition"] == _draft()
     assert "definition" not in bodies[1]
@@ -449,7 +457,7 @@ async def test_a_trial_is_invisible_everywhere_but_the_trial_routes(
         conversation = await session.get(ConversationTable, trial_id)
         conversation.usage_answers = 1
         conversation.usage_total_tokens = 150
-        conversation.usage_updated_at = ir._now()
+        conversation.usage_updated_at = run_state._now()
         await session.commit()
     uid = seeded_user.id
 
@@ -515,7 +523,7 @@ async def test_reset_refuses_anything_but_the_callers_trial(
 async def test_the_sweeper_deletes_only_trials_older_than_the_ttl(
     session_factory, seeded_user, seeded_agent, upstream,
 ):
-    old = ir._now() - timedelta(hours=25)
+    old = run_state._now() - timedelta(hours=25)
     async with session_factory() as session:
         expired = ConversationTable(user_id=seeded_user.id, agent_id=None, agent_name="Draft", is_private=True,
                                     is_trial=True, created_at=old)

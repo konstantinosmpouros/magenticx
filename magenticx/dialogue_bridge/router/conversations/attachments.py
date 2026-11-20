@@ -15,13 +15,13 @@ from engine.conversations.attachments import (
     _get_attachment_blob_row,
     OFFICE_PREVIEW_MIMES,
     OFFICE_PREVIEW_MIME_BY_EXT,
-    encode_disposition,
     generate_docx_preview_token,
     get_public_docx_blob,
     list_user_images,
     stream_blob_response,
     validate_docx_preview_token,
 )
+from utils.http import encode_disposition
 from engine.documents.export import office_pdf_preview
 from engine.conversations.user_files import list_user_files
 

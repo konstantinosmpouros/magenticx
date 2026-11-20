@@ -36,19 +36,23 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 import engine.inference.composer_queue as composer_queue
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import engine.inference.start as inference_start_module
 from core.database import ConversationTable, MessageTable
 from schema import InferenceStartPayload, MessageIn, MessageOut
 from engine.documents.canvas_edit import canvas_edit_context
 from engine.conversations.conversations import clone_branch_to_conversation
-from engine.inference.runs import inference_run_manager
+from engine.inference.runs.manager import inference_run_manager
 from engine.inference.start import start_inference_flow
 
 BRIEF = "/conversation/output/brief.md"
 WHEN = "2026-11-18T10:00:00+00:00"
 VERSIONS = (
-    Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
+    Path(__file__).resolve().parents[3] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
 )
 
 
@@ -80,7 +84,7 @@ def agent_lookup(monkeypatch, seeded_agent):
         return seeded_agent if agent_id == seeded_agent.id else None
 
     monkeypatch.setattr(inference_start_module, "get_agent_by_id", agent_by_id)
-    monkeypatch.setattr(ir, "get_agent_by_id", agent_by_id)
+    monkeypatch.setattr(run_manager, "get_agent_by_id", agent_by_id)
     return agent_by_id
 
 
@@ -377,7 +381,7 @@ async def test_a_busy_conversation_does_not_queue_a_canvas_edit(
     conversation_id, answer_id = await _answered_conversation(session_factory, seeded_user, seeded_agent)
     async with session_factory() as db:
         db.add(MessageTable(conversation_id=conversation_id, sender="ai", content="", parent_message_id=answer_id,
-                            streaming_status="running", streaming_started_at=ir._now()))
+                            streaming_status="running", streaming_started_at=run_state._now()))
         await db.commit()
     payload = _send(seeded_agent, conversation_id, answer_id, _edit())
     payload.queue_if_busy = True
@@ -500,8 +504,10 @@ def upstream(monkeypatch, session_factory):
     async def _do_stream(self, *args):
         return await fake.stream(self, *args)
 
-    monkeypatch.setattr(ir.InferenceRunManager, "_do_stream", _do_stream)
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    monkeypatch.setattr(run_manager.InferenceRunManager, "_do_stream", _do_stream)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     return fake
 
 
@@ -516,7 +522,7 @@ async def test_the_run_config_carries_the_canvas_edit(
         response = await start_inference_flow(
             db=db, user=seeded_user, payload=_send(seeded_agent, conversation_id, answer_id, _edit())
         )
-    ir.InferenceRunManager.launch(inference_run_manager, response.message.id)
+    run_manager.InferenceRunManager.launch(inference_run_manager, response.message.id)
     task = inference_run_manager._tasks.get(response.message.id)
     if task is not None:
         await asyncio.wait_for(task, timeout=5)

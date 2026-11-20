@@ -24,12 +24,16 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import engine.inference.output_capture as oc
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
 from core.settings import settings
 from engine.conversations.conversations import build_share_snapshot, clone_branch_to_conversation, is_shareable
-from engine.inference.runs import InferenceRunRuntime
+from engine.inference.runs.runtime import InferenceRunRuntime
 
 
 class FakeAgents:
@@ -59,7 +63,9 @@ def agents(monkeypatch):
 
 @pytest.fixture
 def patch_session_local(monkeypatch, session_factory):
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
 
 
 async def _new_run(session_factory, user, agent):
@@ -68,7 +74,7 @@ async def _new_run(session_factory, user, agent):
         s.add(conversation)
         await s.flush()
         run = MessageTable(conversation_id=conversation.id, sender="ai", content="", streaming_status="running",
-                           streaming_started_at=ir._now())
+                           streaming_started_at=run_state._now())
         s.add(run)
         await s.commit()
         return conversation.id, run.id
@@ -94,7 +100,7 @@ async def test_presented_files_are_stored_before_the_terminal_frame(
     agents.files = {"/conversation/output/report.md": b"# Q3", "/conversation/output/scratch.csv": b"a,b"}
     conversation_id, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
 
-    await ir._mark_run_completed(run_id, _presented("/conversation/output/report.md"))
+    await run_finish._mark_run_completed(run_id, _presented("/conversation/output/report.md"))
 
     stored = await _generated(session_factory, run_id)
     assert set(stored) == {"report.md"}  # what was only written stays in the agents service
@@ -114,7 +120,7 @@ async def test_a_run_that_presented_nothing_fetches_nothing(
 ):
     agents.files = {"/conversation/output/scratch.csv": b"a,b"}
     _, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
-    await ir._mark_run_completed(run_id, InferenceRunRuntime())
+    await run_finish._mark_run_completed(run_id, InferenceRunRuntime())
     assert await _generated(session_factory, run_id) == {}
     assert agents.fetches == []
 
@@ -127,9 +133,9 @@ async def test_failed_and_cancelled_runs_are_captured_too(
     _, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
     runtime = _presented("/conversation/output/partial.md")
     if finish == "_mark_run_failed":
-        await ir._mark_run_failed(run_id, runtime, "stream died")
+        await run_finish._mark_run_failed(run_id, runtime, "stream died")
     else:
-        await ir._mark_run_cancelled(run_id, runtime)
+        await run_finish._mark_run_cancelled(run_id, runtime)
     assert set(await _generated(session_factory, run_id)) == {"partial.md"}
 
 
@@ -138,7 +144,7 @@ async def test_fetches_are_batched(agents, patch_session_local, session_factory,
     agents.files = {f"/conversation/output/f{i}.txt": f"file {i}".encode() for i in range(3)}
     _, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
 
-    await ir._mark_run_completed(run_id, _presented(*agents.files))
+    await run_finish._mark_run_completed(run_id, _presented(*agents.files))
 
     assert len(await _generated(session_factory, run_id)) == 3
     assert [len(batch) for batch in agents.fetches] == [2, 1]
@@ -152,7 +158,7 @@ async def test_failures_never_fail_the_run(agents, patch_session_local, session_
     _, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
     runtime = _presented("/conversation/output/report.md")
     runtime.content = "the answer"
-    await ir._mark_run_completed(run_id, runtime)
+    await run_finish._mark_run_completed(run_id, runtime)
 
     async with session_factory() as s:
         run = await s.get(MessageTable, run_id)
@@ -172,7 +178,7 @@ async def test_bad_base64_is_skipped(agents, patch_session_local, session_factor
 
     monkeypatch.setattr(oc, "fetch_output_files", corrupting_fetch)
     _, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
-    await ir._mark_run_completed(run_id, _presented(*agents.files))
+    await run_finish._mark_run_completed(run_id, _presented(*agents.files))
     assert set(await _generated(session_factory, run_id)) == {"ok.txt"}
 
 
@@ -184,7 +190,7 @@ async def test_a_fork_keeps_generated_files_generated_and_shares_drop_unpresente
     file that was never presented — captured before plan 36 — stays private."""
     agents.files = {"/conversation/output/report.md": b"# Q3"}
     conv_id, run_id = await _new_run(session_factory, seeded_user, seeded_agent)
-    await ir._mark_run_completed(run_id, _presented("/conversation/output/report.md"))
+    await run_finish._mark_run_completed(run_id, _presented("/conversation/output/report.md"))
     async with session_factory() as s:
         s.add(AttachmentTable(message_id=run_id, file_name="scratch.csv", mime_type="text/csv", origin="generated",
                               presented=False, blob=BlobTable(data=b"a,b")))

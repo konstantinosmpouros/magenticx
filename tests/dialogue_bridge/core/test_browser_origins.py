@@ -23,7 +23,7 @@ from core.settings import (
     settings,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 EVIL = "https://evil.magenticx.com"
 SOCKETS = [
     "/v1/tasks/{user}/task-1/ws",

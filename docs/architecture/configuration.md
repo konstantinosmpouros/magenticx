@@ -172,7 +172,7 @@ Who signs session JWTs and which public keys verify them. Production signs with 
 | `USER_RATE_LIMIT_WINDOW_SECONDS` | `60` | Budget window. |
 | `INFERENCE_MAX_ACTIVE_RUNS_PER_USER` | `5` | Concurrent in-flight runs per user. |
 
-Every per-user limit (keyed on the path's `{user_id}`) is declared as an endpoint parameter **after** the auth and CSRF dependencies, never in `dependencies=[...]` on the route or router — FastAPI solves those first, which would let an anonymous caller drain any user's budget by naming them in the URL. `tests/dialogue_bridge/test_rate_limit_order.py` checks every route. The login/refresh limits (per IP) and the catalogue search (per verified session) stay route-level, because they must apply before authentication.
+Every per-user limit (keyed on the path's `{user_id}`) is declared as an endpoint parameter **after** the auth and CSRF dependencies, never in `dependencies=[...]` on the route or router — FastAPI solves those first, which would let an anonymous caller drain any user's budget by naming them in the URL. `tests/dialogue_bridge/core/test_rate_limit_order.py` checks every route. The login/refresh limits (per IP) and the catalogue search (per verified session) stay route-level, because they must apply before authentication.
 
 All rate limits are counted in **Redis** via `fastapi-redis-sdk` (they survive restarts and hold across replicas) and **fail open** on a Redis outage. The SDK's own `REDIS_*` env settings are **not** read from the environment — `core/cache/integration.py` primes them programmatically from the values above plus the Redis section below (so the file-backed password and internal CA are honored), then scrubs the password back out of the process env.
 

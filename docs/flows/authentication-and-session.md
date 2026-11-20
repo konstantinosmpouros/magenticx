@@ -623,8 +623,8 @@ holding dormant logins.
 | Entra OIDC flow (MSAL) | [magenticx/dialogue_bridge/core/auth/oidc.py](../../magenticx/dialogue_bridge/core/auth/oidc.py) | `begin_login`, `complete_login`, group gate |
 | User resolution | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) | `upsert_user_from_identity` (by `oid` only), `IdentityConflictError` |
 | Settings | [magenticx/dialogue_bridge/core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `JWTSettings`, `SigningSettings` (KMS / file backend, kids), `EntraSettings` (OIDC — mandatory), the Entra boot guard in `Settings._finalize_secrets` |
-| Signing tests | [tests/dialogue_bridge/test_session_signing.py](../../tests/dialogue_bridge/test_session_signing.py) | digest-only, self-check, KMS failures, legacy kid, boot guards, Dennis compose guard |
-| Sign-in tests | [tests/dialogue_bridge/test_auth.py](../../tests/dialogue_bridge/test_auth.py) | `/login` gone, Entra boot guard, oid-only resolution, no merge by email, refusals |
+| Signing tests | [tests/dialogue_bridge/core/test_session_signing.py](../../tests/dialogue_bridge/core/test_session_signing.py) | digest-only, self-check, KMS failures, legacy kid, boot guards, Dennis compose guard |
+| Sign-in tests | [tests/dialogue_bridge/account/test_auth.py](../../tests/dialogue_bridge/account/test_auth.py) | `/login` gone, Entra boot guard, oid-only resolution, no merge by email, refusals |
 | Rate limiting | [magenticx/dialogue_bridge/core/security/rate_limit.py](../../magenticx/dialogue_bridge/core/security/rate_limit.py) | `AUTHENTICATE_LIMIT`, `limiter` |
 | localStorage marker | [magenticx/agentic_ui/src/shared/lib/authStorage.ts](../../magenticx/agentic_ui/src/shared/lib/authStorage.ts) | `StoredSession`, `saveSession()`, `loadSession()` |
 | Silent-refresh primitive | [magenticx/agentic_ui/src/shared/lib/sessionRefresh.ts](../../magenticx/agentic_ui/src/shared/lib/sessionRefresh.ts) | `ensureFreshSession()` — single-flight + cross-tab refresh, shared by both triggers; `failed` vs `unavailable`; `sessionRetryDelay()` / `waitForSessionRetry()` backoff |

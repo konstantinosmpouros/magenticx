@@ -38,7 +38,7 @@ from engine.conversations.sources import (
     copy_conversation_sources,
     fetch_conversation_sources,
 )
-from engine.conversations.attachments import encode_disposition
+from utils.http import encode_disposition
 from utils.citations import has_citation_markers
 from engine.conversations.share_pdf import conversation_pdf_filename, render_conversation_pdf, select_scoped_messages
 from engine.conversations.conversations import (

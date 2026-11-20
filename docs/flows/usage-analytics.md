@@ -299,7 +299,7 @@ from before pricing) also shows "—".
 | Per-call metrics (LangGraph agents) | `magenticx/agents/harness/agui/usage_callback.py` (`drain`, `drain_tools`), `magenticx/agents/harness/abstractions/langgraph_agent.py` (`_stream_config`, `_pending_frames`) |
 | Events | `magenticx/agents/harness/agui/events.py` (`TokenUsageEvent`, `ToolUsageEvent`), `emitter.py` (`token_usage`, `tool_usage`) |
 | Stream hooks | `magenticx/agents/harness/abstractions/base_agent.py` (`astream`, `_config_with_callback`) |
-| Accumulator, booking | `magenticx/dialogue_bridge/engine/inference/runs.py` (`InferenceRunRuntime`, `_call_metrics`, `_accumulate_tool_usage`, `_note_first_text`, `_record_usage_breakdown`) |
+| Accumulator, booking | `magenticx/dialogue_bridge/engine/inference/runs/` (`InferenceRunRuntime`, `_call_metrics`, `_accumulate_tool_usage`, `_note_first_text`, `_record_usage_breakdown`) |
 | Pricing | `magenticx/dialogue_bridge/utils/pricing.py`; `PricingSettings` in `core/settings.py` |
 | Manual compaction booking | `magenticx/dialogue_bridge/engine/conversations/compaction.py` (`_book_compaction_usage`) |
 | Call counting | `magenticx/dialogue_bridge/engine/inference/activity.py` |

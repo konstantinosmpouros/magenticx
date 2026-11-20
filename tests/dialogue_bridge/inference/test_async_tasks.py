@@ -41,7 +41,11 @@ import engine.account.deletion as account_deletion
 import engine.inference.tasks.tasks as async_tasks
 import engine.inference.composer_queue as composer_queue
 import engine.account.data_export as data_export
-import engine.inference.runs as ir
+import engine.inference.runs.decisions as run_decisions
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import engine.inference.start as inference_start
 import engine.conversations.runtime_reaps as runtime_reaps
 import engine.inference.tasks.consumers as task_consumers_module
@@ -76,7 +80,7 @@ def _now() -> datetime:
 @pytest.fixture(autouse=True)
 def _wire(monkeypatch, session_factory, seeded_agent):
     """Point every module at the test database and stub the agent lookup."""
-    for module in (ir, async_tasks, composer_queue, task_wakeups, runtime_reaps):
+    for module in (run_finish, run_manager, run_records, run_stream, async_tasks, composer_queue, task_wakeups, runtime_reaps):
         monkeypatch.setattr(module, "SessionLocal", session_factory, raising=False)
 
     async def get_agent(_agent_id):
@@ -93,7 +97,7 @@ def _wire(monkeypatch, session_factory, seeded_agent):
 def launched(monkeypatch):
     """Runs the code under test launched (never actually streamed)."""
     ids: list[str] = []
-    monkeypatch.setattr(ir.inference_run_manager, "launch", ids.append)
+    monkeypatch.setattr(run_manager.inference_run_manager, "launch", ids.append)
     return ids
 
 
@@ -335,7 +339,7 @@ async def test_a_run_cap_retries_then_defers(session_factory, seeded_user, seede
                                              monkeypatch):
     ids = await _branchy_conversation(session_factory, seeded_user, seeded_agent)
     agents_service.on("GET", "/tasks/task-1", httpx.Response(404))
-    monkeypatch.setattr(ir, "MAX_ACTIVE_RUNS_PER_USER", 0)
+    monkeypatch.setattr(run_records, "MAX_ACTIVE_RUNS_PER_USER", 0)
     sleeps: list[float] = []
 
     async def no_sleep(seconds):
@@ -425,7 +429,7 @@ async def test_a_scheduled_roots_wake_up_stays_headless(
     async with session_factory() as s:
         run = await s.get(MessageTable, launched[0])
         assert run.scheduled_task_id == scheduled_id
-        assert ir.run_is_interactive(run) is False
+        assert run_decisions.run_is_interactive(run) is False
 
 
 async def test_the_notice_reaches_the_agent_with_its_kwargs_and_the_ui_without_them():

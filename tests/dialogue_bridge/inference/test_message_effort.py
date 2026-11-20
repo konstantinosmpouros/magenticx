@@ -30,18 +30,21 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 import engine.inference.composer_queue as composer_queue
-import engine.inference.runs as ir
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import engine.inference.start as inference_start_module
 from core.database import AgentTable, ConversationTable, MessageTable, UserTable
 from schema import InferenceStartPayload, MessageIn, MessageOut, queued_message_from_column
 from engine.conversations.conversations import clone_branch_to_conversation
 from engine.inference.effort import EFFORT_LEVELS, effort_context
-from engine.inference.runs import inference_run_manager
+from engine.inference.runs.manager import inference_run_manager
 from engine.inference.start import start_inference_flow
 
 LEVELS = ["minimal", "low", "medium", "high", "xhigh"]
 VERSIONS = (
-    Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
+    Path(__file__).resolve().parents[3] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
 )
 
 
@@ -53,7 +56,7 @@ def agent_lookup(monkeypatch, seeded_agent):
         return seeded_agent if agent_id == seeded_agent.id else None
 
     monkeypatch.setattr(inference_start_module, "get_agent_by_id", agent_by_id)
-    monkeypatch.setattr(ir, "get_agent_by_id", agent_by_id)
+    monkeypatch.setattr(run_manager, "get_agent_by_id", agent_by_id)
     return agent_by_id
 
 
@@ -196,13 +199,15 @@ def upstream(monkeypatch, session_factory):
     async def _do_stream(self, *args):
         return await fake.stream(self, *args)
 
-    monkeypatch.setattr(ir.InferenceRunManager, "_do_stream", _do_stream)
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    monkeypatch.setattr(run_manager.InferenceRunManager, "_do_stream", _do_stream)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     return fake
 
 
 async def _run_to_end(run_id: str) -> None:
-    ir.InferenceRunManager.launch(inference_run_manager, run_id)
+    run_manager.InferenceRunManager.launch(inference_run_manager, run_id)
     task = inference_run_manager._tasks.get(run_id)
     if task is not None:
         await asyncio.wait_for(task, timeout=5)

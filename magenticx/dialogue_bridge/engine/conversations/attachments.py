@@ -3,7 +3,6 @@ import base64
 import hashlib
 import hmac
 import time
-from urllib.parse import quote
 
 from fastapi import HTTPException, Response, status
 from fastapi.responses import StreamingResponse
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
 from core.settings import settings
 from schema import ImageOut
+from utils.http import encode_disposition
 
 
 logger = get_logger(__name__)
@@ -103,14 +103,6 @@ async def _get_attachment_blob_row(
     if not row:
         raise HTTPException(status_code=404, detail="Blob not found or not accessible.")
     return row
-
-
-def encode_disposition(name: str | None, disposition: str) -> str:
-    fallback_name = "document.pdf" if disposition == "inline" else "download"
-    safe_name = (name or fallback_name).replace("\\", "_").replace("/", "_").replace('"', "'").strip() or fallback_name
-    ascii_name = safe_name.encode("ascii", "ignore").decode("ascii").strip() or fallback_name
-    encoded_name = quote(safe_name)
-    return f'{disposition}; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded_name}'
 
 
 #: MIME types a browser executes or renders as a document: never served inline.

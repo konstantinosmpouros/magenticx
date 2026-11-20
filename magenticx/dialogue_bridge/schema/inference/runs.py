@@ -28,7 +28,7 @@ class InferenceRunOut(BaseModel):
     """Backend-owned inference run visible to the frontend run manager.
 
     After the inference_runs-table collapse this is built explicitly by
-    :func:`engine.inference.runs.build_run_out_from_message` from a
+    :func:`engine.inference.runs.payloads.build_run_out_from_message` from a
     :class:`MessageTable` row — there is no longer a separate ORM model to
     validate from. ``id`` and ``assistantMessageId`` are both the message ID.
     """

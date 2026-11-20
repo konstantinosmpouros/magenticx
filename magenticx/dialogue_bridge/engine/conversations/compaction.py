@@ -39,7 +39,7 @@ from schema import AgentCompactionResult, AgentCompactionUndoResult
 from engine.agents.service_urls import build_agent_compact_undo_url, build_agent_compact_url
 from engine.agents.catalog import get_agent_by_id
 from engine.conversations.compaction_lock import compaction_locks
-from engine.inference.runs import ACTIVE_RUN_STATUSES
+from engine.inference.runs.state import ACTIVE_RUN_STATUSES
 from engine.conversations.messages import get_owned_message
 from utils.pricing import call_cost_micros
 from engine.account.usage_rollups import add_answer_to_rollups

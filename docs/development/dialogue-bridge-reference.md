@@ -114,7 +114,12 @@ magenticx/dialogue_bridge/
 │   │                           favicons · compaction + compaction_lock · runtime_reaps
 │   ├── documents/              documents · comments · suggestions · export · canvas_edit (canvas, plan 44)
 │   ├── inference/
-│   │   ├── runs.py             ★ InferenceRunManager, InferenceRunRuntime, run state machine, SSE parse, persistence
+│   │   ├── runs/               ★ the run engine, one module per concern:
+│   │   │                       state (statuses, clock) · runtime (InferenceRunRuntime: a live run's state,
+│   │   │                       delta coalescing) · decisions (HITL) · payloads (InferenceRunOut, frames) ·
+│   │   │                       finish (persist + usage + run-finished hooks) · manager (InferenceRunManager,
+│   │   │                       _do_stream/_do_resume) · stream (replay + live tail) · records (create, limits,
+│   │   │                       cancel/resume, restart cleanup)
 │   │   ├── start.py            the 5 start modes → placeholder creation
 │   │   ├── history.py          history assembly, path resolution, nearest_committed_ai, multimodal serialization
 │   │   ├── event_log.py        ★ RedisEventLog (XADD/XREAD/EXPIRE) per-run stream
@@ -123,7 +128,8 @@ magenticx/dialogue_bridge/
 │   └── automation/             scheduled_tasks (Scheduler loop) · workflows (definitions proxy) ·
 │                               workflow_runs (★ run manager, event stream, watchdog) · workflow_schedules
 ├── utils/                      generic helpers only — no knowledge of any feature
-│   └── validators · citations · zip_stream · pricing (price table, call_cost_micros)
+│   └── validators · citations · zip_stream · pricing (price table, call_cost_micros) ·
+│       sse (parse_sse_bytes) · http (Content-Disposition builders)
 ├── requirements.txt · Dockerfile
 ```
 
@@ -344,7 +350,7 @@ Body `InferenceStartPayload{mode, agentId?, isPrivate, title?, sharedConversatio
 - **`retry`** — needs `targetMessageId` (an **AI** msg); parent = `target.parent_message_id`; reuses `target.agent_id`. **Only mode that passes the client `messagePath` through** (others force `None`).
 - **`shared_continue`** — needs `sharedConversationToken`; clones the shared conversation into the user's account; parent = the copied leaf. After the commit, before the launch, the snapshot's frozen citation sources (`snapshot_sources`, revalidated) are posted to the agents service's `POST /users/{uid}/conversations/{new cid}/sources` (`insert_conversation_sources`, best-effort, logged on failure), so the copied answers' citations resolve in the new conversation (plan 42).
 
-Then `create_inference_run_record` (`engine/inference/runs.py`): reaps stale queued runs (>2 min, no live task); enforces **per-user active cap** (`INFERENCE_MAX_ACTIVE_RUNS_PER_USER`=5 → 429) and **per-conversation** single-active guard (→ 409 via the partial unique index); allocates the branch thread (`send` on a committed branch reuses the ancestor's `checkpoint_thread_id`; new/edit/retry/shared_continue → fresh UUID); inserts the AI placeholder `messages` row (`sender="ai"`, `content=""`, `streaming_status="queued"`, `streaming_started_at`, `checkpoint_thread_id`); sets `conversation.active_assistant_message_id`. Then `inference_run_manager.launch(run.id)` fires the detached task; the endpoint returns `InferenceStartResponse{detail, summary, run, message}` (201).
+Then `create_inference_run_record` (`engine/inference/runs/records.py`): reaps stale queued runs (>2 min, no live task); enforces **per-user active cap** (`INFERENCE_MAX_ACTIVE_RUNS_PER_USER`=5 → 429) and **per-conversation** single-active guard (→ 409 via the partial unique index); allocates the branch thread (`send` on a committed branch reuses the ancestor's `checkpoint_thread_id`; new/edit/retry/shared_continue → fresh UUID); inserts the AI placeholder `messages` row (`sender="ai"`, `content=""`, `streaming_status="queued"`, `streaming_started_at`, `checkpoint_thread_id`); sets `conversation.active_assistant_message_id`. Then `inference_run_manager.launch(run.id)` fires the detached task; the endpoint returns `InferenceStartResponse{detail, summary, run, message}` (201).
 
 ### "Try it" — `POST /v1/agents/{user_id}/custom/try` → `start_agent_trial` (`engine/agents/trials.py`, plan 40)
 
@@ -357,7 +363,7 @@ The agent builder chats with a draft **as it is now**, uncommitted, through this
 - **Hidden:** every conversation route (`validate_convId`/`_full` filter `is_trial`), lists, search/suggestions/embeddings (via `is_private`), `GET /v1/inference/runs/{uid}` (both the active hydration and the full list), the data export, the Usage conversation list/count/private aggregate, scheduled-task targets. Tokens still go into `usage_daily*` (a new draft under `name:<draft name>`). An agentless conversation serialises through a stand-in agent (`id=""`, the draft's name) in `ConversationSummary`/`Detail`.
 - **Reset** `DELETE …/custom/try/{conversation_id}` → cancel its live run, then `delete_conversation` (`engine/conversations/runtime_reaps.py` — the one delete the conversation route uses too: reap outbox + delete + drain). Trials nobody Reset are swept after a day (§3).
 
-### The run task — `InferenceRunManager._run` (`engine/inference/runs.py`)
+### The run task — `InferenceRunManager._run` (`engine/inference/runs/manager.py`)
 
 Process-global manager with per-run dicts (`_tasks`, `_cancel_events`, `_runtimes`, `_run_metas`, `_resume_events`, `_resume_payloads`); `launch` is idempotent and registers a done-callback that pops all per-run state.
 
@@ -380,7 +386,7 @@ Process-global manager with per-run dicts (`_tasks`, `_cancel_events`, `_runtime
    `interactive` is `run.scheduled_task_id is None` (`run_is_interactive`): a scheduled task's run has nobody to answer, so its agent never gets `ask_user`. `command` (plan 35, `engine/agents/commands.command_context`) and `effort` (`engine/inference/effort.effort_context`) come from the run's **user message**: `effort` is the reasoning level the user picked in the composer (`minimal`/`low`/`medium`/`high`/`xhigh`, stored in `messages.effort`) and the key is **absent** when the message has none, so such a run's config is unchanged. `canvas_edit` (plan 44 4.3, `engine/documents/canvas_edit.canvas_edit_context`) is the stored `messages.canvas_edit` in snake_case — `{path, version, selection, heading_path, instruction, preset}`, plus `comment_id` only for a comment-started edit (v2) — and likewise absent unless the message carries one (an unreadable stored value is dropped, fail-closed). Retry reuses the same user message and the resume legs share this block, so both keep it. No `tools` key is sent — the agent resolves its own tool set (declared in `agent.yaml` minus the per-(user, agent) disables in `tool_prefs.json`).
 7. **Leg loop:** race `_do_stream` against the cancel event. On completion with no pending interrupts → `_finish_run` completed. On pending interrupts → pause and race resume vs cancel (§12).
 
-`_do_stream` (`engine/inference/runs.py`) opens `httpx.AsyncClient(verify=get_httpx_verify(), cert=get_httpx_client_cert(), timeout=inference_timeout)`, POSTs to `{AGENTS_SERVICE_URL}/agents/{slug}/stream` with `internal_service_headers(...)` + `Accept: text/event-stream`, and iterates `response.aiter_bytes()`. `_parse_sse_bytes` accumulates and splits on `\n\n`, keeps `data:` JSON dicts with a `type`. Each event → `runtime.apply_event(event)`; a `RUN_ERROR` marks failed + terminal snapshot + returns `"failed"`; otherwise the seq-stamped applied event is batched and `_publish_delta`'d.
+`_do_stream` (`engine/inference/runs/manager.py`) opens `httpx.AsyncClient(verify=get_httpx_verify(), cert=get_httpx_client_cert(), timeout=inference_timeout)`, POSTs to `{AGENTS_SERVICE_URL}/agents/{slug}/stream` with `internal_service_headers(...)` + `Accept: text/event-stream`, and iterates `response.aiter_bytes()`. `parse_sse_bytes` (`utils/sse.py`) accumulates and splits on `\n\n`, keeps `data:` JSON dicts with a `type`. Each event → `runtime.apply_event(event)`; a `RUN_ERROR` marks failed + terminal snapshot + returns `"failed"`; otherwise the seq-stamped applied event is batched and `_publish_delta`'d.
 
 ### `InferenceRunRuntime.apply_event` — the accumulator
 
@@ -401,7 +407,7 @@ Assigns a monotonic `seq`, then:
 The browser transport is a **WebSocket**, not SSE. SSE is only the upstream (bridge → agents) hop. The full path:
 
 ```text
-agents /stream (SSE) → bridge _do_stream: _parse_sse_bytes → runtime.apply_event (accumulate/coalesce/truncate)
+agents /stream (SSE) → bridge _do_stream: parse_sse_bytes → runtime.apply_event (accumulate/coalesce/truncate)
    → _publish_delta → RedisEventLog.append (XADD)  [inference:run:{run_id}:events]
    ◀ WS subscriber: stream_run_events → RedisEventLog.read_since (XREAD BLOCK)
    → router sends {snapshot|event|terminal} JSON frames → browser

@@ -24,7 +24,7 @@ from core.security.internal_trust import (
 )
 from core.settings import AppSettings, ProxySettings, Settings, settings
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 PROXY = settings.proxy.secret.get_secret_value()
 SERVICE = settings.proxy.internal_secret.get_secret_value()
 

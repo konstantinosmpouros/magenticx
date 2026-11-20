@@ -21,6 +21,7 @@ from engine.agents.catalog import get_usable_agent
 
 logger = get_logger(__name__)
 
+
 async def _memory_prefs(db: AsyncSession, user_id: str) -> Dict[str, str]:
     """The two preference flags that decide whether the memory builtins exist.
 

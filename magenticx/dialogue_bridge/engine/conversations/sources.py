@@ -12,6 +12,7 @@ from engine.agents.service_urls import build_conversation_files_url, build_conve
 
 logger = get_logger(__name__)
 
+
 async def _copy_to_fork(url: str, target_id: str) -> None:
     """POST ``{"target_conversation_id": target_id}`` to an agents-service copy
     route; raises ``httpx.HTTPError`` for the caller to log."""

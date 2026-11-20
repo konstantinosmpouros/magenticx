@@ -42,7 +42,7 @@ from engine.inference.history import serialise_message_with_images_for_agent
 from engine.conversations.workspace_names import WorkspaceNames, safe_workspace_name
 
 MIGRATION = (
-    Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge"
+    Path(__file__).resolve().parents[3] / "magenticx" / "dialogue_bridge"
     / "core" / "database" / "migrations" / "versions" / "0042_conversation_files.py"
 )
 

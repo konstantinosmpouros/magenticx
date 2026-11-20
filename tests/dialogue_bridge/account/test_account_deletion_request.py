@@ -43,7 +43,7 @@ from core.database import (
 from core.logging import hash_identifier
 from schema import MessageIn
 from utils.validators import validate_userId, validate_userId_even_if_pending
-from engine.inference.runs import create_inference_run_record
+from engine.inference.runs.records import create_inference_run_record
 from engine.automation.scheduled_tasks import claim_due_tasks
 from engine.conversations.sharing import create_conversation_from_share_record, load_active_share
 

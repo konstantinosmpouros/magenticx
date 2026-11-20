@@ -12,7 +12,7 @@ import pytest
 from core.database import AttachmentTable, BlobTable, ConversationTable, MessageTable
 from engine.conversations.attachments import ACTIVE_CONTENT_MIMES
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 # --- 2. API docs ------------------------------------------------------------------

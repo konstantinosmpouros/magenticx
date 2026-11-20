@@ -26,14 +26,18 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-import engine.inference.runs as ir
+import engine.inference.runs.state as run_state
+import engine.inference.runs.finish as run_finish
+import engine.inference.runs.manager as run_manager
+import engine.inference.runs.stream as run_stream
+import engine.inference.runs.records as run_records
 import engine.inference.output_capture as oc
 from core.auth.session import require_csrf_protection
 from core.database import AttachmentTable, ConversationTable, MessageTable
 from core.settings import settings
 from schema import AttachmentOut
 from engine.conversations.conversations import clone_branch_to_conversation
-from engine.inference.runs import InferenceRunRuntime
+from engine.inference.runs.runtime import InferenceRunRuntime
 
 BRIEF = "/conversation/output/brief.md"
 WHEN = "2026-11-18T10:00:00+00:00"
@@ -216,7 +220,9 @@ class _Files:
 @pytest.fixture
 def finalize(monkeypatch, session_factory, agents_service):
     """The real finalize on the test database, with the presented-file read faked."""
-    monkeypatch.setattr(ir, "SessionLocal", session_factory)
+    # Every run module that opens its own session reads the test database.
+    for run_module in (run_finish, run_manager, run_records, run_stream):
+        monkeypatch.setattr(run_module, "SessionLocal", session_factory)
     files = _Files({BRIEF: b"# Brief", "/conversation/output/chart.png": b"png",
                     "/conversation/output/notes/plan.md": b"plan"})
     monkeypatch.setattr(oc, "fetch_output_files", files.fetch)
@@ -226,7 +232,7 @@ def finalize(monkeypatch, session_factory, agents_service):
 async def _run(session_factory, conversation_id):
     async with session_factory() as s:
         run = MessageTable(conversation_id=conversation_id, sender="ai", content="", streaming_status="running",
-                           streaming_started_at=ir._now())
+                           streaming_started_at=run_state._now())
         s.add(run)
         await s.commit()
         return run.id
@@ -245,7 +251,7 @@ async def test_the_capture_gets_the_presented_markdown_only(finalize, session_fa
     finalize.on("POST", capture, httpx.Response(200, json={"captured": [
         {"path": BRIEF, "version": 1, "created": True}]}))
 
-    await ir._mark_run_completed(run_id, _presented(BRIEF, "/conversation/output/chart.png",
+    await run_finish._mark_run_completed(run_id, _presented(BRIEF, "/conversation/output/chart.png",
                                                     "/conversation/output/notes/plan.md"))
 
     [call] = finalize.called("POST", capture)
@@ -257,7 +263,7 @@ async def test_the_capture_gets_the_presented_markdown_only(finalize, session_fa
 async def test_no_markdown_presented_means_no_capture_call(finalize, session_factory, seeded_user, conv):
     run_id = await _run(session_factory, conv)
 
-    await ir._mark_run_completed(run_id, _presented("/conversation/output/chart.png"))
+    await run_finish._mark_run_completed(run_id, _presented("/conversation/output/chart.png"))
 
     assert finalize.calls == []
 
@@ -271,10 +277,10 @@ async def test_a_conversation_with_a_document_is_captured_after_every_run(
     first = await _run(session_factory, conv)
     capture = _upstream(seeded_user.id, conv, "/capture")
     finalize.on("POST", capture, httpx.Response(200, json={"captured": []}))
-    await ir._mark_run_completed(first, _presented(BRIEF))
+    await run_finish._mark_run_completed(first, _presented(BRIEF))
 
     second = await _run(session_factory, conv)
-    await ir._mark_run_completed(second, _presented())
+    await run_finish._mark_run_completed(second, _presented())
 
     calls = finalize.called("POST", capture)
     assert [json.loads(c.content) for c in calls] == [
@@ -288,7 +294,7 @@ async def test_a_failed_capture_never_fails_the_run(finalize, session_factory, s
     run_id = await _run(session_factory, conv)
     finalize.on("POST", _upstream(seeded_user.id, conv, "/capture"), reply)
 
-    await ir._mark_run_completed(run_id, _presented(BRIEF))
+    await run_finish._mark_run_completed(run_id, _presented(BRIEF))
 
     async with session_factory() as s:
         run = await s.get(MessageTable, run_id)
@@ -305,7 +311,7 @@ async def test_an_unreachable_agents_service_never_fails_the_run(finalize, sessi
 
     finalize.on("POST", _upstream(seeded_user.id, conv, "/capture"), down)
 
-    await ir._mark_run_completed(run_id, _presented(BRIEF))
+    await run_finish._mark_run_completed(run_id, _presented(BRIEF))
 
     async with session_factory() as s:
         assert (await s.get(MessageTable, run_id)).streaming_status == "completed"
@@ -316,7 +322,7 @@ async def test_the_presented_path_is_stored_exposed_and_forked(finalize, session
     run_id = await _run(session_factory, conv)
     finalize.on("POST", _upstream(seeded_user.id, conv, "/capture"), httpx.Response(200, json={"captured": []}))
 
-    await ir._mark_run_completed(run_id, _presented("/conversation/output/notes/plan.md",
+    await run_finish._mark_run_completed(run_id, _presented("/conversation/output/notes/plan.md",
                                                     "/conversation/output/chart.png"))
 
     async with session_factory() as s:

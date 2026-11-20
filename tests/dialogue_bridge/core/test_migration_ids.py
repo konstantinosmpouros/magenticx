@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-VERSIONS = Path(__file__).resolve().parents[2] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
+VERSIONS = Path(__file__).resolve().parents[3] / "magenticx" / "dialogue_bridge" / "core" / "database" / "migrations" / "versions"
 _REVISION = re.compile(r'^revision(?:\s*:\s*str)?\s*=\s*["\']([^"\']+)["\']', re.M)
 ALEMBIC_VERSION_NUM_LENGTH = 32
 

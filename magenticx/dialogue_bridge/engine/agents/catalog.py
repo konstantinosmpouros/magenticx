@@ -21,6 +21,7 @@ from engine.agents.service_urls import AGENTS_SERVICE_URL
 
 logger = get_logger(__name__)
 
+
 _AGENTS_DISCOVERY_ENDPOINT = f"{AGENTS_SERVICE_URL.rstrip('/')}/agents"
 _AGENTS_TOOLS_ENDPOINT = f"{AGENTS_SERVICE_URL.rstrip('/')}/tools"
 _AGENTS_MODELS_ENDPOINT = f"{AGENTS_SERVICE_URL.rstrip('/')}/models"

@@ -251,4 +251,4 @@ than arriving at.
 | Agent resolution (platform vs user) | `magenticx/agents/utils/agents.py` |
 | Run event log | `magenticx/dialogue_bridge/engine/inference/event_log.py` |
 | Redis cache policies | `magenticx/dialogue_bridge/core/cache/policies.py` |
-| Artifact capture at finalize | `magenticx/dialogue_bridge/engine/inference/runs.py` |
+| Artifact capture at finalize | `magenticx/dialogue_bridge/engine/inference/runs/` |

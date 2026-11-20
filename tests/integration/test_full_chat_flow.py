@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import utils.titles
-from router import inference as inference_router
-from utils import inference_start as inference_start_utils
+import engine.conversations.titles
+from router.inference import runs as inference_router
+from engine.inference import start as inference_start_utils
 
 
 async def test_create_run_and_finalize_chat_flow(client, seeded_user, seeded_agent, monkeypatch):
@@ -13,7 +13,7 @@ async def test_create_run_and_finalize_chat_flow(client, seeded_user, seeded_age
         return "Planned onboarding"
 
     monkeypatch.setattr(inference_start_utils, "get_agent_by_id", fake_get_agent_by_id)
-    monkeypatch.setattr(utils.titles, "generate_conversation_title", fake_generate_title)
+    monkeypatch.setattr(engine.conversations.titles, "generate_conversation_title", fake_generate_title)
     monkeypatch.setattr(inference_router.inference_run_manager, "launch", lambda _run_id: None)
 
     run_response = await client.post(

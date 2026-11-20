@@ -46,6 +46,7 @@ from core.logging import get_context, get_logger
 from core.security.internal_trust import internal_service_headers
 from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
+from utils.http import content_disposition
 from schema import DocumentExportIn
 from engine.agents.service_urls import (
     build_conversation_documents_url,
@@ -114,14 +115,6 @@ def _safe_download_name(header: str | None, fmt: str) -> str:
         if unicodedata.category(ch)[0] not in ("L", "N") and ch not in _FILENAME_PUNCTUATION:
             return fallback
     return name
-
-
-def content_disposition(name: str, disposition: str, fmt: str) -> str:
-    """``<disposition>; filename="<ascii>"; filename*=UTF-8''<name>``. The
-    plain ``filename`` is for old clients: the name itself when it is ASCII,
-    ``document.<fmt>`` otherwise (a Greek title would come out empty)."""
-    ascii_name = name if name.isascii() else f"document.{fmt}"
-    return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name, safe='')}"
 
 
 def _conversion_failure(response: httpx.Response) -> Response | None:
@@ -354,7 +347,6 @@ async def office_pdf_preview(db: AsyncSession, user_id: str, attachment_id: str)
 __all__ = [
     "EXPORT_MEDIA_TYPES",
     "OFFICE_PDF_PREVIEW_MIME_BY_EXT",
-    "content_disposition",
     "export_document",
     "office_extension",
     "office_pdf_preview",

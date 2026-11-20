@@ -59,7 +59,8 @@ from schema import (
 from engine.account.status import open_deletion_exists_for
 from engine.agents.catalog import get_agent_by_id, get_usable_agent
 from engine.inference.channel import publish_run_started
-from engine.inference.runs import ACTIVE_RUN_STATUSES, inference_run_manager
+from engine.inference.runs.state import ACTIVE_RUN_STATUSES
+from engine.inference.runs.manager import inference_run_manager
 from engine.inference.start import start_inference_flow
 
 logger = get_logger(__name__)

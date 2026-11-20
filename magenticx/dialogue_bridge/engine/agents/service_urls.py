@@ -11,6 +11,7 @@ from core.database import AgentTable
 
 logger = get_logger(__name__)
 
+
 AGENTS_SERVICE_URL = settings.upstream.agents_service_url
 
 

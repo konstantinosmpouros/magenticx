@@ -38,7 +38,8 @@ from schema import (
 )
 from utils.validators import validate_userId
 from engine.agents.trials import delete_agent_trial, start_agent_trial
-from engine.inference.runs import inference_run_manager, mark_run_launch_failed
+from engine.inference.runs.manager import inference_run_manager
+from engine.inference.runs.finish import mark_run_launch_failed
 from engine.agents.user_agents import (
     create_custom_agent,
     delete_custom_agent,

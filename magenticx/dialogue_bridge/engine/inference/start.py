@@ -23,7 +23,8 @@ from engine.documents.canvas_edit import check_canvas_edit, refuse_without_conve
 from engine.agents.commands import check_invocation
 from engine.conversations.conversations import _preview, init_conv, init_message
 from engine.inference.history import resolve_inference_message_path
-from engine.inference.runs import build_run_out_from_message, create_inference_run_record
+from engine.inference.runs.payloads import build_run_out_from_message
+from engine.inference.runs.records import create_inference_run_record
 from engine.conversations.sharing import (
     create_conversation_from_share_record,
     load_active_share,
