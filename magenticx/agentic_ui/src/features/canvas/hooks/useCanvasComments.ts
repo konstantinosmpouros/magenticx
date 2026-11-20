@@ -64,6 +64,9 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
   const query = useQuery({
     queryKey: key,
     queryFn: ({ signal }) => listDocumentComments(userId, conversationId, path, signal),
+    // Re-read on every mount, as before the app's 30 s default (plan 45): an
+    // agent run may have answered or resolved threads while the canvas was closed.
+    staleTime: 0,
   });
 
   const comments = query.data;

@@ -31,7 +31,18 @@ import { AUTOMATIONS_PATH, LEGACY_TASKS_PATH } from "@/features/automations/lib/
 import { WORKFLOWS_PATH } from "@/features/workflows/lib/routes";
 import { ARTIFACTS_PATH } from "@/features/artifacts/lib/routes";
 
-const queryClient = new QueryClient();
+// Defaults (plan 45, Phase 5): data stays fresh for 30 s, so a remount within
+// that window paints from the cache without a request; no refetch on every
+// window focus (the app's own events and polls say when data changed); one
+// retry, not three, so a failure surfaces in seconds. Queries that must always
+// re-read on mount (the canvas's latest document) set `staleTime: 0` themselves.
+// Every key carries the user id, and the cache is cleared on logout and on an
+// account switch (useChatWorkspace).
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { staleTime: 30_000, refetchOnWindowFocus: false, retry: 1 },
+  },
+});
 
 // Every page but the chat is its own chunk (plan 45): the first download
 // carries only what the chat needs. The shell warms these chunks once the

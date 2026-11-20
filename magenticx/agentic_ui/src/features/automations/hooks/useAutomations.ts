@@ -21,6 +21,18 @@ import { isRunningTask } from "@/features/automations/lib/schedule";
 const ACTIVE_POLL_MS = 8000;
 const BACKGROUND_POLL_MS = 60000;
 
+const isTabHidden = () => typeof document !== "undefined" && document.hidden;
+
+/**
+ * Whether a polled list says nothing new (plan 45): the same tasks, in the same
+ * order, with the same fields. The list is small (a user's automations), so a
+ * JSON compare is cheap and catches every field a card shows (status, last
+ * run, next run) without naming them. Keeping the previous array when nothing
+ * changed is what stops a poll from re-rendering the page and the sidebar.
+ */
+const sameTasks = (a: ScheduledTask[], b: ScheduledTask[]): boolean =>
+  a.length === b.length && JSON.stringify(a) === JSON.stringify(b);
+
 // `active` is the "/automations" route flag (the page is URL-driven, not
 // state-driven), and only controls poll cadence — the route decides what renders.
 type UseAutomationsArgs = { userId: string | null | undefined; active: boolean };
@@ -47,7 +59,7 @@ export function useAutomations({ userId, active }: UseAutomationsArgs) {
     if (!loadedRef.current) setLoading(true);
     try {
       const next = await listScheduledTasks(userId);
-      setTasks(next);
+      setTasks((prev) => (sameTasks(prev, next) ? prev : next));
       setError(null);
     } catch (err) {
       if (import.meta.env.DEV) console.error("Failed to load automations:", err);
@@ -97,20 +109,32 @@ export function useAutomations({ userId, active }: UseAutomationsArgs) {
   );
 
   // Initial load + cadence-switching poll (fast on /automations, slow off it).
+  // A hidden tab polls nothing (plan 45): no one is looking at the badge or the
+  // cards. Coming back into view polls at once if a tick was missed, then the
+  // cadence carries on.
   useEffect(() => {
     if (!userId) {
-      setTasks([]);
+      setTasks((prev) => (prev.length === 0 ? prev : []));
       return;
     }
+    const intervalMs = active ? ACTIVE_POLL_MS : BACKGROUND_POLL_MS;
     let cancelled = false;
+    let lastPollAt = 0;
     const tick = () => {
-      if (!cancelled) void refresh();
+      if (cancelled || isTabHidden()) return;
+      lastPollAt = Date.now();
+      void refresh();
     };
     tick();
-    const timer = window.setInterval(tick, active ? ACTIVE_POLL_MS : BACKGROUND_POLL_MS);
+    const timer = window.setInterval(tick, intervalMs);
+    const onVisibilityChange = () => {
+      if (!isTabHidden() && Date.now() - lastPollAt >= intervalMs) tick();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [userId, active, refresh]);
 

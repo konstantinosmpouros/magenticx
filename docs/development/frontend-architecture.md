@@ -346,6 +346,38 @@ is a debounced call, not state. A new piece of state that changes per keystroke
 or per token belongs in the store with selector readers, or below the shell —
 never in `useChatWorkspace`'s own state.
 
+**Data loading (Phase 5).** The `QueryClient` defaults to `staleTime: 30_000`,
+no refetch on window focus, `retry: 1`; the canvas's mutable queries opt back
+to `staleTime: 0`. The session bootstrap reads the IndexedDB snapshot in
+parallel with the session restore and raises `sessionReady` before the five
+catalogs load, so a deep-linked conversation's detail request starts at once.
+Conversation details are cached per user in the `QueryClient`
+(`features/chat/lib/conversationDetailCache.ts`, key `['conversation', userId,
+id]`, painted from cache for 30 s, at most 12 per user) and only ever hold what
+the server sent — a conversation changed on screen is dropped when you leave
+it. The sidebar prefetches on hover/focus with 150 ms intent
+(`usePrefetchConversation`). The query cache is cleared on logout, account
+switch and any change of the signed-in user. Search aborts the previous request;
+automations skip polls in a hidden tab and keep the same array when nothing
+changed; workflows reload on tab return at most every 30 s.
+
+**Bundle and paint (Phase 6).** One syntax highlighter: shiki, through the
+shared `shared/lib/highlighter.ts` (grammars on demand, 200-entry LRU); thoughts
+and secondary markdown are not highlighted. KaTeX and `rehype-raw` (parse5) are
+lazy chunks: a build-only Vite plugin (`lazyStreamdownPlugins` in
+`vite.config.ts`) points Streamdown's imports at `shared/lib/lazyRehype*.ts`, and
+`useLazyRehypePlugins` remounts an answer once if it was drawn before a plugin
+it needed had loaded. The greeting's SplitText and `ShimmeringText` are CSS
+(no gsap, no `motion`). Rotating glows (composer, live cards: `LiveBorder`)
+turn a pre-blurred element with `transform` and run only while focused, busy or
+active; the orb renders a still image below 32 px and its WebGL loop is capped
+at 30 fps with one decoded image per URL. Long lists are virtualized through
+`shared/hooks/useVirtualList.ts`: the sidebar's Chats above 60 rows (memoized
+`ConversationRow`), Artifacts always. Automation and workflow cards animate
+layout only for 1.5 s after a change the user made, never on a poll. Rule: an
+infinite or per-frame animation must be compositor-only (`transform`,
+`opacity`) and paused when its element is inactive.
+
 **Rules.** A new route page is lazy (add its loader to `routeLoaders.ts`, and to
 the prefetch order if people open it often). A heavy library used by one panel
 or block loads with that panel, not in the entry chunk. Reach into a `*_parts`

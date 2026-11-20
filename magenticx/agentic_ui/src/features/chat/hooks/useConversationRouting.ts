@@ -1,7 +1,14 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { NavigateFunction } from "react-router-dom";
 
-import { getConversationDetail } from "@/shared/lib/api";
+import {
+  CONVERSATION_DETAIL_REVALIDATE_MS,
+  fetchConversationDetail,
+  forgetConversationDetail,
+  readCachedConversationDetail,
+  settleConversationDetailOnLeave,
+} from "@/features/chat/lib/conversationDetailCache";
 import { toastError } from "@/shared/lib/toast";
 import type {
   Agent,
@@ -30,6 +37,11 @@ type UseConversationRoutingOptions = {
 
   // ── identity gate ──
   authResolved: boolean;
+  /**
+   * The session is restored, before the catalogs have loaded (plan 45): enough
+   * to start loading `:conversationId`, in parallel with them.
+   */
+  sessionReady?: boolean;
   isLoggedIn: boolean;
   userId: string | null;
 
@@ -82,12 +94,19 @@ type UseConversationRoutingOptions = {
  *    "/", but on that render `currentConversation` is still the old one (the reset
  *    commits next render). Without the previous-id check, the promotion effect
  *    would see that stale id with no `:conversationId` and bounce straight back.
+ *
+ * Details go through a small per-user cache (plan 45, `conversationDetailCache`):
+ * reopening a conversation seen in the last 30 s paints it at once, with no
+ * loading overlay, and revalidates it in the background. The refreshed copy
+ * replaces the screen only while the screen still shows the cached one — a
+ * send or a stream that started meanwhile is never overwritten.
  */
 export function useConversationRouting({
   conversationId,
   isPageRoute,
   navigate,
   authResolved,
+  sessionReady = false,
   isLoggedIn,
   userId,
   sharedConversationToken,
@@ -110,9 +129,14 @@ export function useConversationRouting({
   requestPersist,
   toast,
 }: UseConversationRoutingOptions) {
+  const queryClient = useQueryClient();
   // Bumped by every load; a resolved fetch compares against it to decide whether
   // it is still the newest navigation.
   const loadGenRef = useRef(0);
+  // Loading may start once the session is restored; the bootstrap need not have
+  // finished its catalogs. One flag in the deps, so `authResolved` flipping
+  // after `sessionReady` does not restart a load already under way.
+  const canLoad = authResolved || sessionReady;
 
   // A shared conversation arrives fully-formed as a prop (no id, no fetch), so it
   // is hydrated into the workspace once per token rather than loaded by route.
@@ -147,10 +171,16 @@ export function useConversationRouting({
   // `currentConversation` is read but deliberately omitted from the deps, so
   // navigating does not retrigger on every streamed message.
   useEffect(() => {
-    if (!authResolved || !isLoggedIn || !userId || sharedConversationToken) return;
+    if (!canLoad || !isLoggedIn || !userId || sharedConversationToken) return;
     const gen = ++loadGenRef.current;
     // Voice never survives a navigation between conversations/pages.
     closeVoiceSession();
+
+    // Leaving a conversation: its cached detail survives only if it is still
+    // exactly what the screen shows (nothing was sent, streamed or edited).
+    if (currentConversation?.id && currentConversation.id !== conversationId) {
+      settleConversationDetailOnLeave(queryClient, userId, currentConversation);
+    }
 
     if (!conversationId) {
       // "/" or a page ("/automations", "/agents…") → erase conversation-scoped state
@@ -169,32 +199,63 @@ export function useConversationRouting({
     // Already showing this conversation (e.g. just created / forked) → no refetch.
     if (currentConversation?.id === conversationId) return;
 
+    const showDetail = (detail: ConversationDetail) => {
+      // Pin branch selections to the active run's path so a streaming /
+      // HITL-paused message isn't hidden on a sibling branch.
+      const activeRunBranchSelections = deriveBranchSelectionsForActiveRun(detail);
+      setSelectedAgent(detail.agent?.id || "");
+      if (activeRunBranchSelections) setBranchSelections(activeRunBranchSelections);
+      setCurrentConversation(detail);
+      setIsPrivateMode(detail.isPrivate || false);
+      setInactiveAgentFallback(null);
+      requestPersist();
+    };
+    const reportLoadError = (error: unknown) =>
+      toastError(toast, "Failed to load conversation", error, {
+        description: "There was an error loading the conversation. Please try again.",
+        duration: 3000,
+      });
+
+    // Seen in the last 30 s: paint it now, no overlay, and revalidate quietly.
+    const cached = readCachedConversationDetail(queryClient, userId, conversationId);
+    if (cached) {
+      showDetail(cached);
+      // A superseded load may have raised the overlay; it no longer owns it.
+      setLoadingConversation(false);
+      fetchConversationDetail(queryClient, userId, conversationId, {
+        maxAgeMs: CONVERSATION_DETAIL_REVALIDATE_MS,
+      })
+        .then((fresh) => {
+          if (gen !== loadGenRef.current || fresh === cached) return;
+          // Only the agent selection and privacy were set from the cached copy;
+          // the user may have changed the picker since, so only the
+          // conversation itself is refreshed — and only while the screen still
+          // shows the cached copy (no send or stream has started on top of it).
+          setCurrentConversation((shown) => (shown === cached ? fresh : shown));
+        })
+        .catch((error) => {
+          forgetConversationDetail(queryClient, userId, conversationId);
+          if (gen !== loadGenRef.current) return;
+          reportLoadError(error);
+        });
+      return;
+    }
+
     setLoadingConversation(true);
-    getConversationDetail(userId, conversationId)
+    fetchConversationDetail(queryClient, userId, conversationId)
       .then((detail) => {
         if (gen !== loadGenRef.current) return; // superseded by a newer navigation
-        // Pin branch selections to the active run's path so a streaming /
-        // HITL-paused message isn't hidden on a sibling branch.
-        const activeRunBranchSelections = deriveBranchSelectionsForActiveRun(detail);
-        setSelectedAgent(detail.agent?.id || "");
-        if (activeRunBranchSelections) setBranchSelections(activeRunBranchSelections);
-        setCurrentConversation(detail);
-        setIsPrivateMode(detail.isPrivate || false);
-        setInactiveAgentFallback(null);
-        requestPersist();
+        showDetail(detail);
       })
       .catch((error) => {
         if (gen !== loadGenRef.current) return;
-        toastError(toast, "Failed to load conversation", error, {
-          description: "There was an error loading the conversation. Please try again.",
-          duration: 3000,
-        });
+        reportLoadError(error);
       })
       .finally(() => {
         if (gen === loadGenRef.current) setLoadingConversation(false);
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, authResolved, isLoggedIn, userId, sharedConversationToken]);
+  }, [conversationId, canLoad, isLoggedIn, userId, sharedConversationToken]);
 
   // Promote a conversation created from the empty "/" state (first message sent)
   // into the URL so it is linkable and survives refresh. See the `null -> id`

@@ -10,7 +10,7 @@
    builder's canvas stands on. These rules add the cards' look (the builder's
    card language: hover lift, a primary ring when selected) and the run overlay:
    a light travelling round a running card (the chat's sub-agent light,
-   --subagent-angle from subagent.css) with a sweep across it, an amber pulse on
+   <LiveBorder /> from subagent.css) with a sweep across it, an amber pulse on
    a waiting one, green / red / muted borders once it ended; calm thin edges with
    one small arrowhead, the taken path lit, a flowing dash into a running node,
    untaken branches muted. Every animation stops under reduced motion. */
@@ -225,69 +225,50 @@
   }
 }
 
-/* Running: the sub-agent card's light travels round the border (a conic
-   gradient masked to a ring), a blurred copy glows under it, and a soft band
-   sweeps across the card. */
+/* Running: the sub-agent card's light travels round the border
+   (<LiveBorder /> and its rules in subagent.css, sized to this card here) and a
+   soft band sweeps across the card. */
 .workflow-node--running .workflow-node-card {
   border-color: transparent;
 }
 
-.workflow-node--running::before,
-.workflow-node--running::after {
-  content: "";
-  position: absolute;
-  inset: -1.5px;
+.workflow-node > .live-border-ring,
+.workflow-node > .live-border-glow {
   border-radius: calc(1.1rem + 1.5px);
-  pointer-events: none;
-  background: conic-gradient(
-    from var(--subagent-angle),
-    transparent 0deg,
-    hsl(var(--subagent-active) / 0.15) 40deg,
-    hsl(var(--subagent-active)) 90deg,
-    hsl(var(--subagent-active-glow, var(--subagent-active))) 120deg,
-    transparent 170deg,
-    transparent 190deg,
-    hsl(var(--subagent-active) / 0.15) 220deg,
-    hsl(var(--subagent-active)) 270deg,
-    hsl(var(--subagent-active-glow, var(--subagent-active))) 300deg,
-    transparent 350deg
-  );
-  animation: subagent-border-spin 2.6s linear infinite;
 }
 
-.workflow-node--running::before {
-  z-index: 1;
-  padding: 1.5px;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-}
-
-.workflow-node--running::after {
-  z-index: -1;
+.workflow-node > .live-border-glow {
   filter: blur(12px);
   opacity: 0.5;
 }
 
+/* The sweep: a band of the light crossing the card, a gradient on a wide layer
+   moved with `transform` (plan 45; moving `background-position` repainted it
+   every frame). The layer spans the 5.3 card widths the band travels over, its
+   gradient repeating every 2.5 widths, so it shows what the old 250%-wide
+   background did between positions 120% and -120%. */
 .workflow-node-sweep {
+  overflow: hidden;
+}
+
+.workflow-node-sweep::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 -430%;
+  width: 530%;
   background: linear-gradient(
     100deg,
     transparent 30%,
     hsl(var(--subagent-active) / 0.09) 50%,
     transparent 70%
   );
-  background-size: 250% 100%;
+  background-size: calc(100% * 2.5 / 5.3) 100%;
   animation: workflow-node-sweep 2.2s ease-in-out infinite;
 }
 
 @keyframes workflow-node-sweep {
-  from {
-    background-position: 120% 0;
-  }
   to {
-    background-position: -120% 0;
+    transform: translateX(calc(100% * 3.6 / 5.3));
   }
 }
 
@@ -386,9 +367,7 @@
     transition: none;
     animation: none;
   }
-  .workflow-node--running::before,
-  .workflow-node--running::after,
-  .workflow-node-sweep {
+  .workflow-node-sweep::before {
     animation: none;
   }
   .workflow-node--waiting .workflow-node-card {

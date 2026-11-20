@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { useReducedMotion } from "framer-motion";
 import { Building2 } from "lucide-react";
@@ -34,6 +35,8 @@ import {
   ROOT_BRANCH_KEY,
 } from "@/features/chat/hooks/useMessageInteraction";
 import { useConversationRouting } from "@/features/chat/hooks/useConversationRouting";
+import { usePrefetchConversation } from "@/features/chat/hooks/usePrefetchConversation";
+import { forgetConversationDetail } from "@/features/chat/lib/conversationDetailCache";
 import { useShareDialogState } from "@/features/sharing/hooks/useShareDialogState";
 import { useReportDialogState } from "@/features/reporting/hooks/useReportDialogState";
 import {
@@ -177,6 +180,7 @@ export function useChatWorkspace({
   const isLoggedIn = useWorkspaceStore((s) => s.isLoggedIn);
   const userId = useWorkspaceStore((s) => s.userId);
   const authResolved = useWorkspaceStore((s) => s.authResolved);
+  const sessionReady = useWorkspaceStore((s) => s.sessionReady);
   const loadingConversation = useWorkspaceStore((s) => s.loadingConversation);
   const activeProfileTab = useWorkspaceStore((s) => s.activeProfileTab);
   const sidebarOpen = useWorkspaceStore((s) => s.sidebarOpen);
@@ -209,12 +213,17 @@ export function useChatWorkspace({
     setIsLoggedIn,
     setUserId,
     setAuthResolved,
+    setSessionReady,
     setPendingDeletion,
     setLoadingConversation,
     setActiveProfileTab,
     setSidebarOpen,
     resetForAccountSwitch,
   } = useWorkspaceStore.getState();
+  // The app's query cache: conversation details, canvas documents, agent model
+  // info — every key carries the user id, and the whole cache is cleared when
+  // the signed-in user changes (plan 45 §9).
+  const queryClient = useQueryClient();
 
   // ── View-local state ────────────────────────────────────────────────────
   const ARCHIVED_CONV_PAGE_SIZE = 10;
@@ -607,6 +616,30 @@ export function useChatWorkspace({
   // The sidebar's Workflows section (one entry per workflow).
   const workflows = useWorkflows();
 
+  // Warm a conversation's detail when the pointer or focus rests on its
+  // sidebar row (plan 45): only the user's own listed conversations, never the
+  // one already open, and nothing for a frozen account (no workspace user).
+  const prefetchConversation = usePrefetchConversation({
+    userId: workspaceUserId,
+    canPrefetch: (id) => {
+      const state = useWorkspaceStore.getState();
+      return (
+        state.currentConversation?.id !== id &&
+        state.conversations.some((conversation) => conversation.id === id)
+      );
+    },
+  });
+
+  // Nothing cached may outlive the user it was fetched for. Logout and the
+  // account switch clear the cache themselves (below); this also covers the
+  // paths that end a session without them (a refresh the bridge refused).
+  const cacheOwnerRef = useRef<string | null>(null);
+  useEffect(() => {
+    const owner = isLoggedIn ? userId : null;
+    if (cacheOwnerRef.current && cacheOwnerRef.current !== owner) queryClient.clear();
+    cacheOwnerRef.current = owner;
+  }, [isLoggedIn, userId, queryClient]);
+
   useEffect(() => {
     const title = resolveConversationTitle(currentConversation);
     document.title = title ? `${title}` : "mAgenticX";
@@ -928,8 +961,12 @@ export function useChatWorkspace({
     isPageRoute,
     navigate,
     authResolved,
+    // Up straight after the session restore: a deep-linked conversation loads
+    // in parallel with the catalogs (plan 45).
+    sessionReady,
     isLoggedIn,
-    userId,
+    // No user for a frozen account (pending deletion): nothing to load.
+    userId: workspaceUserId,
     sharedConversationToken,
     initialSharedConversation,
     currentConversation,
@@ -957,6 +994,7 @@ export function useChatWorkspace({
     setUserId,
     setUserProfile,
     setAuthResolved,
+    setSessionReady,
     setPendingDeletion,
     setAgents,
     setAvailableTools,
@@ -1178,6 +1216,10 @@ export function useChatWorkspace({
     archivedPageSize: ARCHIVED_CONV_PAGE_SIZE,
     onSearch: openSearchPanel,
     persistUIState: requestPersist,
+    // A deleted conversation must not be painted from the detail cache (back button).
+    onConversationDeleted: (conversationId) => {
+      if (userId) forgetConversationDetail(queryClient, userId, conversationId);
+    },
   });
 
   const {
@@ -1279,9 +1321,17 @@ export function useChatWorkspace({
       clearChatAndStopThinking,
       persistUIState: requestPersist,
       toast: toastWrapper,
-      onLoggedOut: () => navigate("/login", { replace: true }),
+      // The query cache goes with the session (plan 45 §9): the next account to
+      // sign in on this tab must never be served the last one's data.
+      onLoggedOut: () => {
+        queryClient.clear();
+        navigate("/login", { replace: true });
+      },
       onClearUISnapshot: (uid) => clearUISnapshot(uid).catch(() => {}),
-      resetWorkspace: resetForAccountSwitch,
+      resetWorkspace: () => {
+        resetForAccountSwitch();
+        queryClient.clear();
+      },
       // Read at call time, not closed over: the switch changes it mid-flight.
       activeUserId: () => useWorkspaceStore.getState().userId,
       // Leave the conversation route before the identity changes: the :id in the
@@ -1632,6 +1682,7 @@ export function useChatWorkspace({
     // handlers
     handleSidebarOpenChange,
     handleOpenSearch,
+    prefetchConversation,
     triggerVoiceMode,
     openAgentPicker,
     handleTogglePrivateMode,

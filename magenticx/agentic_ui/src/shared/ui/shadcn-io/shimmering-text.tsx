@@ -1,83 +1,71 @@
-"use client";
-
+/**
+ * A label with a highlight that sweeps across it, left to right, then rests —
+ * the "working on it" cue on live thoughts, sending and run markers.
+ *
+ * One element, drawn by CSS (plan 45): a gradient clipped to the glyphs and
+ * moved by the shared `animate-shimmer-text` keyframe. The shadcn-io original
+ * animated a `motion.span` per character from JavaScript, kept every one alive
+ * on the main thread for as long as a run lasted, ignored reduced motion, and
+ * was the only reason the `motion` package shipped.
+ *
+ * Reduced motion: the sweep stops and the label is drawn in its base colour.
+ */
 import * as React from "react";
-import { type HTMLMotionProps, motion, type Transition } from "motion/react";
 
 import { cn } from "@/shared/lib/utils";
 
 type ShimmeringTextProps = {
   text: string;
+  /** Seconds the highlight takes to cross the label. */
   duration?: number;
-  transition?: Transition;
-  wave?: boolean;
+  /** The label's colour. */
   color?: string;
+  /** The highlight's colour at the peak of the sweep. */
   shimmeringColor?: string;
+  /** Seconds of rest between sweeps; defaults to 50 ms per character. */
   pause?: number;
-} & Omit<HTMLMotionProps<"span">, "children">;
+} & Omit<React.HTMLAttributes<HTMLSpanElement>, "children" | "color">;
+
+// The gradient tile is twice the label's width and repeats, and the keyframe
+// moves it two tiles per cycle (`200% 0` → `-200% 0`), so the highlight crosses
+// the label twice per animation cycle: one cycle is two sweeps-plus-rest. The
+// band spans 30–70% of the tile — lit for about 40% of each sweep-plus-rest,
+// like the per-character glow it replaces.
+const SHIMMER_CLASSES = cn(
+  "relative inline-block",
+  "bg-[linear-gradient(90deg,var(--color)_30%,var(--shimmering-color)_50%,var(--color)_70%)]",
+  "bg-[length:200%_100%] bg-clip-text text-transparent animate-shimmer-text",
+  "motion-reduce:animate-none motion-reduce:bg-none motion-reduce:text-[color:var(--color)]",
+);
 
 function ShimmeringText({
   text,
   duration = 1,
-  transition,
-  wave = false,
   className,
   color = "var(--color-neutral-500)",
   shimmeringColor = "var(--color-neutral-300)",
   pause,
+  style,
   ...props
 }: ShimmeringTextProps) {
-  const repeatDelay = pause ?? text.length * 0.05;
+  const rest = pause ?? text.length * 0.05;
 
   return (
-    <motion.span
-      className={cn("relative inline-block [perspective:500px]", className)}
+    <span
+      className={cn(SHIMMER_CLASSES, className)}
       style={
         {
           "--shimmering-color": shimmeringColor,
           "--color": color,
-          color: "var(--color)",
+          // Two sweeps per keyframe cycle (see SHIMMER_CLASSES).
+          animationDuration: `${2 * (duration + rest)}s`,
+          ...style,
         } as React.CSSProperties
       }
       {...props}
     >
-      {text?.split("")?.map((char, i) => (
-        <motion.span
-          key={i}
-          className="inline-block whitespace-pre [transform-style:preserve-3d]"
-          initial={{
-            ...(wave
-              ? {
-                  scale: 1,
-                  rotateY: 0,
-                }
-              : {}),
-            color: "var(--color)",
-          }}
-          animate={{
-            ...(wave
-              ? {
-                  x: [0, 5, 0],
-                  y: [0, -5, 0],
-                  scale: [1, 1.1, 1],
-                  rotateY: [0, 15, 0],
-                }
-              : {}),
-            color: ["var(--color)", "var(--shimmering-color)", "var(--color)"],
-          }}
-          transition={{
-            duration,
-            repeat: Infinity,
-            repeatType: "loop",
-            repeatDelay,
-            delay: (i * duration) / text.length,
-            ease: "easeInOut",
-            ...transition,
-          }}
-        >
-          {char}
-        </motion.span>
-      ))}
-    </motion.span>
+      {text}
+    </span>
   );
 }
 

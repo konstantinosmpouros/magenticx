@@ -59,21 +59,28 @@ export function ConversationRail({ messages, viewportRef, columnRef }: Conversat
   const paint = useCallback(() => {
     frameRef.current = null;
     const pointerY = pointerYRef.current;
-    for (const tick of tickRefs.current) {
-      if (!tick) continue;
-      if (pointerY === null) {
+    const ticks = tickRefs.current.filter((tick): tick is HTMLSpanElement => tick !== null);
+    if (pointerY === null) {
+      for (const tick of ticks) {
         // Hand the tick back to its class-driven resting state.
         tick.style.transform = "";
         tick.style.opacity = "";
-        continue;
       }
+      return;
+    }
+    // Read every centre first, then write (plan 45): a read after a style
+    // write forces the browser to recompute styles and layout once per tick.
+    const centres = ticks.map((tick) => {
       const box = tick.getBoundingClientRect();
-      const distance = pointerY - (box.top + box.height / 2);
+      return box.top + box.height / 2;
+    });
+    ticks.forEach((tick, index) => {
+      const distance = pointerY - centres[index];
       tick.style.transform = `scaleX(${magnifyScale(distance)})`;
       // Near ticks brighten with the same curve, so the bulge reads as one
       // gesture rather than as width alone.
       tick.style.opacity = String(0.7 + 0.3 * magnification(distance));
-    }
+    });
   }, []);
 
   const schedulePaint = useCallback(() => {

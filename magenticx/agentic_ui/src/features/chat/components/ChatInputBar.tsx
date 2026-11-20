@@ -687,6 +687,7 @@ export function ChatInputBar(props: ChatInputBarProps) {
                       data-busy={voiceStatus === "thinking" || voiceStatus === "speaking"}
                     >
                     <div aria-hidden className="composer-glow" />
+                    <div aria-hidden className="composer-ring" />
                     <div className="composer-surface px-3 py-3">
                       <div className="flex items-center gap-2">
                         <Tooltip delayDuration={0}>
@@ -830,12 +831,9 @@ export function ChatInputBar(props: ChatInputBarProps) {
                             <SplitText
                               text={welcomeQuote}
                               tag="h2"
-                              useScrollTrigger={false}
-                              from={{ opacity: 0, y: prefersReducedMotion ? 0 : 8 }}
-                              to={{ opacity: 1, y: 0 }}
+                              offsetY={8}
                               duration={1}
                               delay={25}
-                              splitType="chars"
                             />
                           </motion.div>
                         </AnimatePresence>
@@ -865,6 +863,7 @@ export function ChatInputBar(props: ChatInputBarProps) {
                     data-private={isPrivateMode}
                   >
                   <div aria-hidden className="composer-glow" />
+                  <div aria-hidden className="composer-ring" />
                   <div ref={composerSurfaceRef} className="composer-surface px-3 pt-3 pb-1">
                     <div className="flex flex-col">
                       <div

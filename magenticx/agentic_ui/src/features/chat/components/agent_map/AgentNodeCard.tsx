@@ -1,6 +1,7 @@
 import { Bot, ChevronDown, ChevronRight, GitBranch, Wrench } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
+import { LiveBorder } from "@/shared/ui/live-border";
 import { agentNodeDuration, type AgentMapNode } from "@/features/chat/lib/agentMap";
 import { STATUS_META } from "@/features/chat/components/message_parts/subagentStatus";
 
@@ -19,7 +20,7 @@ type AgentNodeCardProps = {
  * One sub-agent in the agent map: the inline card's collapsed row in miniature
  * — icon, name and type, its task on one line, the sub-agents it delegated to,
  * tool calls, time, status chip — with the same running light round its border
- * (styles/subagent.css). Presentational: the tree or the detail view around it
+ * (LiveBorder, styles/subagent.css). Presentational: the tree or the detail view around it
  * owns the click and the keyboard.
  */
 export function AgentNodeCard({ node, now, expanded, onToggle, className }: AgentNodeCardProps) {
@@ -35,6 +36,7 @@ export function AgentNodeCard({ node, now, expanded, onToggle, className }: Agen
       className={cn("subagent-card rounded-2xl", className)}
       data-active={active ? "true" : "false"}
     >
+      {active ? <LiveBorder /> : null}
       <div
         className={cn(
           "relative flex h-14 items-center gap-3 overflow-hidden rounded-2xl border px-3 transition-[border-color,box-shadow,background-color] duration-200",

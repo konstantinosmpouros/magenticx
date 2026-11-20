@@ -5,12 +5,20 @@ import type { Workflow, WorkflowSchedule } from "@/shared/lib/types";
 import { useWorkflowUserId } from "@/features/workflows/hooks/useWorkflowUserId";
 
 /**
+ * The least time between two reloads triggered by the tab coming back into
+ * view (plan 45): switching tabs back and forth used to reload the list on
+ * every return. An explicit `refresh` is never throttled.
+ */
+export const WORKFLOWS_VISIBLE_RELOAD_MIN_MS = 30_000;
+
+/**
  * The signed-in user's workflows (summaries: no spec), for the sidebar's
  * Workflows section and anything else that lists them.
  *
- * Loaded once per user and again whenever the tab comes back into view — a
- * workflow created through the API (or, later, the builder in another tab)
- * shows up without a reload. `refresh` reloads on demand. `isLoading` is the
+ * Loaded once per user and again when the tab comes back into view (at most
+ * once per {@link WORKFLOWS_VISIBLE_RELOAD_MIN_MS}) — a workflow created
+ * through the API (or, later, the builder in another tab) shows up without a
+ * reload. `refresh` reloads on demand. `isLoading` is the
  * first load only, so a background reload never flashes a skeleton.
  * `setSchedule` swaps one workflow's schedule in place — a pause / resume,
  * shown before (and corrected by) the server's answer.
@@ -57,8 +65,12 @@ export function useWorkflows(): {
   useEffect(() => {
     setWorkflows([]);
     void load(true);
+    let lastLoadAt = Date.now();
     const onVisible = () => {
-      if (document.visibilityState === "visible") void load(false);
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadAt < WORKFLOWS_VISIBLE_RELOAD_MIN_MS) return;
+      lastLoadAt = Date.now();
+      void load(false);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {

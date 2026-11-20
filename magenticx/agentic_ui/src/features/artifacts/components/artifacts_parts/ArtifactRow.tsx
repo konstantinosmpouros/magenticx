@@ -1,4 +1,10 @@
-import { useState, type ReactNode } from "react";
+import {
+  forwardRef,
+  memo,
+  useState,
+  type ForwardedRef,
+  type ReactNode,
+} from "react";
 import {
   Download,
   Eye,
@@ -69,22 +75,35 @@ function RowAction({
  * menu (four 40px icons left ~90px for the name), and the meta line puts
  * the conversation on a line of its own under "Output · MD · date · size",
  * so no line starts with a stray separator.
+ *
+ * Memoized, and placed by its list (`index`, `offset`, the ref): the page's
+ * list is virtualized (plan 45), so a scroll re-renders the list but not the
+ * rows whose file did not change.
  */
-export function ArtifactRow({
-  file,
-  previewBusy,
-  onPreview,
-  onDownload,
-  onOpenConversation,
-  onOpenCanvas,
-}: {
-  file: UserFile;
-  previewBusy: boolean;
-  onPreview: (file: UserFile) => void;
-  onDownload: (file: UserFile) => void;
-  onOpenConversation: (conversationId: string) => void;
-  onOpenCanvas: (conversationId: string, path: string) => void;
-}) {
+function ArtifactRowImpl(
+  {
+    file,
+    previewBusy,
+    onPreview,
+    onDownload,
+    onOpenConversation,
+    onOpenCanvas,
+    index,
+    offset,
+  }: {
+    file: UserFile;
+    previewBusy: boolean;
+    onPreview: (file: UserFile) => void;
+    onDownload: (file: UserFile) => void;
+    onOpenConversation: (conversationId: string) => void;
+    onOpenCanvas: (conversationId: string, path: string) => void;
+    /** Its place in the list (`data-index`, read by the virtualizer). */
+    index?: number;
+    /** Its offset in the virtualized list (px): the row is then placed absolutely there. */
+    offset?: number;
+  },
+  ref: ForwardedRef<HTMLLIElement>,
+) {
   const meta = FILE_TYPE_META[file.type];
   const Icon = fileIcon(file.type, file.fileName);
   const extension = fileExtension(file.fileName);
@@ -99,6 +118,19 @@ export function ArtifactRow({
 
   return (
     <li
+      ref={ref}
+      data-index={index}
+      style={
+        offset === undefined
+          ? undefined
+          : {
+              position: "absolute",
+              top: 0,
+              left: 0,
+              width: "100%",
+              transform: `translateY(${offset}px)`,
+            }
+      }
       data-testid="artifact-row"
       className="group flex items-center gap-3 rounded-2xl border border-border/60 bg-card px-3 py-2.5 transition-colors hover:border-primary/30 sm:px-4"
     >
@@ -229,3 +261,5 @@ export function ArtifactRow({
     </li>
   );
 }
+
+export const ArtifactRow = memo(forwardRef(ArtifactRowImpl));

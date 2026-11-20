@@ -231,7 +231,7 @@ The frontend classifies each attachment by MIME type and file extension, then ro
 | Markdown | `.md`, `.mdx` | `markdown` | 5 MB | React Markdown renderer |
 | JSON | `.json` | `json` | 5 MB | Code block with syntax highlight |
 | CSV | `.csv` | `csv` | 5 MB | Table renderer (PapaParse) |
-| Code | `.py`, `.ts`, `.js`, `.java`, … | `code` | 5 MB | Prism.js / highlight.js |
+| Code | `.py`, `.ts`, `.js`, `.java`, … | `code` | 5 MB | shiki (grammar loaded on demand; plain text above 200 K chars) |
 | Plain text | `.txt`, `.log` | `text` | 5 MB | Pre-formatted text area |
 | Images | `image/*` | (inline in chat) | — | `<img>` with `data:` URL |
 

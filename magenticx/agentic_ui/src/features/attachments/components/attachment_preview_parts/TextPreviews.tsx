@@ -1,10 +1,10 @@
 import * as React from "react";
-import hljs from "highlight.js/lib/common";
 import Papa from "papaparse";
 import { Check, Copy } from "lucide-react";
 
 import { Button } from "@/shared/ui/button";
 import { MarkdownRenderer } from "@/shared/ui/markdownRenderer";
+import { getCachedTokens, tokenizeCode, type TokenizedCode } from "@/shared/lib/highlighter";
 import { cn } from "@/shared/lib/utils";
 
 type TextPreviewProps = {
@@ -36,17 +36,52 @@ function CopyButton({ content }: { content: string }) {
   );
 }
 
+/**
+ * Above this size a code file is shown as plain text: tokenizing (and rendering
+ * a span per token for) a multi-megabyte file would stall the main thread.
+ */
+const HIGHLIGHT_LIMIT_CHARS = 200_000;
+
+/**
+ * The preview's highlight, from the app's one shared shiki instance (plan 45:
+ * highlight.js is gone). Plain text shows at once; the tokens replace it when
+ * the grammar has loaded, or straight away when the same text was seen before.
+ */
+function usePreviewTokens(content: string, language: string | undefined): TokenizedCode | null {
+  const lang = language || "text";
+  const highlightable = content.length <= HIGHLIGHT_LIMIT_CHARS;
+  const cached = React.useMemo(
+    () => (highlightable ? getCachedTokens(content, lang) : null),
+    [content, lang, highlightable],
+  );
+  const [loaded, setLoaded] = React.useState<{
+    content: string;
+    lang: string;
+    tokens: TokenizedCode;
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (!highlightable || cached) return;
+    let cancelled = false;
+    tokenizeCode(content, lang)
+      .then((tokens) => {
+        if (!cancelled) setLoaded({ content, lang, tokens });
+      })
+      .catch(() => {
+        // Highlighting is decoration: on failure the plain text stays.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [content, lang, highlightable, cached]);
+
+  if (cached) return cached;
+  // A result for an earlier file or language is never shown for this one.
+  return loaded && loaded.content === content && loaded.lang === lang ? loaded.tokens : null;
+}
+
 export function CodeTextPreview({ content, language, className }: TextPreviewProps) {
-  const highlighted = React.useMemo(() => {
-    try {
-      if (language && hljs.getLanguage(language)) {
-        return hljs.highlight(content, { language }).value;
-      }
-      return hljs.highlightAuto(content).value;
-    } catch {
-      return "";
-    }
-  }, [content, language]);
+  const tokenized = usePreviewTokens(content, language);
 
   return (
     <div
@@ -62,8 +97,25 @@ export function CodeTextPreview({ content, language, className }: TextPreviewPro
         <CopyButton content={content} />
       </div>
       <pre className="min-h-0 flex-1 overflow-auto p-4 text-[0.82rem] leading-6 text-white/85">
-        {highlighted ? (
-          <code dangerouslySetInnerHTML={{ __html: highlighted }} />
+        {tokenized ? (
+          <code>
+            {tokenized.tokens.map((line, lineIndex) => (
+              // Lines and tokens never reorder; the index is their identity.
+              <React.Fragment key={lineIndex}>
+                {lineIndex > 0 ? "\n" : null}
+                {line.map((token, tokenIndex) => (
+                  <span
+                    key={tokenIndex}
+                    // The panel is dark in every theme, so it takes the dark
+                    // theme's colour (shiki's `--shiki-dark` value).
+                    style={{ color: token.htmlStyle?.["--shiki-dark"] ?? token.color }}
+                  >
+                    {token.content}
+                  </span>
+                ))}
+              </React.Fragment>
+            ))}
+          </code>
         ) : (
           <code>{content}</code>
         )}

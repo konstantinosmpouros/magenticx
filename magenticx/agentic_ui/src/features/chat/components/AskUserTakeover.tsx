@@ -471,6 +471,7 @@ export function AskUserTakeover({ interrupt, agentName, onResolve }: AskUserTake
       data-busy={busy !== null}
     >
       <div aria-hidden className="composer-glow" />
+      <div aria-hidden className="composer-ring" />
       <div className="composer-surface">
         {/* A wash of the primary at the top, like light falling on the card. */}
         <div

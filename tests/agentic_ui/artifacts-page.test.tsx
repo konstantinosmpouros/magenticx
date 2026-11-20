@@ -167,6 +167,20 @@ describe("the Artifacts page", () => {
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
+  it("keeps a bounded number of rows in the DOM however many pages load (plan 45)", async () => {
+    const files = Array.from({ length: 200 }, (_, i) =>
+      file({ attachmentId: `att-${i}`, fileName: `file-${i}.pdf` }),
+    );
+    api.listUserFiles.mockResolvedValue(page(files));
+    renderPage();
+
+    const rows = await screen.findAllByTestId("artifact-row");
+    expect(rows.length).toBeGreaterThan(5);
+    expect(rows.length).toBeLessThan(40);
+    expect(screen.getByText("file-0.pdf")).toBeInTheDocument();
+    expect(screen.queryByText("file-199.pdf")).toBeNull();
+  });
+
   it("with no files at all, says where files come from and offers a chat", async () => {
     api.listUserFiles.mockResolvedValue(page([]));
     const { onStartChat } = renderPage();

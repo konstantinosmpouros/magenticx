@@ -9,6 +9,7 @@ import { isAskUserInterrupt } from "@/features/inference/hitl";
 import { HitlRequestSummary } from "./HitlActionSummary";
 import { STATUS_META } from "./subagentStatus";
 import { useCitationSources } from "@/shared/lib/citations-context";
+import { LiveBorder } from "@/shared/ui/live-border";
 import { citationsToPlainText } from "@/features/chat/lib/citationText";
 
 import type {
@@ -428,6 +429,7 @@ export function SubagentCard({
       data-status={status ?? undefined}
       aria-busy={active || undefined}
     >
+      {active ? <LiveBorder /> : null}
       <div
         className={cn(
           "relative overflow-hidden rounded-[22px] border bg-[linear-gradient(180deg,hsl(var(--background))_0%,hsl(var(--secondary)/0.45)_100%)] shadow-card transition-colors",

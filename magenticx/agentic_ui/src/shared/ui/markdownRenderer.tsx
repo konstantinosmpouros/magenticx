@@ -1,8 +1,6 @@
 import React from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
 
 import { hideUnclosedCitationMarker } from "@/shared/lib/citations";
 import { CITATION_ELEMENT, remarkCitations } from "@/shared/lib/remarkCitations";
@@ -30,12 +28,17 @@ const CITATION_COMPONENTS = { [CITATION_ELEMENT]: CitationElement } as Record<st
 
 // Built once (plan 45): inline element renderers are new functions on every
 // render, which makes react-markdown remount every element of the text.
+//
+// Code is not syntax-highlighted here (plan 45): this renderer draws thoughts,
+// previews and secondary text, where colour would be noise, and highlight.js
+// cost ~305 KB of the first download. Fenced code is a plain block in the
+// theme's own colours; the chat's answers highlight through Streamdown.
 const BASE_COMPONENTS: Components = {
   // Customize rendering of specific elements
   code: ({ node, className, children, ...props }) => {
     const match = /language-(\w+)/.exec(className || "");
     return match ? (
-      <code className={className} {...props}>
+      <code className={`${className} font-mono text-sm`} {...props}>
         {children}
       </code>
     ) : (
@@ -44,8 +47,13 @@ const BASE_COMPONENTS: Components = {
       </code>
     );
   },
+  // A fence without a language reaches `code` like inline code; the `[&>code]`
+  // rules drop the inline chip's background and padding inside a block.
   pre: ({ children, ...props }) => (
-    <pre className="bg-muted/50 border border-border rounded-lg p-4 overflow-x-auto" {...props}>
+    <pre
+      className="bg-muted/50 border border-border rounded-lg p-4 overflow-x-auto [&>code]:bg-transparent [&>code]:p-0 [&>code]:rounded-none"
+      {...props}
+    >
       {children}
     </pre>
   ),
@@ -122,7 +130,6 @@ const BASE_COMPONENTS: Components = {
   ),
 };
 const CITED_COMPONENTS = { ...CITATION_COMPONENTS, ...BASE_COMPONENTS } as Components;
-const REHYPE_PLUGINS = [rehypeHighlight];
 
 /**
  * Markdown for thoughts, previews and other secondary text. Memoized: its props
@@ -139,7 +146,6 @@ export const MarkdownRenderer = React.memo(function MarkdownRenderer({
     <div className={`prose prose-sm max-w-none dark:prose-invert ${className}`}>
       <ReactMarkdown
         remarkPlugins={citations ? CITATION_REMARK_PLUGINS : PLAIN_REMARK_PLUGINS}
-        rehypePlugins={REHYPE_PLUGINS}
         components={citations ? CITED_COMPONENTS : BASE_COMPONENTS}
       >
         {markdown}

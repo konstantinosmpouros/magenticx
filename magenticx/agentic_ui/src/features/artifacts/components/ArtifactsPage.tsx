@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
 import { LoaderCircle } from "lucide-react";
 
 import { ImageLightbox } from "@/shared/ui/ImageLightbox";
 import { SidebarTrigger } from "@/shared/ui/sidebar";
 import AttachmentPreviewPanel from "@/features/attachments/components/AttachmentPreviewPanel";
-import { ArtifactRow } from "@/features/artifacts/components/artifacts_parts/ArtifactRow";
+import { ArtifactList } from "@/features/artifacts/components/artifacts_parts/ArtifactList";
 import {
   ArtifactsEmpty,
   ArtifactsError,
@@ -44,7 +43,6 @@ export default function ArtifactsPage({
   onOpenCanvas: (conversationId: string, path: string) => void;
   onStartChat: () => void;
 }) {
-  const reduceMotion = useReducedMotion();
   const [kind, setKind] = useState<KindFilter>("all");
   const [type, setType] = useState<TypeFilter>("all");
   const [query, setQuery] = useState("");
@@ -101,7 +99,8 @@ export default function ArtifactsPage({
         </div>
       </header>
 
-      <div className="scrollbar-muted min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
+      {/* The list's scroll box: ArtifactList virtualizes its rows against it. */}
+      <div data-artifacts-scroll className="scrollbar-muted min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
         <div className="mx-auto w-full max-w-4xl space-y-4 pb-10 pt-1">
           <ArtifactsToolbar
             query={query}
@@ -124,26 +123,15 @@ export default function ArtifactsPage({
             />
           ) : (
             <>
-              <motion.ul
-                aria-label="Files"
-                aria-busy={refreshing || undefined}
-                className="space-y-2"
-                initial={reduceMotion ? false : { opacity: 0, y: 6 }}
-                animate={{ opacity: refreshing ? 0.6 : 1, y: 0 }}
-                transition={{ duration: 0.2, ease: "easeOut" }}
-              >
-                {files.items.map((file) => (
-                  <ArtifactRow
-                    key={file.attachmentId}
-                    file={file}
-                    previewBusy={actions.loadingImageId === file.attachmentId}
-                    onPreview={actions.openPreview}
-                    onDownload={actions.download}
-                    onOpenConversation={onOpenConversation}
-                    onOpenCanvas={onOpenCanvas}
-                  />
-                ))}
-              </motion.ul>
+              <ArtifactList
+                items={files.items}
+                refreshing={refreshing}
+                loadingImageId={actions.loadingImageId}
+                onPreview={actions.openPreview}
+                onDownload={actions.download}
+                onOpenConversation={onOpenConversation}
+                onOpenCanvas={onOpenCanvas}
+              />
               {files.error ? (
                 <p role="alert" className="text-center text-sm text-destructive">
                   {files.error}

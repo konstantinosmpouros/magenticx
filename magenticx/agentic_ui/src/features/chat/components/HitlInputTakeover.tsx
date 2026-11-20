@@ -153,6 +153,7 @@ export function HitlInputTakeover({ interrupt, pendingCount, onResolve }: HitlIn
       aria-label="Approval required"
     >
       <div aria-hidden className="composer-glow" />
+      <div aria-hidden className="composer-ring" />
       <div className="composer-surface overflow-hidden">
         <div
           aria-hidden

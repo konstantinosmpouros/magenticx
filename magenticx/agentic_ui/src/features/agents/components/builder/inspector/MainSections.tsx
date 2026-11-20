@@ -665,15 +665,18 @@ export function FilesSection() {
             {formatBytes(usage.totalBytes)} of {formatBytes(MAX_TOTAL_BYTES)}
           </span>
         </div>
+        {/* The fill is a full-width pill slid left by what is not used yet, its
+            left end hidden by the track's clip: the same shape as a pill that
+            grows, but it moves with `transform`, not `width` (plan 45). */}
         <div className="mt-2 grid grid-cols-2 gap-2" aria-hidden>
           {[fileShare, byteShare].map((share, index) => (
             <span key={index} className="h-1.5 overflow-hidden rounded-full bg-muted">
               <span
                 className={cn(
-                  "block h-full rounded-full transition-[width] duration-300",
+                  "block h-full w-full rounded-full transition-transform duration-300",
                   share >= 1 ? "bg-destructive" : share > 0.85 ? "bg-[hsl(var(--warning))]" : "bg-primary/70",
                 )}
-                style={{ width: `${Math.max(share * 100, 2)}%` }}
+                style={{ transform: `translateX(${Math.min(Math.max(share * 100, 2), 100) - 100}%)` }}
               />
             </span>
           ))}

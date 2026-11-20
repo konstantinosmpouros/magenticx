@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Check } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
+import { LiveBorder } from "@/shared/ui/live-border";
 import {
   formatStepDuration,
   planStepLabel,
@@ -131,6 +132,7 @@ export function PlanChecklist({ steps, label, className }: PlanChecklistProps) {
             >
               <Marker state={step.state} />
               <div className="subagent-card rounded-xl" data-active={active ? "true" : "false"}>
+                {active ? <LiveBorder /> : null}
                 {/* Opaque while lit, so the light's glow stays round the edge. */}
                 <div
                   className={cn(

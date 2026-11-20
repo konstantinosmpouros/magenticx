@@ -7,6 +7,12 @@
    night-tinted, rimmed and lit in the theme's hues. Everything holds still
    under reduced motion.
 
+   No backdrop filter and no blend mode (plan 45): the stars canvas repaints 30
+   times a second, and a blur or blend over it is redone with every frame. The
+   card's tint stands in for the blurred, saturated sky it used to show, and
+   the nebulae are plain alpha (the screen blend differed by at most 4/255 on
+   this dark sky).
+
    Markup: .login-sky > .login-nebula (x3) + .login-horizon + .login-stars
            .login-shell > .login-card-glow + .login-card > .login-card-sheen
            .login-logo > .login-logo-glow + the logo */
@@ -25,7 +31,6 @@
 .login-nebula {
   position: absolute;
   border-radius: 9999px;
-  mix-blend-mode: screen;
   will-change: transform;
 }
 
@@ -167,8 +172,6 @@
   position: relative;
   border-radius: 1.75rem;
   background: linear-gradient(180deg, hsl(var(--card) / 0.88), hsl(var(--card) / 0.82));
-  -webkit-backdrop-filter: blur(10px) saturate(1.5);
-  backdrop-filter: blur(10px) saturate(1.5);
   box-shadow:
     inset 0 1px 0 hsl(0 0% 100% / 0.55),
     0 32px 80px -34px rgb(0 0 0 / 0.85);
@@ -229,7 +232,7 @@
   pointer-events: none;
 }
 
-/* Night glass: dark and clear, the stars soft through it. It carries the
+/* Night glass: dark and clear, the sky through it. It carries the
    `dark` class, so it takes Midnight's tokens (light text, the light-faced
    Microsoft button); on a light theme it then takes back the theme's own hues
    (`inherit` reads them from the page) and uses the theme's lighter swatch as
@@ -243,10 +246,10 @@
   --primary-glow: var(--theme-glow);
 }
 
+/* A touch more saturated and lighter than the glass alone: it matches, to
+   about 1/255 on average, the sky the old blur(7px) saturate(1.6) showed. */
 .login-glass-night .login-card {
-  background: linear-gradient(180deg, hsl(232 48% 17% / 0.6), hsl(234 55% 9% / 0.7));
-  -webkit-backdrop-filter: blur(7px) saturate(1.6);
-  backdrop-filter: blur(7px) saturate(1.6);
+  background: linear-gradient(180deg, hsl(232 60% 19% / 0.6), hsl(234 62% 10% / 0.7));
   box-shadow:
     inset 0 1px 0 hsl(0 0% 100% / 0.16),
     inset 0 0 40px hsl(var(--orb-glow-2) / 0.06),

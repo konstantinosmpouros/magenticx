@@ -98,6 +98,7 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
     handleSidebarOpenChange,
     canTogglePrivateMode,
     handleOpenSearch,
+    prefetchConversation,
     composer,
     triggerVoiceMode,
     openAgentPicker,
@@ -241,6 +242,8 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
     onLogoutAccount: accountSwitching.onLogoutAccount,
     onLogoutAllAccounts: accountSwitching.onLogoutAllAccounts,
     onSelectConversation: guarded(handleConversationSelect),
+    // Hover/focus intent on a row warms its detail (plan 45); debounced inside.
+    onPrefetchConversation: prefetchConversation,
     onDeleteConversation: handleDeleteConversation,
     onRenameConversation: handleRenameConversation,
     onArchiveConversation: handleArchiveConversation,
@@ -354,6 +357,7 @@ export function WorkspaceShell({ children, ...props }: WorkspaceShellProps = {})
           // The sidebar's ways off the page ask a page with unsaved work
           // first (the agent builder); everything else goes straight through.
           onSelectConversation={sidebarHandlers.onSelectConversation}
+          onPrefetchConversation={sidebarHandlers.onPrefetchConversation}
           onDeleteConversation={sidebarHandlers.onDeleteConversation}
           onRenameConversation={sidebarHandlers.onRenameConversation}
           onArchiveConversation={sidebarHandlers.onArchiveConversation}

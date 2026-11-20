@@ -1,49 +1,40 @@
-/* Sub-agent cards in the answer timeline
-   (features/chat/components/message_parts/SubagentContainer.tsx).
-
-   While a sub-agent works, a light travels round its border: a conic gradient
-   whose start angle (--subagent-angle, a registered property so it can be
-   animated) turns once every 2.6 s, masked to a 1.5px ring. A blurred copy
-   under it is the glow. Settled cards keep a plain border, so a glance shows
-   which sub-agents are still working. Colors come from the theme
+/* The live border: a light travelling round a card while its work runs — a
+   sub-agent in the answer timeline (SubagentContainer.tsx), the agent map's
+   nodes, a running plan step, an automation card, a running workflow node
+   (workflow-flow.css sets that one's size). Settled cards keep a plain border,
+   so a glance shows what is still working. Colours come from the theme
    (--subagent-active, --subagent-active-glow in styles/theme/*). Reduced
-   motion: no turning, the ring stays lit. */
-@property --subagent-angle {
-  syntax: "<angle>";
-  initial-value: 0deg;
-  inherits: false;
-}
+   motion: no turning, the ring stays lit.
+
+   Markup: a `.subagent-card[data-active="true"]` (or `.workflow-node`) holds
+   <LiveBorder /> (shared/ui/live-border.tsx) as a child: .live-border-ring, a
+   1.5px ring over the card's edge, and .live-border-glow, a blurred copy behind
+   it.
+
+   How it moves (plan 45): each is a still frame holding a square of the conic
+   gradient, larger than the card, that turns with `transform`; the ring's
+   frame masks it to the band, the glow's clips and blurs it. Turning a layer is
+   compositor work, so nothing is repainted per frame (animating the gradient's
+   angle repainted ring and blur on the main thread every frame). */
 
 .subagent-card {
   position: relative;
   isolation: isolate;
 }
 
-.subagent-card[data-active="true"]::before,
-.subagent-card[data-active="true"]::after {
-  content: "";
+.live-border-ring,
+.live-border-glow {
   position: absolute;
   inset: -1.5px;
   border-radius: inherit;
+  overflow: hidden;
+  /* So the turning square can be sized from the frame's own box. */
+  container-type: size;
   pointer-events: none;
-  background: conic-gradient(
-    from var(--subagent-angle),
-    transparent 0deg,
-    hsl(var(--subagent-active) / 0.15) 40deg,
-    hsl(var(--subagent-active)) 90deg,
-    hsl(var(--subagent-active-glow)) 120deg,
-    transparent 170deg,
-    transparent 190deg,
-    hsl(var(--subagent-active) / 0.15) 220deg,
-    hsl(var(--subagent-active)) 270deg,
-    hsl(var(--subagent-active-glow)) 300deg,
-    transparent 350deg
-  );
-  animation: subagent-border-spin 2.6s linear infinite;
 }
 
-/* The ring: the gradient shows only in the 1.5px padding band. */
-.subagent-card[data-active="true"]::before {
+/* The ring: the square shows only in the 1.5px padding band. */
+.live-border-ring {
   z-index: 1;
   padding: 1.5px;
   -webkit-mask:
@@ -53,22 +44,63 @@
   mask-composite: exclude;
 }
 
-/* The glow: the same gradient, blurred, behind the card. */
-.subagent-card[data-active="true"]::after {
+/* The glow: the same square, clipped to the card's shape and blurred, behind
+   the card. */
+.live-border-glow {
   z-index: -1;
   filter: blur(10px);
   opacity: 0.45;
 }
 
-@keyframes subagent-border-spin {
+/* The turning square, centred and wide enough to cover its frame at every
+   angle (the diagonal, plus the ring's padding the container units leave
+   out). A conic gradient turned by `rotate(a)` is the same gradient started
+   `from a`. */
+.live-border-ring::before,
+.live-border-glow::before {
+  --live-border-side: calc(142cqmax + 6px);
+  content: "";
+  position: absolute;
+  top: calc(50% - var(--live-border-side) / 2);
+  left: calc(50% - var(--live-border-side) / 2);
+  width: var(--live-border-side);
+  height: var(--live-border-side);
+  background: conic-gradient(from 0deg, var(--live-border-stops));
+  animation: live-border-spin 2.6s linear infinite;
+}
+
+@supports (width: hypot(1px, 1px)) {
+  .live-border-ring::before,
+  .live-border-glow::before {
+    --live-border-side: calc(hypot(100cqw, 100cqh) + 6px);
+  }
+}
+
+/* Two lights on opposite sides, each fading in behind its bright head. */
+.subagent-card,
+.workflow-node {
+  --live-border-stops:
+    transparent 0deg,
+    hsl(var(--subagent-active) / 0.15) 40deg,
+    hsl(var(--subagent-active)) 90deg,
+    hsl(var(--subagent-active-glow, var(--subagent-active))) 120deg,
+    transparent 170deg,
+    transparent 190deg,
+    hsl(var(--subagent-active) / 0.15) 220deg,
+    hsl(var(--subagent-active)) 270deg,
+    hsl(var(--subagent-active-glow, var(--subagent-active))) 300deg,
+    transparent 350deg;
+}
+
+@keyframes live-border-spin {
   to {
-    --subagent-angle: 360deg;
+    transform: rotate(360deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .subagent-card[data-active="true"]::before,
-  .subagent-card[data-active="true"]::after {
+  .live-border-ring::before,
+  .live-border-glow::before {
     animation: none;
   }
 }

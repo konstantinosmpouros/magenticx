@@ -9,6 +9,7 @@ import { ErrorState } from "@/features/automations/components/automations_parts/
 import { WorkflowCard } from "@/features/automations/components/automations_parts/WorkflowCard";
 import { filterWorkflowItems, sortWorkflowItems } from "@/features/automations/lib/filters";
 import { automationItemId } from "@/features/automations/lib/kinds";
+import { useCardLayoutDependency } from "@/features/automations/hooks/useCardLayoutWindow";
 
 /**
  * The Automations page's Workflows area: the user's workflows as cards (the
@@ -52,6 +53,8 @@ export function WorkflowsArea({
 }) {
   const visible = React.useMemo(() => sortWorkflowItems(filterWorkflowItems(items, query), sort), [items, query, sort]);
   const hasItems = items.length > 0;
+  // The grid animates its layout only after a user change (useCardLayoutWindow).
+  const layoutDependency = useCardLayoutDependency();
 
   if (loading && !hasItems) {
     return (
@@ -100,6 +103,7 @@ export function WorkflowsArea({
         ) : (
           <motion.div
             layout={reduceMotion ? false : "position"}
+            layoutDependency={layoutDependency}
             className="grid items-stretch gap-3 md:grid-cols-2"
           >
             <AnimatePresence mode="popLayout" initial>

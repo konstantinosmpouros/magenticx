@@ -117,6 +117,8 @@ type ConversationsCtx = {
   }) => void;
   onSearch?: () => void;
   persistUIState: () => void;
+  /** A conversation was deleted: forget anything cached for it (plan 45). */
+  onConversationDeleted?: (conversationId: string) => void;
 };
 
 // The shortest time the "loading more" row shows, so a near-instant page doesn't
@@ -166,6 +168,7 @@ export function createConversationHandlers(ctx: ConversationsCtx) {
     setCurrentMessage,
     toast,
     persistUIState,
+    onConversationDeleted,
   } = ctx;
 
   // Going back to the empty new-chat state is just navigating to root. The
@@ -286,6 +289,7 @@ export function createConversationHandlers(ctx: ConversationsCtx) {
       await deleteConversation(userId, conversationId);
       // Remove the row locally as soon as the delete succeeds so sidebar and detail stay aligned.
       setConversations((prev) => prev.filter((c) => c.id !== conversationId));
+      onConversationDeleted?.(conversationId);
       if (conversationId === currentConversation?.id) clearChatAndStopThinking();
       toast({
         title: "Conversation deleted",

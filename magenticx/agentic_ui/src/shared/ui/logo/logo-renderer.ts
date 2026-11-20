@@ -4,7 +4,9 @@
  * flow and swirl, a light sweep, whole-mark float, breath and turns). Nothing
  * is redrawn, so it looks exactly like the image; with every amplitude at zero,
  * it is the image. Sampled with mipmaps at the canvas's device pixels, so it
- * stays smooth at any size and screen density.
+ * stays smooth at any size and screen density; the texture is only as large as
+ * the canvas needs (plan 45), and each image is decoded once for every logo
+ * on the page.
  *
  * Ported from the thesis app's logo renderer. Framework-free:
  * `animated-logo.tsx` owns the loop and the React side.
@@ -116,31 +118,76 @@ const UNIFORMS = [
 type Uniform = (typeof UNIFORMS)[number];
 
 const CROSSFADE_MS = 450;
-/** The largest texture edge: plenty for the canvas, which is capped at 1024px. */
-const MAX_TEXTURE_PX = 1024;
+/** The largest texture edge: the artwork ships as 512px squares. */
+const MAX_TEXTURE_PX = 512;
 
 const isPowerOfTwo = (n: number) => (n & (n - 1)) === 0;
 
 /**
- * The image as a square power-of-two source, so the texture gets mipmaps and
- * stays smooth when drawn small. The orb artwork ships as 512px squares, which
- * are used as they are; any other size is redrawn here first.
+ * Every image decoded once per URL and shared by every logo on the page (the
+ * orb shows in several places at once; each used to fetch and decode its own
+ * copy). A failed load is forgotten, so the next logo tries again.
  */
-function textureSource(image: HTMLImageElement): TexImageSource {
+const decodedImages = new Map<string, Promise<HTMLImageElement>>();
+
+function decodeImage(url: string): Promise<HTMLImageElement> {
+  let pending = decodedImages.get(url);
+  if (!pending) {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = url;
+    const decoding = image.decode().then(() => image);
+    decoding.catch(() => {
+      if (decodedImages.get(url) === decoding) decodedImages.delete(url);
+    });
+    decodedImages.set(url, decoding);
+    pending = decoding;
+  }
+  return pending;
+}
+
+/** The scaled copies made so far, per image and edge, shared like the images. */
+const scaledSources = new WeakMap<HTMLImageElement, Map<number, TexImageSource>>();
+
+/**
+ * The texture edge a canvas needs: the smallest power of two that covers its
+ * device pixels (mipmaps need a power of two), at most the artwork's 512.
+ */
+function textureSide(canvasPx: number): number {
+  let side = 1;
+  while (side < Math.min(canvasPx, MAX_TEXTURE_PX)) side *= 2;
+  return side;
+}
+
+/**
+ * The image as a square power-of-two source of the given edge, so the texture
+ * gets mipmaps and stays smooth when drawn small. An image already that size
+ * is used as it is; otherwise it is redrawn once at that size and kept.
+ */
+function textureSource(image: HTMLImageElement, side: number): TexImageSource {
   const edge = Math.max(image.naturalWidth, image.naturalHeight);
-  if (image.naturalWidth === image.naturalHeight && isPowerOfTwo(edge) && edge <= MAX_TEXTURE_PX) {
+  if (image.naturalWidth === image.naturalHeight && isPowerOfTwo(edge) && edge === side) {
     return image;
   }
-  let side = 1;
-  while (side * 2 <= Math.min(edge, MAX_TEXTURE_PX)) side *= 2;
+  let sizes = scaledSources.get(image);
+  if (!sizes) {
+    sizes = new Map();
+    scaledSources.set(image, sizes);
+  }
+  const cached = sizes.get(side);
+  if (cached) return cached;
   const canvas = document.createElement("canvas");
   canvas.width = canvas.height = side;
   const ctx = canvas.getContext("2d");
   if (!ctx) return image;
   ctx.imageSmoothingQuality = "high";
   ctx.drawImage(image, 0, 0, side, side);
+  sizes.set(side, canvas);
   return canvas;
 }
+
+/** A texture and what it was made from, so it can be remade larger. */
+type Layer = { texture: WebGLTexture; image: HTMLImageElement; side: number };
 
 function compile(gl: WebGLRenderingContext, type: number, source: string): WebGLShader | null {
   const shader = gl.createShader(type);
@@ -159,8 +206,8 @@ export class LogoRenderer {
   private readonly gl: WebGLRenderingContext;
   private readonly program: WebGLProgram;
   private readonly uniforms: Record<Uniform, WebGLUniformLocation | null>;
-  private current: WebGLTexture | null = null;
-  private incoming: WebGLTexture | null = null;
+  private current: Layer | null = null;
+  private incoming: Layer | null = null;
   private fadeStart = 0;
   private loadToken = 0;
   private disposed = false;
@@ -231,37 +278,42 @@ export class LogoRenderer {
   /** Loads an image; the first one appears at once, later ones crossfade in. */
   async setImage(url: string): Promise<void> {
     const token = ++this.loadToken;
-    const image = new Image();
-    image.decoding = "async";
-    image.src = url;
-    await image.decode();
+    const image = await decodeImage(url);
     if (this.disposed || token !== this.loadToken) return;
 
-    const { gl } = this;
-    const texture = gl.createTexture();
+    const texture = this.gl.createTexture();
     if (!texture) return;
+    const layer: Layer = { texture, image, side: 0 };
+    this.upload(layer);
+
+    if (this.incoming) this.finishFade();
+    if (this.current) {
+      this.incoming = layer;
+      this.fadeStart = performance.now();
+    } else {
+      this.current = layer;
+    }
+  }
+
+  /** (Re)fills a layer's texture at the size the canvas needs now. */
+  private upload(layer: Layer): void {
+    const { gl } = this;
+    const side = textureSide(Math.max(gl.canvas.width, gl.canvas.height));
     gl.activeTexture(gl.TEXTURE2);
-    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.bindTexture(gl.TEXTURE_2D, layer.texture);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textureSource(image));
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textureSource(layer.image, side));
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-
-    if (this.incoming) this.finishFade();
-    if (this.current) {
-      this.incoming = texture;
-      this.fadeStart = performance.now();
-    } else {
-      this.current = texture;
-    }
+    layer.side = side;
   }
 
   private finishFade(): void {
     if (!this.incoming) return;
-    if (this.current) this.gl.deleteTexture(this.current);
+    if (this.current) this.gl.deleteTexture(this.current.texture);
     this.current = this.incoming;
     this.incoming = null;
   }
@@ -273,6 +325,12 @@ export class LogoRenderer {
       canvas.height = height;
     }
     this.gl.viewport(0, 0, width, height);
+    // A canvas that grew past its textures gets them again at the new size;
+    // a smaller one keeps them (mipmaps cover drawing them smaller).
+    const side = textureSide(Math.max(width, height));
+    for (const layer of [this.current, this.incoming]) {
+      if (layer && layer.side < side) this.upload(layer);
+    }
   }
 
   /**
@@ -291,9 +349,9 @@ export class LogoRenderer {
       }
     }
     gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.current);
+    gl.bindTexture(gl.TEXTURE_2D, this.current.texture);
     gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D, this.incoming ?? this.current);
+    gl.bindTexture(gl.TEXTURE_2D, (this.incoming ?? this.current).texture);
     gl.uniform1f(u.uMix, mix);
     gl.uniform1f(u.uPhase, phase);
     gl.uniform1f(u.uAmp, amp);
@@ -306,8 +364,8 @@ export class LogoRenderer {
   dispose(): void {
     this.disposed = true;
     const { gl } = this;
-    if (this.current) gl.deleteTexture(this.current);
-    if (this.incoming) gl.deleteTexture(this.incoming);
+    if (this.current) gl.deleteTexture(this.current.texture);
+    if (this.incoming) gl.deleteTexture(this.incoming.texture);
     gl.deleteProgram(this.program);
     // Free the context now: browsers allow only a few at a time.
     gl.getExtension("WEBGL_lose_context")?.loseContext();

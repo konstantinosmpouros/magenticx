@@ -37,14 +37,38 @@ export function useInitialSessionState() {
   return { initialUserId, initialUserProfile, initialLoggedIn };
 }
 
+/**
+ * Read a user's IndexedDB UI snapshot, never rejecting: a broken or blocked
+ * store only means the first frame paints without it (the bootstrap fetches
+ * repopulate everything), so a failure is logged and read as "no snapshot".
+ */
+const readUISnapshot = (userId: string): Promise<UISnapshotSerializable | null> =>
+  loadUISnapshot(userId).catch((error) => {
+    console.error("Failed to hydrate from snapshot", error);
+    return null;
+  });
+
 // ---------------------------------------------------------------------------
 // Auth rehydrate effect
 // ---------------------------------------------------------------------------
+/**
+ * Restore the session on page load and bootstrap the workspace.
+ *
+ * Ordered for the shortest path to a painted conversation (plan 45, Phase 5):
+ * the IndexedDB snapshot is read while `restoreSession` is in flight (under
+ * the stored user id, and thrown away if the restored session is someone
+ * else's); `sessionReady` goes up straight after the restore, so the route's
+ * conversation detail loads in parallel with the five catalogs; and
+ * `authResolved` goes up once those are in. An account awaiting deletion
+ * never gets `sessionReady`: its session is frozen and nothing may load.
+ */
 export function useAuthRehydrateEffect(params: {
   setIsLoggedIn: (v: boolean) => void;
   setUserId: (v: string | null) => void;
   setUserProfile: (v: UserProfile | null) => void;
   setAuthResolved?: (v: boolean) => void;
+  /** Lets the route start loading its conversation before the catalogs land. */
+  setSessionReady?: (v: boolean) => void;
   setPendingDeletion?: (v: PendingDeletion | null) => void;
   setAgents: (v: any) => void;
   setAvailableTools?: (v: ToolMetadata[]) => void;
@@ -71,6 +95,7 @@ export function useAuthRehydrateEffect(params: {
     setUserId,
     setUserProfile,
     setAuthResolved,
+    setSessionReady,
     setPendingDeletion,
     setAgents,
     setAvailableTools,
@@ -95,6 +120,11 @@ export function useAuthRehydrateEffect(params: {
     const run = async () => {
       try {
         const existing = loadSession();
+        // Start reading the stored user's snapshot now, alongside the restore
+        // (plan 45): IndexedDB is local and the restore is a network round trip,
+        // so the snapshot is normally ready by the time the restore answers.
+        // Only used if the restore names the same user (checked below).
+        const earlySnapshot = existing?.userId ? readUISnapshot(existing.userId) : null;
         // Retried until the bridge answers, with the loader still up. A tab
         // restored at browser start (or reloaded right after waking) often runs
         // this before the network is back; giving up then would send a user with
@@ -162,7 +192,12 @@ export function useAuthRehydrateEffect(params: {
         let needsConversations = true;
 
         try {
-          const snapshot = await loadUISnapshot(restored.user.id);
+          // The early read was under the stored id; after a server-side session
+          // swap (an account added through the OIDC callback) that is another
+          // user's snapshot, so it is discarded and this user's is read instead.
+          const snapshot = await (earlySnapshot && existing?.userId === restored.user.id
+            ? earlySnapshot
+            : readUISnapshot(restored.user.id));
           if (snapshot) {
             if (typeof snapshot.selectedAgent === "string" && setSelectedAgent) {
               setSelectedAgent(snapshot.selectedAgent);
@@ -193,6 +228,12 @@ export function useAuthRehydrateEffect(params: {
         } catch (error) {
           console.error("Failed to hydrate from snapshot", error);
         }
+
+        // The session is good: the route may load its conversation now, in
+        // parallel with the catalogs below, instead of after them. After the
+        // snapshot on purpose, so the conversation's own agent and privacy
+        // land after the snapshot's remembered ones, never under them.
+        setSessionReady?.(true);
 
         const requests: Promise<unknown>[] = [];
 
@@ -248,10 +289,9 @@ export function useAuthRehydrateEffect(params: {
           await Promise.all(requests);
         }
 
-        // Conversation loading is URL-driven now (the route's :conversationId is
-        // the single source of truth); rehydrate no longer auto-loads a "last
-        // conversation". The chat view loads from the URL once authResolved flips.
-        setLoadingConversation?.(false);
+        // Conversation loading is URL-driven (the route's :conversationId is the
+        // single source of truth), and since `sessionReady` it may already be
+        // under way — so the loading flag is the route's to clear, not this.
 
         persistUIState?.();
         setConversationsLoading?.(false);
@@ -259,6 +299,7 @@ export function useAuthRehydrateEffect(params: {
       } catch (error) {
         console.error("Failed to restore session", error);
         clearSession();
+        setSessionReady?.(false);
         setIsLoggedIn(false);
         setUserId(null);
         setUserProfile(null);

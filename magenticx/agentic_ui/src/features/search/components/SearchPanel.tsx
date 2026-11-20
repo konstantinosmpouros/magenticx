@@ -100,7 +100,9 @@ export default function SearchPanel({
 
   return (
     // Appears and leaves with the shared panel motion (no backdrop: the page
-    // stays visible, and a click outside closes it).
+    // stays visible, and a click outside closes it). A near-opaque fill, no
+    // backdrop blur (plan 45): a streaming answer behind it would make the
+    // blur redraw every frame.
     <AnimatePresence>
       {open ? (
         <div
@@ -109,7 +111,7 @@ export default function SearchPanel({
         >
           <motion.div
             ref={panelRef}
-            className="pointer-events-auto flex max-h-[min(38rem,calc(100svh-2rem))] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border/70 bg-background/95 text-foreground shadow-2xl backdrop-blur-xl"
+            className="pointer-events-auto flex max-h-[min(38rem,calc(100svh-2rem))] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-lg border border-border/70 bg-background/[0.97] text-foreground shadow-2xl"
             {...panel.content}
           >
             <div className="flex items-center gap-2 border-b border-border/70 px-3 py-2">

@@ -55,16 +55,23 @@ export function useCanvasDocument(
     void queryClient.invalidateQueries({ queryKey: canvasKey(userId, conversationId) });
   }, [queryClient, userId, conversationId, revision]);
 
+  // The list, the latest version and the version list describe what is current,
+  // so they opt out of the app's 30 s freshness (plan 45) and re-read on every
+  // mount, as before: a run that wrote a new version while the canvas was
+  // closed must show on reopen. (`revision` only catches changes while open.)
+  // Content read by version number never changes, so it keeps the default.
   const documents = useQuery({
     queryKey: canvasListKey(userId, conversationId),
     queryFn: ({ signal }) => listConversationDocuments(userId, conversationId, signal),
     retry: retryUnlessGone,
+    staleTime: 0,
   });
 
   const latest = useQuery({
     queryKey: canvasContentKey(userId, conversationId, path, "latest"),
     queryFn: ({ signal }) => getLatestDocument(userId, conversationId, path, signal),
     retry: retryUnlessGone,
+    staleTime: 0,
   });
 
   const older = useQuery({
@@ -82,6 +89,7 @@ export function useCanvasDocument(
     queryFn: ({ signal }) => listDocumentVersions(userId, conversationId, path, signal),
     enabled: versionsWanted,
     retry: retryUnlessGone,
+    staleTime: 0,
   });
 
   // The latest version's number, to tell "an earlier version" from "the latest".

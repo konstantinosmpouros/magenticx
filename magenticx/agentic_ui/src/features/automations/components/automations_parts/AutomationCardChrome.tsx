@@ -3,8 +3,10 @@ import { motion } from "framer-motion";
 
 import type { AutomationKind } from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
+import { LiveBorder } from "@/shared/ui/live-border";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { automationKind } from "@/features/automations/lib/kinds";
+import { useCardLayoutDependency } from "@/features/automations/hooks/useCardLayoutWindow";
 
 /**
  * The chrome every Automations card wears, whatever its kind: the animated
@@ -116,11 +118,15 @@ export const AutomationCardFrame = React.forwardRef<HTMLDivElement, AutomationCa
       });
     }, [highlighted, reduceMotion]);
     const delay = Math.min(index * 0.04, 0.32);
+    // Measured for a layout animation only after a user change, never on a
+    // poll (useCardLayoutWindow, plan 45).
+    const layoutDependency = useCardLayoutDependency();
 
     return (
       <motion.div
         ref={ref}
         layout={reduceMotion ? false : "position"}
+        layoutDependency={layoutDependency}
         initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={
@@ -146,6 +152,7 @@ export const AutomationCardFrame = React.forwardRef<HTMLDivElement, AutomationCa
         className="subagent-card group/task rounded-2xl"
         data-active={active ? "true" : "false"}
       >
+        {active ? <LiveBorder /> : null}
         <div
           ref={surfaceRef}
           className={cn(

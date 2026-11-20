@@ -1,33 +1,24 @@
 ﻿import * as React from "react";
 import {
-  Archive,
-  ArrowRight,
   ChevronRight,
   ChevronsUpDown,
   FileText,
-  Flag,
   HelpCircle,
   Keyboard,
   LifeBuoy,
   LogOut,
   MessageSquare,
-  MoreHorizontal,
   Palette,
   PanelLeft,
-  Pencil,
-  Pin,
-  PinOff,
   Search,
   Settings,
   Shapes,
   ShieldCheck,
-  Trash2,
   UserRound,
   Workflow,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Loader } from "@/shared/ui/shadcn-io/loader";
 
 import type {
   AccountSummary,
@@ -53,13 +44,6 @@ import {
   useSidebar,
 } from "@/shared/ui/sidebar";
 import { Skeleton } from "@/shared/ui/skeleton";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuTrigger,
-} from "@/shared/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 import { NewChatIcon } from "@/shared/ui/new-chat-icon";
 import { AgentsIcon } from "@/shared/ui/agents-icon";
@@ -67,16 +51,22 @@ import { BrandLogo } from "@/shared/ui/brand-logo";
 import { INTERACTIVE_SURFACE } from "@/shared/lib/consts";
 import type { RenderContextTrigger } from "@/features/chat/components/ContextMeter";
 import { useTouchMenuTrigger } from "@/shared/hooks/useTouchMenuTrigger";
+import { useStableHandlers } from "@/shared/hooks/useStableHandlers";
+import { useVirtualList } from "@/shared/hooks/useVirtualList";
 import { loadSidebarSectionOpen, saveSidebarSectionOpen } from "@/shared/lib/sidebarStorage";
 import { RADIX_MOTION } from "@/shared/lib/motion/panels";
 import {
   PAGE_GLIDE,
-  ROW_SPRING,
   SIDEBAR_PAGE_LAYOUT_ID,
-  SIDEBAR_ROW_LAYOUT_ID,
   rowMotion,
   sectionListMotion,
 } from "@/features/chat/lib/sidebarMotion";
+import {
+  MotionMenuItem,
+  SidebarListRow,
+  SidebarListRowTitle,
+} from "@/features/chat/components/SidebarListRow";
+import { ConversationRow, type RowFocusHandoff } from "@/features/chat/components/ConversationRow";
 
 type ChatSidebarProps = {
   conversations: ConversationSummary[];
@@ -88,6 +78,8 @@ type ChatSidebarProps = {
   /** Pin an unpinned conversation, or unpin a pinned one. */
   onTogglePinConversation?: (conversation: ConversationSummary) => void;
   onReportConversation?: (id: string) => void;
+  /** Warm a conversation's data when its row is hovered or focused (plan 45). */
+  onPrefetchConversation?: (conversationId: string) => void;
   onLoadMore: () => void;
   isLoadingMore: boolean;
   isInitialLoading: boolean;
@@ -164,11 +156,66 @@ const ConversationLoadingSkeleton = ({ count = 3 }: { count?: number }) => (
 const pinnedTime = (conversation: ConversationSummary) =>
   conversation.pinnedAt ? new Date(conversation.pinnedAt).getTime() : 0;
 
-// Conversation rows are motion <li>s: they fade in with a short stagger (also
-// when the rail opens and the list mounts), slide to their new place when the
-// list reorders (a pin, a new chat on top), and the selected row's highlight
-// glides from row to row.
-const MotionMenuItem = motion.create(SidebarMenuItem);
+/**
+ * Above this many chats the Chats section is virtualized (plan 45, Phase 6):
+ * only the rows near the viewport are in the DOM. Below it the list keeps its
+ * full motion — the staggered entrance, the slide on reorder, the slide-out on
+ * delete — which a virtualized list cannot have (its rows mount and unmount
+ * with the scroll). Sixty rows is two screens of chats, a DOM the browser
+ * handles easily; most users never cross it.
+ */
+const VIRTUALIZE_CHATS_AT = 60;
+/** A chat row's height: `min-h-[2rem]`, no gap. Measured once rendered (a rename field is taller). */
+const CHAT_ROW_ESTIMATE_PX = 32;
+/** The Chats section's scroll box (SidebarSection's list). */
+const CHATS_SCROLL_BOX = '[data-sidebar="chats-list"]';
+
+/**
+ * The Chats section's rows, virtualized: a `position: relative` list as tall
+ * as every row, with only the window near the viewport rendered, each row
+ * placed at its offset. The row being renamed and the row holding keyboard
+ * focus stay rendered when scrolled away (useVirtualList), so neither loses
+ * its field or its focus to a scroll.
+ */
+function VirtualChatRows({
+  conversations,
+  keepMountedId,
+  renderRow,
+}: {
+  conversations: ConversationSummary[];
+  keepMountedId: string | null;
+  renderRow: (
+    conversation: ConversationSummary,
+    index: number,
+    virtualOffset: number,
+    measureRef: (element: Element | null) => void,
+  ) => React.ReactNode;
+}) {
+  const keys = React.useMemo(() => conversations.map((conversation) => conversation.id), [conversations]);
+  const keepMountedKeys = React.useMemo(() => [keepMountedId], [keepMountedId]);
+  const { listRef, virtualItems, totalSize, scrollMargin, measureElement, onFocus } =
+    useVirtualList<HTMLUListElement>({
+      keys,
+      estimateSize: CHAT_ROW_ESTIMATE_PX,
+      scrollContainerSelector: CHATS_SCROLL_BOX,
+      overscan: 10,
+      keepMountedKeys,
+    });
+  return (
+    <SidebarMenu
+      ref={listRef}
+      data-virtualized="true"
+      className="relative !gap-0"
+      style={{ height: totalSize }}
+      onFocus={onFocus}
+    >
+      {virtualItems.map((item) =>
+        renderRow(conversations[item.index], item.index, item.start - scrollMargin, measureElement),
+      )}
+    </SidebarMenu>
+  );
+}
+
 // The top actions' icons grow a little on hover (the row is `group/nav`).
 const NAV_ICON_MOTION =
   "transition-transform duration-300 ease-out motion-safe:supports-[hover:hover]:group-hover/nav:scale-110";
@@ -312,160 +359,22 @@ function SidebarSection({
   );
 }
 
-/** A section's rows: they fade in (staggered) as the list opens, and leave sliding out. */
-function SidebarSectionRows({ children }: { children: React.ReactNode }) {
-  return (
-    <SidebarMenu className="!gap-0">
-      <AnimatePresence>{children}</AnimatePresence>
-    </SidebarMenu>
-  );
-}
-
 /**
- * The one row of the sidebar's lists (Workflows, Pinned, Chats): the same
- * chrome, hover/press/focus surfaces, nudge-on-hover title, and the selected
- * row's highlight. The highlight shares one layoutId across every list, so it
- * glides between a chat and a workflow exactly as it does between two chats.
- *
- * `reserveActionSpace` keeps a row with no actions menu (a workflow) aligned
- * with the rows that have one: SidebarMenuButton pads itself (pr-8) only when
- * its item holds a SidebarMenuAction.
+ * A section's rows: they fade in (staggered) as the list opens, and leave
+ * sliding out. `initial={false}` skips the entrance, for rows that were
+ * already on screen in another form (the Chats list leaving its virtualized one).
  */
-const SidebarListRow = React.forwardRef<
-  HTMLButtonElement,
-  Omit<React.ComponentProps<typeof SidebarMenuButton>, "size" | "isActive"> & {
-    isActive: boolean;
-    reserveActionSpace?: boolean;
-  }
->(({ isActive, reserveActionSpace = false, className, children, ...props }, ref) => {
-  const reduceMotion = useReducedMotion();
-  return (
-    <SidebarMenuButton
-      ref={ref}
-      size="lg"
-      isActive={isActive}
-      // Overflow stays visible so the gliding highlight is not clipped while
-      // it moves in; titles sit above it (z-[1]) in every row it passes.
-      className={cn(
-        "group/row relative !h-auto min-h-[2rem] items-center !overflow-visible rounded-xl bg-transparent px-2.5 py-1 text-left text-muted-foreground shadow-none transition-colors duration-150 supports-[hover:hover]:hover:bg-[hsl(var(--hover-surface))] supports-[hover:hover]:hover:text-foreground active:bg-[hsl(var(--hover-surface-strong))] focus-visible:bg-[hsl(var(--hover-surface))] focus-visible:text-foreground focus-visible:ring-2 data-[active=true]:font-medium data-[active=true]:text-foreground",
-        reserveActionSpace && "pr-8",
-        className,
-      )}
-      {...props}
-    >
-      {isActive && (
-        // The selected row's highlight, shared across rows (and sections), so it
-        // glides to the newly selected row; a short bar of the brand gradient
-        // marks it.
-        <motion.span
-          layoutId={SIDEBAR_ROW_LAYOUT_ID}
-          data-layout-id={SIDEBAR_ROW_LAYOUT_ID}
-          aria-hidden
-          data-indicator="row"
-          className="absolute inset-0 z-0 rounded-xl bg-[hsl(var(--hover-surface))]"
-          transition={reduceMotion ? { duration: 0 } : ROW_SPRING}
-        >
-          <span
-            className="absolute left-[3px] top-1/2 h-4 w-[3px] -translate-y-1/2 rounded-full"
-            style={{ background: "var(--gradient-primary)" }}
-          />
-        </motion.span>
-      )}
-      {children}
-    </SidebarMenuButton>
-  );
-});
-SidebarListRow.displayName = "SidebarListRow";
-
-// A conversation row's two menus ("⋯" and right-click) share one look, so they
-// read as the same menu. The items carry `focus:` beside `data-[highlighted]:`
-// so they replace the shared context-menu item's own focus fill instead of
-// stacking on it (a Radix menu's highlighted item is also the focused one).
-const ROW_MENU_CONTENT =
-  "z-50 w-48 rounded-lg border border-border bg-background p-1.5 text-sm text-foreground shadow-lg focus:outline-none";
-const ROW_MENU_ITEM =
-  "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm text-foreground transition-colors focus:bg-muted focus:text-foreground data-[highlighted]:bg-muted data-[highlighted]:text-foreground focus-visible:outline-none data-[highlighted]:outline-none";
-const ROW_MENU_ITEM_DESTRUCTIVE =
-  "flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-1 text-sm text-destructive transition-colors focus:bg-destructive/10 focus:text-destructive data-[highlighted]:bg-destructive/10 data-[highlighted]:text-destructive focus-visible:outline-none data-[highlighted]:outline-none";
-const ROW_MENU_ICON = "flex h-7 w-7 items-center justify-center rounded-md bg-transparent";
-const ROW_MENU_SEPARATOR = "mx-0 my-1 h-px bg-border/60";
-
-/**
- * A conversation's actions, rendered by both its row's "⋯" menu and its
- * right-click menu so the two never drift apart. Each menu passes its own
- * Radix Item and Separator (a dropdown item cannot live in a context menu).
- */
-function ConversationActionItems({
-  isPinned,
-  isReported,
-  Item,
-  Separator,
-  onRename,
-  onTogglePin,
-  onArchive,
-  onReport,
-  onDelete,
+function SidebarSectionRows({
+  initial = true,
+  children,
 }: {
-  isPinned: boolean;
-  isReported: boolean;
-  // Optional props, as Radix declares them, so both menus' parts fit.
-  Item: React.ComponentType<{
-    onSelect?: (event: Event) => void;
-    className?: string;
-    children?: React.ReactNode;
-  }>;
-  Separator: React.ComponentType<{ className?: string }>;
-  onRename: () => void;
-  onTogglePin: () => void;
-  onArchive: () => void;
-  onReport: () => void;
-  onDelete: () => void;
+  initial?: boolean;
+  children: React.ReactNode;
 }) {
   return (
-    <>
-      <Item onSelect={onRename} className={ROW_MENU_ITEM}>
-        <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
-          <Pencil size={15} />
-        </div>
-        <span>Rename</span>
-      </Item>
-      <Item onSelect={onTogglePin} className={ROW_MENU_ITEM}>
-        <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
-          {isPinned ? <PinOff size={15} /> : <Pin size={15} />}
-        </div>
-        <span>{isPinned ? "Unpin" : "Pin"}</span>
-      </Item>
-      <Item onSelect={onArchive} className={ROW_MENU_ITEM}>
-        <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
-          <Archive size={15} />
-        </div>
-        <span>Archive</span>
-      </Item>
-      {!isReported && (
-        <Item onSelect={onReport} className={ROW_MENU_ITEM}>
-          <div className={cn(ROW_MENU_ICON, "text-muted-foreground")}>
-            <Flag size={15} />
-          </div>
-          <span>Report</span>
-        </Item>
-      )}
-      <Separator className={ROW_MENU_SEPARATOR} />
-      <Item onSelect={onDelete} className={ROW_MENU_ITEM_DESTRUCTIVE}>
-        <div className={cn(ROW_MENU_ICON, "text-destructive")}>
-          <Trash2 size={15} />
-        </div>
-        <span>Delete</span>
-      </Item>
-    </>
-  );
-}
-
-/** A list row's title: truncated, above the highlight, nudged right on hover. */
-function SidebarListRowTitle({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="relative z-[1] truncate text-[13px] transition-transform duration-200 ease-out motion-safe:supports-[hover:hover]:group-hover/row:translate-x-[3px]">
-      {children}
-    </span>
+    <SidebarMenu className="!gap-0">
+      <AnimatePresence initial={initial}>{children}</AnimatePresence>
+    </SidebarMenu>
   );
 }
 
@@ -478,6 +387,7 @@ function ChatSidebar({
   onArchiveConversation,
   onTogglePinConversation,
   onReportConversation,
+  onPrefetchConversation,
   onLoadMore,
   isLoadingMore,
   isInitialLoading,
@@ -559,14 +469,13 @@ function ChatSidebar({
   // Radix's context menu cannot be closed from outside (it has no `open`
   // prop), so a dismissal from the shell remounts the menus by bumping this key.
   const [contextMenuEpoch, setContextMenuEpoch] = React.useState(0);
-  // Set when Rename is picked from the right-click menu: its close must not
-  // hand focus back, or it would pull focus out of the rename field.
-  const contextRenameRef = React.useRef(false);
   const [renamingConversationId, setRenamingConversationId] = React.useState<string | null>(null);
   const [renameDraft, setRenameDraft] = React.useState("");
   const [isSubmittingRename, setIsSubmittingRename] = React.useState(false);
   const renameInputRef = React.useRef<HTMLTextAreaElement | null>(null);
   const renameContainerRef = React.useRef<HTMLDivElement | null>(null);
+  // Hands focus to a chat's row when the row remounts (see ConversationRow).
+  const rowFocusHandoffRef = React.useRef<RowFocusHandoff | null>(null);
 
   const handleConversationSelect = React.useCallback(
     (conversation: ConversationSummary) => {
@@ -820,7 +729,34 @@ function ChatSidebar({
     handleCancelRename();
   }, [contextMenuId, dismissFloatingUiSignal, handleCancelRename]);
 
-  const canSubmitRename = renameDraft.trim().length > 0;
+  // The rows' callbacks: stable, so a memoized row re-renders only when its
+  // own props change (plan 45) — never on a rename keystroke in another row.
+  const rowHandlers = useStableHandlers({
+    onSelect: handleConversationSelect,
+    onStartRename: handleStartRename,
+    onSubmitRename: handleSubmitRename,
+    onTogglePin: onTogglePinConversation,
+    onArchive: onArchiveConversation,
+    onReport: onReportConversation,
+    onDelete: onDeleteConversation,
+    onPrefetch: onPrefetchConversation,
+  });
+  const handleActionMenuOpenChange = React.useCallback(
+    (conversationId: string, isOpen: boolean) => setOpenActionMenuId(isOpen ? conversationId : null),
+    [],
+  );
+  const handleActionMenuToggle = React.useCallback(
+    (conversationId: string) =>
+      setOpenActionMenuId((current) => (current === conversationId ? null : conversationId)),
+    [],
+  );
+  const handleContextMenuOpenChange = React.useCallback(
+    (conversationId: string, isOpen: boolean) =>
+      setContextMenuId((current) =>
+        isOpen ? conversationId : current === conversationId ? null : current,
+      ),
+    [],
+  );
 
   // Pinned and Chats are disjoint views over the one conversations list, so
   // every existing update (rename, delete, streaming, new message) reaches a
@@ -836,8 +772,15 @@ function ChatSidebar({
     () => conversations.filter((conversation) => !conversation.isPinned),
     [conversations],
   );
+  const virtualizeChats = chatConversations.length > VIRTUALIZE_CHATS_AT;
+  // Whether the Chats list was virtualized on the last commit: a list that
+  // leaves that form shows rows already on screen, so they skip their entrance.
+  const chatsWereVirtualizedRef = React.useRef(virtualizeChats);
+  React.useEffect(() => {
+    chatsWereVirtualizedRef.current = virtualizeChats;
+  }, [virtualizeChats]);
 
-  const showEmptyState = !isInitialLoading && !isLoadingMore && conversations.length === 0;
+  const showEmptyState =!isInitialLoading && !isLoadingMore && conversations.length === 0;
   const showInitialSkeleton = isInitialLoading || (isLoadingMore && conversations.length === 0);
   // Every loaded chat is pinned: say where the rest will go instead of "no conversations".
   const showAllPinnedHint =
@@ -890,208 +833,45 @@ function ChatSidebar({
 
   // One row renderer for both sections: Pinned and Chats are views over the
   // same list, so rename, delete and the streaming spinner behave identically.
-  const renderConversationRow = (conversation: ConversationSummary, index: number) => {
-    const agent = conversation.agent;
-    const rawTitle = typeof conversation.title === "string" ? conversation.title.trim() : "";
-    const lastMessage = (conversation.lastMessage ?? "").trim();
-    const fallbackTitle = lastMessage || agent?.name || "Untitled chat";
-    const resolvedTitle = rawTitle || fallbackTitle;
+  // `virtualOffset` places the row in the virtualized Chats list.
+  const renderConversationRow = (
+    conversation: ConversationSummary,
+    index: number,
+    virtualOffset?: number,
+    measureRef?: (element: Element | null) => void,
+  ) => {
     const isRenaming = renamingConversationId === conversation.id;
-    const isActive = conversation.id === currentConversationId;
-    // A busy row shows a spinner instead of its "⋯" menu; the right-click menu
-    // follows it, so a running chat cannot be deleted or archived from either.
-    const isBusy = Boolean(conversation.isStreaming || conversation.hasActiveTasks);
-    const actionItemProps = {
-      isPinned: Boolean(conversation.isPinned),
-      isReported: Boolean(conversation.isReported),
-      onRename: () => handleStartRename(conversation.id, resolvedTitle),
-      onTogglePin: () => onTogglePinConversation?.(conversation),
-      onArchive: () => onArchiveConversation?.(conversation.id),
-      onReport: () => onReportConversation?.(conversation.id),
-      onDelete: () => onDeleteConversation(conversation.id),
-    };
-
     return (
-      <MotionMenuItem key={conversation.id} data-motion="row" {...rowMotion(reduceMotion, index)}>
-        <ContextMenu
-          key={contextMenuEpoch}
-          onOpenChange={(isOpen) =>
-            setContextMenuId((current) =>
-              isOpen ? conversation.id : current === conversation.id ? null : current,
-            )
-          }
-        >
-          {/* `contents`: the wrapper adds no box, so the row and its "⋯" stay
-              siblings (the action is placed by `peer-*` on the row). Disabled
-              while renaming, so the rename field keeps the browser's own menu. */}
-          <ContextMenuTrigger asChild disabled={isRenaming || isBusy}>
-            <div className="contents">
-              <SidebarListRow
-                isActive={isActive}
-                className={cn(
-                  contextMenuId === conversation.id &&
-                    "bg-[hsl(var(--hover-surface))] text-foreground",
-                )}
-                onClick={(event) => {
-                  if (isRenaming) {
-                    event.stopPropagation();
-                    return;
-                  }
-                  handleConversationSelect(conversation);
-                }}
-                tooltip={{
-                  children: (
-                    <div className="flex max-w-xs flex-col gap-0.5">
-                      <span className="text-sm font-medium">{resolvedTitle}</span>
-                      {lastMessage && (
-                        <span
-                          className="text-xs text-muted-foreground leading-snug"
-                          style={{
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                            overflow: "hidden",
-                          }}
-                        >
-                          {lastMessage}
-                        </span>
-                      )}
-                    </div>
-                  ),
-                }}
-              >
-                {isRenaming ? (
-                  <div
-                    ref={renameContainerRef}
-                    className="relative z-[1] flex w-full items-center gap-2 rounded-xl border border-border/60 bg-background/80 px-2 py-1"
-                    onClick={(event) => event.stopPropagation()}
-                  >
-                    <textarea
-                      ref={renameInputRef}
-                      rows={1}
-                      value={renameDraft}
-                      onChange={(event) => setRenameDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && !event.shiftKey) {
-                          event.preventDefault();
-                          void handleSubmitRename();
-                        }
-                        if (event.key === "Escape") {
-                          event.preventDefault();
-                          handleCancelRename();
-                        }
-                      }}
-                      className="h-5 min-h-[1.25rem] w-full resize-none overflow-hidden border-none bg-transparent px-1 py-0 text-sm font-medium leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-0"
-                      placeholder="Rename conversation"
-                      spellCheck={false}
-                    />
-                    <button
-                      type="button"
-                      aria-label="Confirm rename"
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        void handleSubmitRename();
-                      }}
-                      disabled={!canSubmitRename || isSubmittingRename}
-                      className="grid size-7 flex-shrink-0 place-items-center rounded-full bg-primary text-primary-foreground shadow-md transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isSubmittingRename ? (
-                        <Loader size={14} className="text-primary-foreground" />
-                      ) : (
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  </div>
-                ) : (
-                  <SidebarListRowTitle>{resolvedTitle}</SidebarListRowTitle>
-                )}
-              </SidebarListRow>
-              {!isRenaming &&
-                (isBusy ? (
-                  <SidebarMenuAction
-                    aria-label={
-                      conversation.isStreaming
-                        ? "Conversation is streaming"
-                        : "Background sub-agents are working"
-                    }
-                    onClick={(event) => event.stopPropagation()}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onPointerDown={(event) => event.stopPropagation()}
-                    className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:!bg-transparent hover:!text-muted-foreground active:!bg-transparent focus-visible:!bg-transparent focus-visible:text-foreground peer-data-[size=lg]/menu-button:!top-1/2 peer-data-[size=lg]/menu-button:-translate-y-1/2"
-                  >
-                    <Loader size={14} />
-                  </SidebarMenuAction>
-                ) : (
-                  <DropdownMenu.Root
-                    open={openActionMenuId === conversation.id}
-                    onOpenChange={(isOpen) => {
-                      setOpenActionMenuId(isOpen ? conversation.id : null);
-                    }}
-                  >
-                    <DropdownMenu.Trigger
-                      asChild
-                      {...touchMenuTrigger(() =>
-                        setOpenActionMenuId((current) =>
-                          current === conversation.id ? null : conversation.id,
-                        ),
-                      )}
-                    >
-                      <SidebarMenuAction
-                        aria-label="Conversation actions"
-                        onClick={(event) => event.stopPropagation()}
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onPointerDown={(event) => event.stopPropagation()}
-                        showOnHover
-                        className="flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:!bg-transparent hover:!text-muted-foreground active:!bg-transparent focus-visible:!bg-transparent focus-visible:text-foreground peer-data-[size=lg]/menu-button:!top-1/2 peer-data-[size=lg]/menu-button:-translate-y-1/2"
-                      >
-                        <MoreHorizontal size={14} />
-                      </SidebarMenuAction>
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content
-                        side="right"
-                        sideOffset={8}
-                        align="end"
-                        className={`${ROW_MENU_CONTENT} origin-[--radix-dropdown-menu-content-transform-origin] ${RADIX_MOTION.popover}`}
-                        onCloseAutoFocus={(event) => event.preventDefault()}
-                      >
-                        <ConversationActionItems
-                          {...actionItemProps}
-                          Item={DropdownMenu.Item}
-                          Separator={DropdownMenu.Separator}
-                        />
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-                ))}
-            </div>
-          </ContextMenuTrigger>
-          {/* The same actions on right-click, opened at the pointer. */}
-          <ContextMenuContent
-            className={ROW_MENU_CONTENT}
-            aria-label={`Actions for ${resolvedTitle}`}
-            onCloseAutoFocus={(event) => {
-              // After Rename the field takes focus; otherwise focus goes back
-              // where it was, which keeps the menu usable from the keyboard.
-              if (contextRenameRef.current) {
-                contextRenameRef.current = false;
-                event.preventDefault();
-              }
-            }}
-          >
-            <ConversationActionItems
-              {...actionItemProps}
-              onRename={() => {
-                contextRenameRef.current = true;
-                actionItemProps.onRename();
-              }}
-              Item={ContextMenuItem}
-              Separator={ContextMenuSeparator}
-            />
-          </ContextMenuContent>
-        </ContextMenu>
-      </MotionMenuItem>
+      <ConversationRow
+        key={conversation.id}
+        conversation={conversation}
+        index={index}
+        isActive={conversation.id === currentConversationId}
+        isRenaming={isRenaming}
+        isActionMenuOpen={openActionMenuId === conversation.id}
+        isContextMenuOpen={contextMenuId === conversation.id}
+        contextMenuEpoch={contextMenuEpoch}
+        renameDraft={isRenaming ? renameDraft : ""}
+        isSubmittingRename={isRenaming && isSubmittingRename}
+        virtualOffset={virtualOffset}
+        measureRef={measureRef}
+        renameInputRef={renameInputRef}
+        renameContainerRef={renameContainerRef}
+        focusHandoffRef={rowFocusHandoffRef}
+        onSelect={rowHandlers.onSelect}
+        onStartRename={rowHandlers.onStartRename}
+        onRenameDraftChange={setRenameDraft}
+        onSubmitRename={rowHandlers.onSubmitRename}
+        onCancelRename={handleCancelRename}
+        onActionMenuOpenChange={handleActionMenuOpenChange}
+        onActionMenuToggle={handleActionMenuToggle}
+        onContextMenuOpenChange={handleContextMenuOpenChange}
+        onTogglePin={rowHandlers.onTogglePin}
+        onArchive={rowHandlers.onArchive}
+        onReport={rowHandlers.onReport}
+        onDelete={rowHandlers.onDelete}
+        onPrefetch={rowHandlers.onPrefetch}
+      />
     );
   };
 
@@ -1422,7 +1202,11 @@ function ChatSidebar({
                     // pushes Chats off the screen.
                     listClassName="max-h-[30dvh]"
                   >
-                    <SidebarSectionRows>{pinnedConversations.map(renderConversationRow)}</SidebarSectionRows>
+                    <SidebarSectionRows>
+                      {pinnedConversations.map((conversation, index) =>
+                        renderConversationRow(conversation, index),
+                      )}
+                    </SidebarSectionRows>
                   </SidebarSection>
                 </motion.div>
               )}
@@ -1447,8 +1231,18 @@ function ChatSidebar({
                   <MessageSquare size={28} className="mb-3 text-muted-foreground/60" />
                   <p className="text-sm">No conversations yet</p>
                 </div>
+              ) : virtualizeChats ? (
+                <VirtualChatRows
+                  conversations={chatConversations}
+                  keepMountedId={renamingConversationId}
+                  renderRow={renderConversationRow}
+                />
               ) : (
-                <SidebarSectionRows>{chatConversations.map(renderConversationRow)}</SidebarSectionRows>
+                <SidebarSectionRows initial={!chatsWereVirtualizedRef.current}>
+                  {chatConversations.map((conversation, index) =>
+                    renderConversationRow(conversation, index),
+                  )}
+                </SidebarSectionRows>
               )}
               {showAllPinnedHint && (
                 <p className="px-2 py-2 text-xs text-muted-foreground">

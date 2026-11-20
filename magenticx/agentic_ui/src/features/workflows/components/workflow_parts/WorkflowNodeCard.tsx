@@ -3,6 +3,7 @@ import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { AlertTriangle, CalendarClock, Pause, Trash2 } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
+import { LiveBorder } from "@/shared/ui/live-border";
 import type { WorkflowNodeCardData } from "@/shared/lib/types";
 import { humanizeKind, kindMeta } from "@/features/workflows/lib/kinds";
 import {
@@ -74,6 +75,7 @@ export function WorkflowNodeCard({ data, selected: flowSelected }: WorkflowNodeC
       data-dimmed={data.dimmed ? "true" : "false"}
       data-errors={data.hasErrors ? "true" : "false"}
     >
+      {status === "running" ? <LiveBorder /> : null}
       <div className="workflow-node-card agent-map-flow-card relative flex h-full flex-col overflow-hidden rounded-[1.1rem] border border-border/70 bg-card">
         <span className="pointer-events-none absolute inset-x-0 top-0 h-8 bg-gradient-to-b from-primary/[0.06] to-transparent" />
         {status === "running" ? (

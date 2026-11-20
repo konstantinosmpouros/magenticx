@@ -41,6 +41,13 @@ export type WorkspaceState = {
   userId: string | null;
   isLoggedIn: boolean;
   authResolved: boolean;
+  /**
+   * The session is restored and the workspace may load (plan 45): set right
+   * after `restoreSession`, before the catalogs, so a deep-linked
+   * conversation's detail loads in parallel with them instead of after
+   * `authResolved`. Never set for an account awaiting deletion.
+   */
+  sessionReady: boolean;
   userProfile: UserProfile | null;
   /** The account awaits deletion (plan 32): the shell shows only the pending screen. */
   pendingDeletion: PendingDeletion | null;
@@ -94,6 +101,7 @@ export type WorkspaceState = {
   resetForAccountSwitch: () => void;
   setIsLoggedIn: (v: SetStateArg<boolean>) => void;
   setAuthResolved: (v: SetStateArg<boolean>) => void;
+  setSessionReady: (v: SetStateArg<boolean>) => void;
   setPendingDeletion: (v: SetStateArg<PendingDeletion | null>) => void;
   setAccountDeletionReauth: (v: SetStateArg<"done" | "failed" | null>) => void;
   setUserProfile: (v: SetStateArg<UserProfile | null>) => void;
@@ -135,6 +143,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   userId: initialSession?.userId ?? null,
   isLoggedIn: false,
   authResolved: false,
+  sessionReady: false,
   userProfile: initialSession?.user ?? null,
   pendingDeletion: null,
   accountDeletionReauth: null,
@@ -218,6 +227,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
 
   setIsLoggedIn: (v) => set((s) => ({ isLoggedIn: resolve(v, s.isLoggedIn) })),
   setAuthResolved: (v) => set((s) => ({ authResolved: resolve(v, s.authResolved) })),
+  setSessionReady: (v) => set((s) => ({ sessionReady: resolve(v, s.sessionReady) })),
   setPendingDeletion: (v) => set((s) => ({ pendingDeletion: resolve(v, s.pendingDeletion) })),
   setAccountDeletionReauth: (v) =>
     set((s) => ({ accountDeletionReauth: resolve(v, s.accountDeletionReauth) })),

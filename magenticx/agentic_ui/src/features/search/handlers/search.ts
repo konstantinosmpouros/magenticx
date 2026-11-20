@@ -43,28 +43,31 @@ export function useWorkspaceSearch({ userId, onOpen }: WorkspaceSearchCtx) {
       return;
     }
 
-    let cancelled = false;
+    // A newer keystroke (or closing the panel) aborts the request in flight
+    // rather than only ignoring its answer (plan 45): the browser drops the
+    // connection, and the bridge stops paying for a search no one will read.
+    const controller = new AbortController();
     setSearchLoading(true);
     setSearchError(null);
     const timeout = window.setTimeout(() => {
-      searchWorkspace(userId, query, 20)
+      searchWorkspace(userId, query, 20, controller.signal)
         .then((results) => {
-          if (cancelled) return;
+          if (controller.signal.aborted) return;
           setSearchResults(results);
         })
         .catch((error) => {
-          if (cancelled) return;
+          if (controller.signal.aborted) return;
           console.error("Failed to search workspace:", error);
           setSearchResults([]);
           setSearchError("Search failed. Please try again.");
         })
         .finally(() => {
-          if (!cancelled) setSearchLoading(false);
+          if (!controller.signal.aborted) setSearchLoading(false);
         });
     }, 250);
 
     return () => {
-      cancelled = true;
+      controller.abort();
       window.clearTimeout(timeout);
     };
   }, [isSearchOpen, searchQuery, userId]);

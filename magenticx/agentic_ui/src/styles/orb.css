@@ -55,6 +55,14 @@
   inherits: true;
   initial-value: 0;
 }
+/* Whether a state's own layer turns (plan 45): the thinking layers are
+   invisible in every other state, so they stop there instead of turning
+   unseen. Registered so the switch to `paused` can wait out the fade. */
+@property --orb-layer-play {
+  syntax: "running | paused";
+  inherits: false;
+  initial-value: paused;
+}
 
 .orb {
   /* Idle: a float of 7% of the size (~8px on the greeting's 112px orb) over
@@ -184,7 +192,6 @@
   );
   filter: blur(9cqw);
   opacity: 0;
-  transition: opacity 0.7s var(--orb-ease);
   animation: orb-turn 2.4s linear infinite;
 }
 .orb[data-state="thinking"] .orb-aura-swirl {
@@ -225,7 +232,6 @@
 .orb-orbit {
   inset: -3%;
   opacity: 0;
-  transition: opacity 0.7s var(--orb-ease);
   animation: orb-turn 1.8s linear infinite;
 }
 .orb-orbit::after {
@@ -246,6 +252,25 @@
 }
 .orb[data-state="thinking"] .orb-orbit {
   opacity: 1;
+}
+
+/* The thinking layers turn only while they show: they start at once on the
+   way in and stop only after the 0.7s fade on the way out (a discrete
+   transition delayed by the fade), so they never freeze while visible. The
+   listening pulse and speaking glow are not paused: their keyframes set
+   opacity, which outranks the state's `opacity: 0`, so they show in every
+   state. */
+.orb-aura-swirl,
+.orb-orbit {
+  --orb-layer-play: paused;
+  animation-play-state: var(--orb-layer-play);
+  transition:
+    opacity 0.7s var(--orb-ease),
+    --orb-layer-play 0s linear 0.7s allow-discrete;
+}
+.orb[data-state="thinking"] :is(.orb-aura-swirl, .orb-orbit) {
+  --orb-layer-play: running;
+  transition-delay: 0s;
 }
 
 /* ---- The sphere ---------------------------------------------------------- */

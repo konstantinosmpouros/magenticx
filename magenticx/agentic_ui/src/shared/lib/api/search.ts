@@ -7,11 +7,16 @@ import { requestJson } from "../http";
 import { WorkspaceSearchResultListSchema } from "../schemas";
 import { SEARCH_BASE_PATH } from "./paths";
 
-// Search the signed-in user's active workspace data.
+/**
+ * Search the signed-in user's active workspace data. `signal` lets the search
+ * panel abort a query the user has already typed past (plan 45), so an older,
+ * slower answer never costs the server or the client any further work.
+ */
 export async function searchWorkspace(
   userId: string,
   query: string,
   limit: number = 20,
+  signal?: AbortSignal,
 ): Promise<WorkspaceSearchResult[]> {
   const params = new URLSearchParams({
     q: query,
@@ -20,5 +25,6 @@ export async function searchWorkspace(
   return requestJson(`${SEARCH_BASE_PATH}/${encodeURIComponent(userId)}?${params.toString()}`, {
     schema: WorkspaceSearchResultListSchema,
     fallbackMessage: "Failed to search workspace",
+    signal,
   });
 }

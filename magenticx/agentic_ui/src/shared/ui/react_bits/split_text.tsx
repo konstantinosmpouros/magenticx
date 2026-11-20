@@ -1,221 +1,132 @@
-// Modified split_text.tsx
-import React, { useRef, useEffect, useState } from "react";
-import { gsap } from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { SplitText as GSAPSplitText } from "gsap/SplitText";
-import { useGSAP } from "@gsap/react";
-
-gsap.registerPlugin(ScrollTrigger, GSAPSplitText, useGSAP);
+/**
+ * Text whose characters rise and fade in one after another, with a springy
+ * settle — the empty chat's greeting quote.
+ *
+ * Rewritten from react-bits' GSAP SplitText (plan 45): gsap, its SplitText and
+ * ScrollTrigger plugins (~120 KB) shipped in the first download for this one
+ * greeting, re-split the text through the DOM on every quote change, and left
+ * `will-change` on the element for good. Here React renders the per-character
+ * spans and each runs a native Web Animation (compositor-only: `transform` and
+ * `opacity`) that ends on its own; nothing stays promoted afterwards.
+ *
+ * No shadcn/Radix part covers per-character entrance motion, hence a custom one.
+ * Reduced motion: the text simply appears.
+ */
+import React, { useLayoutEffect, useMemo, useRef } from "react";
 
 export interface SplitTextProps {
   text: string;
   className?: string;
+  /** Milliseconds between one character's start and the next's. */
   delay?: number;
+  /** Seconds each character's entrance lasts. */
   duration?: number;
-  ease?: string | ((t: number) => number);
-  splitType?: "chars" | "words" | "lines" | "words, chars";
-  from?: gsap.TweenVars;
-  to?: gsap.TweenVars;
-  threshold?: number;
-  rootMargin?: string;
+  /** Pixels each character rises from. */
+  offsetY?: number;
   tag?: "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "span";
   textAlign?: React.CSSProperties["textAlign"];
-  onLetterAnimationComplete?: () => void;
-  useScrollTrigger?: boolean;
 }
+
+/**
+ * GSAP's `elastic.out(1, 0.3)` (the original's ease), sampled into a CSS
+ * `linear()` easing so the browser runs it natively.
+ */
+function elasticOutEasing(): string {
+  const period = 0.3;
+  const shift = period / 4;
+  const steps = 60;
+  const points: string[] = [];
+  for (let i = 0; i <= steps; i += 1) {
+    const t = i / steps;
+    const value =
+      t === 0 ? 0 : 2 ** (-10 * t) * Math.sin(((t - shift) * (2 * Math.PI)) / period) + 1;
+    points.push(value.toFixed(4));
+  }
+  return `linear(${points.join(", ")})`;
+}
+
+/** The springy ease where `linear()` is supported, else a close back-out curve. */
+const ENTRANCE_EASING =
+  typeof CSS !== "undefined" && CSS.supports?.("animation-timing-function", "linear(0, 1)")
+    ? elasticOutEasing()
+    : "cubic-bezier(0.34, 1.56, 0.64, 1)";
+
+const prefersReducedMotion = () =>
+  typeof window !== "undefined" &&
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 const SplitText: React.FC<SplitTextProps> = ({
   text,
   className = "",
   delay = 100,
   duration = 2,
-  ease = "elastic.out(1, 0.3)",
-  splitType = "chars",
-  from = { opacity: 0, y: 40 },
-  to = { opacity: 1, y: 0 },
-  threshold = 0.4,
-  rootMargin = "-100px",
+  offsetY = 40,
   tag = "p",
   textAlign = "center",
-  onLetterAnimationComplete,
-  useScrollTrigger = true,
 }) => {
-  const ref = useRef<HTMLParagraphElement>(null);
-  const animationCompletedRef = useRef(false);
-  const [fontsLoaded, setFontsLoaded] = useState<boolean>(false);
+  const ref = useRef<HTMLElement>(null);
 
-  useEffect(() => {
-    if (document.fonts.status === "loaded") {
-      setFontsLoaded(true);
-    } else {
-      document.fonts.ready.then(() => {
-        setFontsLoaded(true);
-      });
-    }
-  }, []);
+  // Words stay whole (no line break inside a word, as GSAP's `smartWrap` did);
+  // the spaces between them are plain text, where lines may break.
+  const words = useMemo(() => {
+    let index = 0;
+    return text.split(" ").map((word) =>
+      Array.from(word).map((char) => {
+        index += 1;
+        return { char, index: index - 1 };
+      }),
+    );
+  }, [text]);
 
-  useGSAP(
-    () => {
-      if (!ref.current || !text || !fontsLoaded) return;
-      const el = ref.current as HTMLElement & {
-        _rbsplitInstance?: GSAPSplitText;
-      };
-
-      if (el._rbsplitInstance) {
-        try {
-          el._rbsplitInstance.revert();
-        } catch {
-          /* ignore */
-        }
-        el._rbsplitInstance = undefined;
-      }
-
-      const startPct = (1 - threshold) * 100;
-      const marginMatch = /^(-?\d+(?:\.\d+)?)(px|em|rem|%)?$/.exec(rootMargin);
-      const marginValue = marginMatch ? parseFloat(marginMatch[1]) : 0;
-      const marginUnit = marginMatch ? marginMatch[2] || "px" : "px";
-      const sign =
-        marginValue === 0
-          ? ""
-          : marginValue < 0
-            ? `-=${Math.abs(marginValue)}${marginUnit}`
-            : `+=${marginValue}${marginUnit}`;
-      const start = `top ${startPct}%${sign}`;
-      let targets: Element[] = [];
-      const assignTargets = (self: GSAPSplitText) => {
-        if (splitType.includes("chars") && (self as GSAPSplitText).chars?.length)
-          targets = (self as GSAPSplitText).chars;
-        if (!targets.length && splitType.includes("words") && self.words.length)
-          targets = self.words;
-        if (!targets.length && splitType.includes("lines") && self.lines.length)
-          targets = self.lines;
-        if (!targets.length) targets = self.chars || self.words || self.lines;
-      };
-      const splitInstance = new GSAPSplitText(el, {
-        type: splitType,
-        smartWrap: true,
-        autoSplit: splitType === "lines",
-        linesClass: "split-line",
-        wordsClass: "split-word",
-        charsClass: "split-char",
-        reduceWhiteSpace: false,
-        onSplit: (self: GSAPSplitText) => {
-          assignTargets(self);
-          return gsap.fromTo(
-            targets,
-            { ...from },
-            {
-              ...to,
-              duration,
-              ease,
-              stagger: delay / 1000,
-              ...(useScrollTrigger
-                ? {
-                    scrollTrigger: {
-                      trigger: el,
-                      start,
-                      once: true,
-                      fastScrollEnd: true,
-                      anticipatePin: 0.4,
-                    },
-                  }
-                : {}),
-              onComplete: () => {
-                animationCompletedRef.current = true;
-                onLetterAnimationComplete?.();
-              },
-              willChange: "transform, opacity",
-              force3D: true,
-            },
-          );
-        },
-      });
-      el._rbsplitInstance = splitInstance;
-      return () => {
-        ScrollTrigger.getAll().forEach((st) => {
-          if (st.trigger === el) st.kill();
-        });
-        try {
-          splitInstance.revert();
-        } catch {
-          /* ignore */
-        }
-        el._rbsplitInstance = undefined;
-      };
-    },
-    {
-      dependencies: [
-        text,
-        delay,
-        duration,
-        ease,
-        splitType,
-        JSON.stringify(from),
-        JSON.stringify(to),
-        threshold,
-        rootMargin,
-        fontsLoaded,
-        onLetterAnimationComplete,
-        useScrollTrigger,
-      ],
-      scope: ref,
-    },
-  );
-
-  const renderTag = () => {
-    const style: React.CSSProperties = {
-      textAlign,
-      wordWrap: "break-word",
-      willChange: "transform, opacity",
+  // Layout effect: the animations start hidden (`fill: backwards`) before the
+  // first paint, so the full text never flashes in first.
+  useLayoutEffect(() => {
+    const root = ref.current;
+    if (!root || prefersReducedMotion()) return;
+    const chars = root.querySelectorAll<HTMLElement>("[data-split-char]");
+    const animations: Animation[] = [];
+    chars.forEach((char, i) => {
+      if (typeof char.animate !== "function") return;
+      animations.push(
+        char.animate(
+          [
+            { opacity: 0, transform: `translateY(${offsetY}px)` },
+            { opacity: 1, transform: "translateY(0)" },
+          ],
+          { duration: duration * 1000, delay: i * delay, easing: ENTRANCE_EASING, fill: "backwards" },
+        ),
+      );
+    });
+    return () => {
+      animations.forEach((animation) => animation.cancel());
     };
-    const classes = `split-parent overflow-hidden inline-block whitespace-normal ${className}`;
-    switch (tag) {
-      case "h1":
-        return (
-          <h1 ref={ref} style={style} className={classes}>
-            {text}
-          </h1>
-        );
-      case "h2":
-        return (
-          <h2 ref={ref} style={style} className={classes}>
-            {text}
-          </h2>
-        );
-      case "h3":
-        return (
-          <h3 ref={ref} style={style} className={classes}>
-            {text}
-          </h3>
-        );
-      case "h4":
-        return (
-          <h4 ref={ref} style={style} className={classes}>
-            {text}
-          </h4>
-        );
-      case "h5":
-        return (
-          <h5 ref={ref} style={style} className={classes}>
-            {text}
-          </h5>
-        );
-      case "h6":
-        return (
-          <h6 ref={ref} style={style} className={classes}>
-            {text}
-          </h6>
-        );
-      default:
-        return (
-          <p ref={ref} style={style} className={classes}>
-            {text}
-          </p>
-        );
-    }
-  };
+  }, [words, delay, duration, offsetY]);
 
-  return renderTag();
+  const Tag = tag;
+  return (
+    <Tag
+      ref={ref as React.Ref<HTMLHeadingElement & HTMLParagraphElement>}
+      // The characters are separate spans; the label keeps the text whole for
+      // screen readers.
+      aria-label={text}
+      style={{ textAlign, wordWrap: "break-word" }}
+      className={`split-parent overflow-hidden inline-block whitespace-normal ${className}`}
+    >
+      {words.map((chars, wordIndex) => (
+        <React.Fragment key={wordIndex}>
+          {wordIndex > 0 ? " " : null}
+          <span aria-hidden="true" className="inline-block whitespace-nowrap">
+            {chars.map(({ char, index }) => (
+              <span key={index} data-split-char className="inline-block">
+                {char}
+              </span>
+            ))}
+          </span>
+        </React.Fragment>
+      ))}
+    </Tag>
+  );
 };
 
 export default SplitText;

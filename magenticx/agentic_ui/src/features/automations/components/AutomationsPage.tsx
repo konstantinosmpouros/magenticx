@@ -38,6 +38,11 @@ import {
 } from "@/features/automations/lib/filters";
 import { areaKind, automationItemId, automationKind } from "@/features/automations/lib/kinds";
 import { findTemplate } from "@/features/automations/lib/templates";
+import {
+  CardLayoutProvider,
+  cardLayoutDependency,
+  useCardLayoutWindow,
+} from "@/features/automations/hooks/useCardLayoutWindow";
 
 type AutomationsPageProps = {
   onClose: () => void;
@@ -194,6 +199,12 @@ export default function AutomationsPage({
   const [deleteTarget, setDeleteTarget] = React.useState<ScheduledTask | null>(null);
   const [highlightId, setHighlightId] = React.useState<string | null>(null);
   const [workflowDeleteTarget, setWorkflowDeleteTarget] = React.useState<Workflow | null>(null);
+  // Cards animate their layout only after a user-made change (plan 45): a
+  // filter, search, sort or area change opens the window here; the actions
+  // that reorder or remove a card call `armLayout`. A poll never does.
+  const { armed: layoutArmed, arm: armLayout } = useCardLayoutWindow(
+    `${area}|${filter}|${query}|${sort}`,
+  );
 
   // Escape closes the page. The dialogs own Esc while they are open.
   React.useEffect(() => {
@@ -276,6 +287,7 @@ export default function AutomationsPage({
         await onUpdate(form.taskId, payload);
       } else {
         const created = await onCreate(payload);
+        armLayout();
         // Land on the new card: make sure no chip or search hides it, then it
         // scrolls itself into view and pulses.
         setFilter("all");
@@ -293,6 +305,7 @@ export default function AutomationsPage({
 
   const handleToggle = async (task: ScheduledTask) => {
     const resume = task.status === "paused";
+    armLayout();
     try {
       await onUpdate(task.id, { status: resume ? "active" : "paused" });
     } catch (err) {
@@ -306,6 +319,7 @@ export default function AutomationsPage({
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
+    armLayout();
     try {
       await onDelete(deleteTarget.id);
     } catch (err) {
@@ -332,6 +346,7 @@ export default function AutomationsPage({
 
   const setWorkflowSchedulePaused = async (workflowId: string, paused: boolean) => {
     if (!onSetWorkflowSchedulePaused) return;
+    armLayout();
     try {
       await onSetWorkflowSchedulePaused(workflowId, paused);
     } catch (err) {
@@ -345,6 +360,7 @@ export default function AutomationsPage({
 
   const confirmWorkflowDelete = async () => {
     if (!workflowDeleteTarget || !onDeleteWorkflow) return;
+    armLayout();
     try {
       await onDeleteWorkflow(workflowDeleteTarget.id);
     } catch (err) {
@@ -437,6 +453,7 @@ export default function AutomationsPage({
           ) : (
             <motion.div
               layout={reduceMotion ? false : "position"}
+              layoutDependency={cardLayoutDependency(layoutArmed)}
               className="grid items-stretch gap-3 md:grid-cols-2"
             >
               <AnimatePresence mode="popLayout" initial>
@@ -519,7 +536,9 @@ export default function AutomationsPage({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-4 sm:px-6">
-          <div className="mx-auto w-full max-w-4xl pb-10 pt-5">{body}</div>
+          <div className="mx-auto w-full max-w-4xl pb-10 pt-5">
+            <CardLayoutProvider value={layoutArmed}>{body}</CardLayoutProvider>
+          </div>
         </div>
       </div>
 

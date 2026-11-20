@@ -4,6 +4,7 @@ import { hideUnclosedCitationMarker } from "@/shared/lib/citations";
 import { CITATION_ELEMENT, remarkCitations } from "@/shared/lib/remarkCitations";
 import { endsInOpenCodeFence, prepareStreamingMarkdown } from "@/shared/lib/streaming-markdown";
 import { useCodeFenceThrottle } from "@/shared/hooks/useCodeFenceThrottle";
+import { useLazyRehypePlugins } from "@/shared/hooks/useLazyRehypePlugins";
 import { cn } from "@/shared/lib/utils";
 import { type ComponentProps, memo, useMemo, useState } from "react";
 import { defaultRemarkPlugins, Streamdown, type MermaidConfig } from "streamdown";
@@ -142,6 +143,9 @@ export const Response = memo(
       streaming && typeof children === "string" && endsInOpenCodeFence(text),
     );
     const resolvedMermaidConfig = useMemo(() => mergeMermaidConfig(mermaidConfig), [mermaidConfig]);
+    // KaTeX and rehype-raw load on demand (plan 45); the key remounts
+    // Streamdown once if this text was drawn before a plugin it needs was ready.
+    const pluginsKey = useLazyRehypePlugins(shownText);
     const resolvedComponents = useMemo(() => {
       const base = citations ? CITED_COMPONENTS : BASE_COMPONENTS;
       return components ? { ...base, ...components } : base;
@@ -149,6 +153,7 @@ export const Response = memo(
     return (
       <div ref={setRoot} className="contents">
         <Streamdown
+          key={pluginsKey}
           className={cn(
             "chat-markdown size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
             "leading-relaxed break-words text-inherit",

@@ -77,9 +77,13 @@ const FAINT_CHANCE = 0.7;
 const NEXT_BRIGHT = [20, 30] as const;
 /** The falling stars share a radiant: they all come down at about this angle (degrees, y down). */
 const RAIN_ANGLE = 126;
-/** The deep sky is soft: drawn at up to 1.5x, the live sky (fine dots) at up to 2x. */
+/**
+ * Both skies drawn at up to 1.5x the CSS pixels. The live sky (fine dots,
+ * repainted up to 30 times a second) was 2x; on a 2x screen 1.5x paints
+ * ~44% fewer pixels per frame (plan 45).
+ */
 const DEEP_RATIO = 1.5;
-const LIVE_RATIO = 2;
+const LIVE_RATIO = 1.5;
 /** With nothing falling, a paint at most every 30 ms (30 a second on a 60 Hz screen). */
 const IDLE_FRAME_MS = 30;
 

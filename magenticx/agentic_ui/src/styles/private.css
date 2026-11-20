@@ -167,7 +167,7 @@
 
 /* The composer keeps its travelling hairline lit (now violet, from the
    scope's --primary) and a stronger halo, so the mode reads at the input too. */
-.composer-shell[data-private="true"] .composer-surface::before {
+.composer-shell[data-private="true"] .composer-ring {
   opacity: 1;
 }
 

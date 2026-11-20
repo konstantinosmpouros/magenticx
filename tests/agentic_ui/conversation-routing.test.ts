@@ -1,4 +1,6 @@
 // @vitest-environment happy-dom
+import { createElement, type ReactNode } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -66,6 +68,12 @@ const setup = (initialProps: Props) => {
     toast: vi.fn(),
   };
 
+  // A fresh query client per test: the hook loads details through its cache
+  // (plan 45), and one test's cached detail must not answer the next one.
+  const client = new QueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) =>
+    createElement(QueryClientProvider, { client }, children);
+
   const { rerender } = renderHook(
     (p: Props) =>
       useConversationRouting({
@@ -82,7 +90,7 @@ const setup = (initialProps: Props) => {
         agents: [],
         selectedAgent: "",
       }),
-    { initialProps },
+    { initialProps, wrapper },
   );
 
   return { ...spies, rerender };

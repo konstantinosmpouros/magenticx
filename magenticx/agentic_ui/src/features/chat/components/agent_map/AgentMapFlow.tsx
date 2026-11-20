@@ -24,6 +24,7 @@ import { useReducedMotion } from "framer-motion";
 import { Bot, History, Wrench } from "lucide-react";
 
 import { cn } from "@/shared/lib/utils";
+import { LiveBorder } from "@/shared/ui/live-border";
 import { Orb } from "@/shared/ui/orb";
 import {
   agentNodeDuration,
@@ -151,6 +152,7 @@ function SubagentFlowNode({ data }: NodeProps<AgentFlowSubagentNode>) {
         className="subagent-card group/node h-full w-full rounded-2xl"
         data-active={active ? "true" : "false"}
       >
+        {active ? <LiveBorder /> : null}
         <div
           className={cn(
             "agent-map-flow-card relative flex h-full flex-col justify-center gap-1 overflow-hidden rounded-2xl border px-3",

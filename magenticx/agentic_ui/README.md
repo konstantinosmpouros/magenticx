@@ -489,7 +489,7 @@ The UI stack is based on:
 - `@tanstack/react-query`
 - `next-themes`
 - `lucide-react`
-- `react-markdown`, `remark-gfm`, `rehype-highlight`, and `rehype-katex`
+- `react-markdown`, `remark-gfm`, `streamdown` (KaTeX and rehype-raw load on demand), and `shiki` (the one syntax highlighter)
 
 The app also includes additional motion, markdown, and playground-oriented dependencies, but the core production path remains the chat runtime described above.
 
