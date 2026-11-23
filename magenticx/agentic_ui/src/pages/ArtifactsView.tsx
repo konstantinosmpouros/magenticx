@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { motion, type Variants } from "framer-motion";
 
 import ArtifactsPage from "@/features/artifacts/components/ArtifactsPage";
@@ -29,6 +30,17 @@ const PAGE_FADE: Variants = {
  */
 export default function ArtifactsView() {
   const { reduceMotion, navigate, userId } = useChatWorkspaceContext();
+  // Stable, so the page's memoized cards are not all re-rendered whenever this
+  // view re-renders with the workspace.
+  const openConversation = useCallback(
+    (conversationId: string) => navigate(`/c/${encodeURIComponent(conversationId)}`),
+    [navigate],
+  );
+  const openCanvas = useCallback(
+    (conversationId: string, path: string) => navigate(canvasDocumentHref(conversationId, path)),
+    [navigate],
+  );
+  const startChat = useCallback(() => navigate("/"), [navigate]);
 
   return (
     <motion.div
@@ -42,11 +54,9 @@ export default function ArtifactsView() {
     >
       <ArtifactsPage
         userId={userId ?? null}
-        onOpenConversation={(conversationId) =>
-          navigate(`/c/${encodeURIComponent(conversationId)}`)
-        }
-        onOpenCanvas={(conversationId, path) => navigate(canvasDocumentHref(conversationId, path))}
-        onStartChat={() => navigate("/")}
+        onOpenConversation={openConversation}
+        onOpenCanvas={openCanvas}
+        onStartChat={startChat}
       />
     </motion.div>
   );

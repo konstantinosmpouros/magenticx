@@ -66,6 +66,11 @@ content: [
     			file: {
     				word: 'hsl(var(--file-word))',
     				pdf: 'hsl(var(--file-pdf))',
+    				sheet: 'hsl(var(--file-sheet))',
+    				slides: 'hsl(var(--file-slides))',
+    				image: 'hsl(var(--file-image))',
+    				text: 'hsl(var(--file-text))',
+    				code: 'hsl(var(--file-code))',
     				fg: 'hsl(var(--file-mark-fg))'
     			},
     			info: {

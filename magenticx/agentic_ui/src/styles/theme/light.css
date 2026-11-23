@@ -58,6 +58,14 @@
     --file-word: 214 82% 45%;
     --file-pdf: 0 72% 50%;
     --file-mark-fg: 0 0% 100%;
+    /* The rest of the file families, for the Artifacts page's covers, tiles
+       and type chips: the hues those files are known by (Excel green,
+       PowerPoint orange), kept >= 3:1 on white for icons and marks. */
+    --file-sheet: 146 63% 32%;
+    --file-slides: 18 85% 46%;
+    --file-image: 326 68% 47%;
+    --file-text: 190 76% 32%;
+    --file-code: 252 58% 54%;
 
     /* A sub-agent at work (styles/subagent.css): its status chip and the light
        that runs round its card. The primary holds AA for the chip text on

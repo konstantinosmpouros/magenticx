@@ -7,7 +7,16 @@ WORKDIR /app
 
 # Install dependencies first (leverages Docker layer caching)
 COPY package*.json ./
-RUN npm ci
+# Throttled so the install survives a slow link: npm's default ~15 parallel
+# tarball downloads split thin bandwidth until every one hits ETIMEDOUT, and
+# npm then dies with "Exit handler never called!". Three sockets, a 10-minute
+# per-request timeout and patient retries cost nothing on a fast link (CI).
+RUN npm ci --no-audit --no-fund \
+      --maxsockets=3 \
+      --fetch-timeout=600000 \
+      --fetch-retries=6 \
+      --fetch-retry-mintimeout=20000 \
+      --fetch-retry-maxtimeout=120000
 
 # Copy the rest of the source and build
 COPY . .
