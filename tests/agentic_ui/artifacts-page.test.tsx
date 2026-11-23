@@ -8,9 +8,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Pinned: the contract drops rows the blob routes could not open and defaults
  * an unknown type; the filters and the debounced search go to the bridge (not
  * a client-side filter over one page); "Load more" follows the cursor; the two
- * empty states say different things and offer different ways out; each row
+ * empty states say different things and offer different ways out; each file
  * previews against its OWN conversation (not the open chat), downloads with its
- * own ids, and opens its conversation.
+ * own ids, and opens its conversation. The redesign adds: a file shows the
+ * title and summary its agent gave it, files sit under date headings, Grid /
+ * List is a remembered choice that renders the same files, and "/" focuses
+ * the search.
  */
 
 const { api } = vi.hoisted(() => ({
@@ -25,6 +28,7 @@ const { api } = vi.hoisted(() => ({
 vi.mock("@/shared/lib/api", () => api);
 
 import ArtifactsPage from "@/features/artifacts/components/ArtifactsPage";
+import { dateGroupLabel, formatFileAge } from "@/features/artifacts/lib/fileFilters";
 import { ARTIFACTS_PATH, isArtifactsPath } from "@/features/artifacts/lib/routes";
 import { UserFilesPageSchema } from "@/shared/lib/schemas";
 import { SidebarProvider } from "@/shared/ui/sidebar";
@@ -77,6 +81,8 @@ beforeEach(() => {
   Object.values(api).forEach((fn) => fn.mockReset());
   URL.createObjectURL = vi.fn(() => "blob:preview");
   URL.revokeObjectURL = vi.fn();
+  // The Grid / List choice is remembered; every test starts on the default.
+  window.localStorage.removeItem("mx_artifacts_view");
 });
 
 describe("the files contract and route", () => {
@@ -108,17 +114,19 @@ describe("the Artifacts page", () => {
     );
     renderPage();
 
-    const rows = await screen.findAllByTestId("artifact-row");
+    const rows = await screen.findAllByTestId("artifact-item");
     expect(rows).toHaveLength(2);
     expect(api.listUserFiles).toHaveBeenCalledWith(
       "user-1",
       expect.objectContaining({ kind: null, type: null, q: null, cursor: null }),
     );
+    // The agent's title heads the card; the file name sits under it.
+    expect(within(rows[0]).getByRole("button", { name: "Q3 report" })).toBeInTheDocument();
     expect(within(rows[0]).getByText("report.pdf")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Quarterly numbers")).toBeInTheDocument();
     expect(within(rows[0]).getByText("Output")).toBeInTheDocument();
     expect(within(rows[0]).getByText("2.0 KB")).toBeInTheDocument();
-    expect(within(rows[0]).getByText(/2026/)).toBeInTheDocument();
+    expect(rows[0].querySelector("time")).toHaveAttribute("dateTime", "2026-11-17T10:00:00Z");
     expect(within(rows[1]).getByText("Input")).toBeInTheDocument();
     expect(within(rows[1]).getByText("Untitled conversation")).toBeInTheDocument();
   });
@@ -126,7 +134,7 @@ describe("the Artifacts page", () => {
   it("sends the kind and type filters to the bridge", async () => {
     api.listUserFiles.mockResolvedValue(page([file()]));
     renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     fireEvent.click(screen.getByRole("button", { name: "Outputs" }));
     await waitFor(() => expect(lastParams()).toMatchObject({ kind: "output", type: null }));
@@ -142,7 +150,7 @@ describe("the Artifacts page", () => {
   it("searches by name once typing pauses", async () => {
     api.listUserFiles.mockResolvedValue(page([file()]));
     renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
     const callsBefore = api.listUserFiles.mock.calls.length;
 
     fireEvent.change(screen.getByLabelText("Search files by name"), { target: { value: "rep" } });
@@ -158,11 +166,11 @@ describe("the Artifacts page", () => {
       .mockResolvedValueOnce(page([file()], "cursor-2"))
       .mockResolvedValueOnce(page([file({ attachmentId: "att-2", fileName: "older.pdf" })]));
     renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     fireEvent.click(screen.getByRole("button", { name: "Load more" }));
 
-    await waitFor(() => expect(screen.getAllByTestId("artifact-row")).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByTestId("artifact-item")).toHaveLength(2));
     expect(lastParams()).toMatchObject({ cursor: "cursor-2" });
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
@@ -174,7 +182,7 @@ describe("the Artifacts page", () => {
     api.listUserFiles.mockResolvedValue(page(files));
     renderPage();
 
-    const rows = await screen.findAllByTestId("artifact-row");
+    const rows = await screen.findAllByTestId("artifact-item");
     expect(rows.length).toBeGreaterThan(5);
     expect(rows.length).toBeLessThan(40);
     expect(screen.getByText("file-0.pdf")).toBeInTheDocument();
@@ -194,7 +202,7 @@ describe("the Artifacts page", () => {
   it("with a filter that matches nothing, offers to clear it", async () => {
     api.listUserFiles.mockResolvedValueOnce(page([file()])).mockResolvedValue(page([]));
     renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     fireEvent.click(screen.getByRole("button", { name: "Slides" }));
     const empty = await screen.findByTestId("artifacts-empty");
@@ -211,14 +219,14 @@ describe("the Artifacts page", () => {
 
     expect(await screen.findByText("Bridge down")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Try again/ }));
-    expect(await screen.findAllByTestId("artifact-row")).toHaveLength(1);
+    expect(await screen.findAllByTestId("artifact-item")).toHaveLength(1);
   });
 
   it("downloads with the file's own ids and opens its conversation", async () => {
     api.listUserFiles.mockResolvedValue(page([file()]));
     api.downloadAttachment.mockResolvedValue(undefined);
     const { onOpenConversation } = renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     fireEvent.click(screen.getByRole("button", { name: "Download report.pdf" }));
     await waitFor(() =>
@@ -239,7 +247,7 @@ describe("the Artifacts page", () => {
     api.listUserFiles.mockResolvedValue(page([file()]));
     api.downloadAttachment.mockResolvedValue(undefined);
     const { onOpenConversation } = renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     // A finger: the menu opens on the tap's click (useTouchMenuTrigger).
     const trigger = screen.getByRole("button", { name: "Actions for report.pdf" });
@@ -257,19 +265,20 @@ describe("the Artifacts page", () => {
   it("opens a generated .md in the canvas of its conversation, and only that", async () => {
     api.listUserFiles.mockResolvedValue(
       page([
-        file({ attachmentId: "a-md", fileName: "brief.md", mime: "text/markdown", type: "text", conversationId: "conv-9" }),
+        file({ attachmentId: "a-md", fileName: "brief.md", mime: "text/markdown", type: "text", conversationId: "conv-9", title: null }),
         file({
           attachmentId: "a-nested",
           fileName: "plan.md",
           mime: "text/markdown",
           type: "text",
+          title: null,
           source_path: "/conversation/output/drafts/plan.md",
         }),
-        file({ attachmentId: "a-in", fileName: "notes.md", mime: "text/markdown", type: "text", kind: "input" }),
+        file({ attachmentId: "a-in", fileName: "notes.md", mime: "text/markdown", type: "text", kind: "input", title: null }),
       ]),
     );
     const { onOpenCanvas } = renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     // The name and the action both open it; the presented path wins over the name.
     fireEvent.click(screen.getByRole("button", { name: "brief.md" }));
@@ -289,7 +298,7 @@ describe("the Artifacts page", () => {
     );
     api.fetchAttachmentPreviewBlob.mockResolvedValue(new Blob(["# The brief"], { type: "text/markdown" }));
     renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     fireEvent.click(screen.getByRole("button", { name: "Preview brief.md" }));
 
@@ -311,7 +320,7 @@ describe("the Artifacts page", () => {
     );
     api.fetchAttachmentBlob.mockResolvedValue(new Blob(["png"], { type: "image/png" }));
     renderPage();
-    await screen.findAllByTestId("artifact-row");
+    await screen.findAllByTestId("artifact-item");
 
     fireEvent.click(screen.getByRole("button", { name: "Preview chart.png" }));
 
@@ -325,5 +334,79 @@ describe("the Artifacts page", () => {
     );
     expect(api.fetchAttachmentPreviewBlob).not.toHaveBeenCalled();
     await waitFor(() => expect(document.querySelector('img[src="blob:preview"]')).not.toBeNull());
+  });
+
+  it("shows the agent's summary and puts files under date headings", async () => {
+    const now = new Date();
+    const longAgo = new Date(now.getFullYear(), now.getMonth() - 3, 15, 12);
+    api.listUserFiles.mockResolvedValue(
+      page([
+        file({ createdAt: now.toISOString(), summary: "Revenue by region, with a forecast." }),
+        file({ attachmentId: "att-2", fileName: "old.pdf", title: null, createdAt: longAgo.toISOString() }),
+      ]),
+    );
+    renderPage();
+    await screen.findAllByTestId("artifact-item");
+
+    expect(screen.getByText("Revenue by region, with a forecast.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Today" })).toBeInTheDocument();
+    const month = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(longAgo);
+    expect(screen.getByRole("heading", { name: month })).toBeInTheDocument();
+  });
+
+  it("switches to the list layout, remembers it, and keeps every action", async () => {
+    api.listUserFiles.mockResolvedValue(page([file()]));
+    api.downloadAttachment.mockResolvedValue(undefined);
+    renderPage();
+    await screen.findAllByTestId("artifact-item");
+    expect(screen.getByRole("button", { name: "Grid view" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "List view" }));
+
+    expect(screen.getByRole("button", { name: "List view" })).toHaveAttribute("aria-pressed", "true");
+    expect(window.localStorage.getItem("mx_artifacts_view")).toBe("list");
+    expect(await screen.findAllByTestId("artifact-item")).toHaveLength(1);
+    // The layout changes, not what a file can do.
+    fireEvent.click(screen.getByRole("button", { name: "Download report.pdf" }));
+    await waitFor(() => expect(api.downloadAttachment).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Open conversation Quarterly numbers" })).toBeInTheDocument();
+  });
+
+  it("focuses the search on '/', and Escape clears it", async () => {
+    api.listUserFiles.mockResolvedValue(page([file()]));
+    renderPage();
+    await screen.findAllByTestId("artifact-item");
+    const search = screen.getByLabelText("Search files by name");
+
+    fireEvent.keyDown(document.body, { key: "/" });
+    expect(document.activeElement).toBe(search);
+
+    fireEvent.change(search, { target: { value: "report" } });
+    fireEvent.keyDown(search, { key: "Escape" });
+    expect(search).toHaveValue("");
+  });
+});
+
+describe("dates on the Artifacts page", () => {
+  const now = new Date(2026, 10, 23, 15, 0);
+
+  it("groups files the way the sidebar does", () => {
+    expect(dateGroupLabel(new Date(2026, 10, 23, 9).toISOString(), now)).toBe("Today");
+    expect(dateGroupLabel(new Date(2026, 10, 22, 23).toISOString(), now)).toBe("Yesterday");
+    expect(dateGroupLabel(new Date(2026, 10, 19).toISOString(), now)).toBe("Previous 7 days");
+    expect(dateGroupLabel(new Date(2026, 10, 2).toISOString(), now)).toBe("Previous 30 days");
+    expect(dateGroupLabel(new Date(2026, 6, 4).toISOString(), now)).toBe(
+      new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(new Date(2026, 6, 4)),
+    );
+    expect(dateGroupLabel("not a date", now)).toBe("Earlier");
+  });
+
+  it("says a file's age in words for a week, then its date", () => {
+    const at = now.getTime();
+    expect(formatFileAge(new Date(at - 20_000).toISOString(), at)).toBe("Just now");
+    expect(formatFileAge(new Date(at - 5 * 60_000).toISOString(), at)).toMatch(/5/);
+    expect(formatFileAge(new Date(at - 3 * 86_400_000).toISOString(), at)).toMatch(/3/);
+    expect(formatFileAge(new Date(at - 20 * 86_400_000).toISOString(), at)).toMatch(/2026/);
+    expect(formatFileAge("nope", at)).toBe("");
   });
 });

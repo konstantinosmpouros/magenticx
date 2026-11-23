@@ -87,12 +87,15 @@ src/
     search/        # SearchPanel + search handler
     voice/         # VoiceModeBody + useChatVoiceMode + useRealtimeVoiceSession + voice handler
     attachments/   # AttachmentPreviewPanel + attachment_preview_parts/* + attachment handler
-    artifacts/     # the Artifacts page (plan 44): ArtifactsPage, artifacts_parts/* (ArtifactRow,
-                   #   ArtifactsToolbar, ArtifactsStates), hooks (useUserFiles — keyset pages of
-                   #   GET /v1/attachments/files; useArtifactActions — preview/download through
-                   #   features/attachments' panel + ImageLightbox; useDebouncedValue,
-                   #   useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH, fileFilters); a generated
-                   #   `.md` row opens in the canvas of its conversation (`/c/:id?doc=`)
+    artifacts/     # the Artifacts page (plan 44): ArtifactsPage (heading, pinned toolbar, date-grouped
+                   #   files), artifacts_parts/* (ArtifactList — the virtualized grid / list;
+                   #   ArtifactCard + ArtifactCover, ArtifactRow, ArtifactActions (dock + ⋯ menu),
+                   #   ArtifactsToolbar, ArtifactsStates, FileStackArt), hooks (useUserFiles — keyset
+                   #   pages of GET /v1/attachments/files; useArtifactActions — preview/download through
+                   #   features/attachments' panel + ImageLightbox; useArtifactsView — Grid / List,
+                   #   remembered; useDebouncedValue, useLoadMoreSentinel), lib/ (routes: ARTIFACTS_PATH;
+                   #   fileFilters — filters, family accents, date groups, ages; fileView — one file's
+                   #   display fields); a generated `.md` opens in the canvas of its conversation (`/c/:id?doc=`)
     canvas/        # the document canvas (plan 44, Phases 4.1–4.6 + v2): CanvasDock (docks the
                    #   canvas beside the chat at ~55%, resizable; covers the chat full screen, on a
                    #   phone and below a 760px card), DocumentCanvas (the panel, lazy-loaded so
@@ -202,7 +205,7 @@ src/
                              #   useResizablePanel (a dockable right-hand panel's width: the agent
                              #   builder's inspector and the document canvas), useTouchMenuTrigger
                              #   (a finger opens a Radix menu on the tap's click: the chat sidebar,
-                             #   the effort picker, the Artifacts rows' phone menu)
+                             #   the effort picker, the Artifacts page's touch menu)
 
 ```
 

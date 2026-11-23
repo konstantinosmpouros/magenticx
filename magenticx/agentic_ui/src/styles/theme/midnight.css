@@ -49,6 +49,12 @@
     --file-word: 214 80% 52%;
     --file-pdf: 0 72% 55%;
     --file-mark-fg: 0 0% 100%;
+    /* The other file families (light.css explains them), lifted for navy. */
+    --file-sheet: 146 55% 52%;
+    --file-slides: 20 90% 62%;
+    --file-image: 326 80% 68%;
+    --file-text: 188 70% 58%;
+    --file-code: 252 88% 76%;
 
     /* The roles the light themes set (light.css), for anything reading them
        directly. */

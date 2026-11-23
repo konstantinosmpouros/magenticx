@@ -250,13 +250,25 @@ Files that don't match any known type are shown as an unsupported preview with a
 
 ### The Artifacts page (`/artifacts`, plan 44)
 
-`features/artifacts/` lists the user's files from `GET /v1/attachments/files/{userId}` (`listUserFiles()`, `UserFilesPageSchema` — field-whitelisted; a row without attachment / blob / conversation / message id is dropped). Kind chips (All / Inputs / Outputs), type chips and a debounced (250 ms) search all go to the bridge, so they cover every file, not just the loaded pages; "Load more" (and scrolling near the end) follows `nextCursor`. A row's actions:
+`features/artifacts/` lists the user's files from `GET /v1/attachments/files/{userId}` (`listUserFiles()`, `UserFilesPageSchema` — field-whitelisted; a row without attachment / blob / conversation / message id is dropped). Kind chips (All / Inputs / Outputs), type chips and a debounced (250 ms) search all go to the bridge, so they cover every file, not just the loaded pages; "Load more" (and scrolling near the end) follows `nextCursor`.
+
+**Layout.** A heading with its illustration (`FileStackArt`), then a toolbar pinned to the top of the page's scroll box (frosted, with an edge once stuck): the search (`/` focuses it, Escape clears it, then leaves it), the kind switch, the type chips (each with its family's colour) and a **Grid / List** switch, remembered on the device (`localStorage` `mx_artifacts_view`, `useArtifactsView`; grid by default). Files come newest first under date headings — Today, Yesterday, Previous 7 days, Previous 30 days, then one per month (`dateGroupLabel`).
+
+- **Grid** (`ArtifactCard`): a cover drawn for the file's family (`ArtifactCover` — a page of prose, a spreadsheet grid, a slide, a framed picture, indented code; no request for the file itself) with the extension and size, then the title the agent gave the file (its `title`, else the file name, with the name under it), the agent's `summary`, and a footer with Input / Output, the conversation (a link) and the file's age (`formatFileAge`: "3 hours ago", the date once a week old). One to three columns by the page's width.
+- **List** (`ArtifactRow`): the dense alternative — the family's coloured tile, the title, Input / Output, extension, conversation, age and size.
+
+The file families' colours are theme tokens (`--file-word`, `--file-pdf`, `--file-sheet`, `--file-slides`, `--file-image`, `--file-text`, `--file-code` in `styles/theme/light.css` and `midnight.css`; Tailwind `file-*`), never raw values; `fileAccent()` maps a family to its classes.
+
+**Performance.** Both layouts are virtualized (`useVirtualList`, plan 45): an entry is a date heading, a list row or a whole row of cards (re-chunked when the width changes the column count), measured once rendered, so only the entries near the viewport are in the DOM however many pages load. Cards and rows are memoized and get stable handlers; their hover lift, cover tilt and glow are CSS transform / opacity, and the light that follows the mouse is two CSS variables written to the element (no React render). The first twelve files rise in, staggered; everything else appears at once, and reduced motion turns all of it off.
+
+A file's actions:
 
 - **Preview** reuses the chat's surfaces, pointed at the file's **own** conversation: non-images open `AttachmentPreviewPanel` (its target's `message` is just `{ id }`); images are fetched through `/download` (the inline `/preview` route refuses images) into an object URL typed with the image's MIME and shown in `ImageLightbox` — an `<img>`, which never runs script.
-- **Download** — `downloadAttachment()` with the row's ids.
-- **Open conversation** — navigates to `/c/:conversationId`.
+- **Open** — the whole card or row (the title's hit area is stretched over it): a generated `.md` opens in its conversation's canvas (`/c/:id?doc=`), anything else in the preview.
+- **Download** — `downloadAttachment()` with the file's ids.
+- **Open conversation** — the conversation link on the card or row; navigates to `/c/:conversationId`.
 
-On a phone (under `sm`) the row's four icon buttons fold into one ⋯ menu with the same actions (modal, opened on the tap's click — `useTouchMenuTrigger`), so the file name keeps the row's width; the meta line puts the conversation on its own line under the Output / type / date / size line.
+With a pointer, Open in canvas / Preview / Download sit in a dock (`ArtifactActionDock`) — floating on a card's cover, appearing on its hover or keyboard focus; at the end of a row. On a touch screen of any size (`@media (hover: none)`) the dock gives way to one ⋯ menu with every action, Open conversation included (`ArtifactActionMenu`; modal, opened on the tap's click — `useTouchMenuTrigger`). In the list on a phone the conversation takes a line of its own under the Output / type / age / size line.
 
 ---
 
@@ -423,7 +435,7 @@ sequenceDiagram
 | Attachments router | [magenticx/dialogue_bridge/router/conversations/attachments.py](../../magenticx/dialogue_bridge/router/conversations/attachments.py) | download, preview, preview-token, public, images, files, `preview.pdf` endpoints |
 | Office PDF previews (plan 44 4.5) | [magenticx/dialogue_bridge/engine/documents/export.py](../../magenticx/dialogue_bridge/engine/documents/export.py), [magenticx/agents/router/document_export.py](../../magenticx/agents/router/document_export.py), [magenticx/agents/harness/conversions/](../../magenticx/agents/harness/conversions/), migration [0051](../../magenticx/dialogue_bridge/core/database/migrations/versions/0051_attachment_pdf_previews.py) | `office_pdf_preview()`, `_cached_preview()`, `office_extension()`; `office_preview_job()`; `AttachmentPdfPreviewTable` |
 | Artifacts listing (bridge) | [magenticx/dialogue_bridge/engine/conversations/user_files.py](../../magenticx/dialogue_bridge/engine/conversations/user_files.py) | `list_user_files()`, `classify_file_type()` + its SQL twin `_type_filter()`, keyset cursor |
-| Artifacts page (frontend) | [magenticx/agentic_ui/src/features/artifacts/](../../magenticx/agentic_ui/src/features/artifacts/) | `ArtifactsPage`, `useUserFiles`, `useArtifactActions`, `lib/fileFilters.ts`, `lib/routes.ts` |
+| Artifacts page (frontend) | [magenticx/agentic_ui/src/features/artifacts/](../../magenticx/agentic_ui/src/features/artifacts/) | `ArtifactsPage`, `ArtifactList` / `ArtifactCard` / `ArtifactCover` / `ArtifactRow`, `useUserFiles`, `useArtifactActions`, `useArtifactsView`, `lib/fileFilters.ts`, `lib/fileView.ts`, `lib/routes.ts` |
 | Upload persistence | [magenticx/dialogue_bridge/engine/conversations/conversations.py](../../magenticx/dialogue_bridge/engine/conversations/conversations.py) | `init_attachments()`, `clone_branch_to_conversation()` |
 | Stable upload names | [magenticx/dialogue_bridge/engine/conversations/workspace_names.py](../../magenticx/dialogue_bridge/engine/conversations/workspace_names.py) | `WorkspaceNames.assign()` (used by `init_attachments()` and the share import), migration `0042_conversation_files` |
 | Uploads for the agent (bridge, internal) | [magenticx/dialogue_bridge/router/internal/conversations.py](../../magenticx/dialogue_bridge/router/internal/conversations.py) | `GET /v1/internal/conversations/{cid}/input-files[/{attachment_id}]` over `engine/conversations/inputs.py` |

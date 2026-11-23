@@ -10,6 +10,7 @@
 - Check Postgres `LISTEN` / `NOTIFY` for live updates between services.
 - Check `pg_cron` for scheduled jobs.
 - Add a header button that opens a conversation overview panel: the files the agent produced (with previews), the files the user attached, and what the run used (web searches with their sources, memory reads, other tools), grouped and counted.
+- Review the WebSocket layer (the run observers and anything else on WS) and see whether SSE plus webhooks could replace it: what it would take, what we would gain or lose, and whether it is worth it.
 
 ## New Features
 
