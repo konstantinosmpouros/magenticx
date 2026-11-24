@@ -56,8 +56,8 @@ def stream_read_socket_timeout() -> float:
 
     redis-py (8.x) gives every client ``socket_timeout=5`` by default, and the
     event log blocks for ``REDIS_STREAM_READ_BLOCK_MS`` (30 s): every idle read
-    then died with a timeout after 5 s and dropped the run's WebSocket
-    (``ws_stream_failed`` every ~5 s). The reading socket has to outlast the
+    then died with a timeout after 5 s and dropped the run's live stream
+    (every ~5 s). The reading socket has to outlast the
     block time, with a margin for the server's reply.
     """
     return settings.redis.read_block_ms / 1000 + STREAM_READ_TIMEOUT_MARGIN_SECONDS

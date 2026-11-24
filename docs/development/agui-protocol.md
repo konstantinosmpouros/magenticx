@@ -1,6 +1,6 @@
 # AG-UI Protocol
 
-The AG-UI protocol is the event contract that flows between the agents service and every consumer of an inference stream. Agents produce a stream of typed Server-Sent Events; the dialogue bridge keeps them as a seq-stamped, delta-coalesced **event log** (`raw_events`) and forwards them in per-chunk `events` frames; the client observes the run over WebSocket — one snapshot frame on subscribe (the full log so far), then deltas — and folds the raw events into the rendered timeline with a single pure reducer (`lib/timeline.ts`). The protocol has a standard layer (run lifecycle, thinking, text, tool calls) and a custom-event layer (plan snapshots, sub-agent delegation, HITL interrupts) layered on top of the `CUSTOM` event type.
+The AG-UI protocol is the event contract that flows between the agents service and every consumer of an inference stream. Agents produce a stream of typed Server-Sent Events; the dialogue bridge keeps them as a seq-stamped, delta-coalesced **event log** (`raw_events`) and forwards them in per-chunk `events` frames; the client observes the run over Server-Sent Events — one snapshot frame on subscribe (the full log so far), then deltas — and folds the raw events into the rendered timeline with a single pure reducer (`lib/timeline.ts`). The protocol has a standard layer (run lifecycle, thinking, text, tool calls) and a custom-event layer (plan snapshots, sub-agent delegation, HITL interrupts) layered on top of the `CUSTOM` event type.
 
 ---
 
@@ -15,7 +15,7 @@ flowchart LR
 
     Agent -->|"raw LangGraph chunks<br/>(messages + updates modes)"| Norm
     Norm -->|"AG-UI SSE frames<br/>(text/event-stream)"| Bridge
-    Bridge -->|"WS frames via Redis Stream<br/>(snapshot → events deltas → terminal)"| Client
+    Bridge -->|"SSE frames via Redis Stream<br/>(snapshot → events deltas → terminal)"| Client
 ```
 
 The normalizer and emitter live inside the agents service process. The bridge interprets each AG-UI frame just enough to keep the log and its flat aggregates (`apply_event()`): it seq-stamps every event, appends it to `raw_events` with delta coalescing, tracks `pending_interrupts`, and maintains `content`/`thoughts`/`plan`/`subagents` for previews, search, voice and export. **Timeline semantics live exclusively in the client reducer** — the bridge never ships a rendered shape, so renderer changes never require a bridge deploy.
@@ -32,8 +32,8 @@ sequenceDiagram
     participant IRM as InferenceRunRuntime
     participant UI as Browser
 
-    UI->>Bridge: WS subscribe {"type":"subscribe","since":null}
-    Bridge-->>UI: {"type":"snapshot","payload":{run incl. rawEvents so far}}
+    UI->>Bridge: GET …/runs/{user_id}/{run_id}/events (SSE, no cursor)
+    Bridge-->>UI: event: snapshot {run incl. rawEvents so far}
 
     Graph->>Norm: updates chunk {ai_msg: tool_calls}
     Norm->>Bridge: ToolCallStartEvent SSE
@@ -69,7 +69,7 @@ All events are SSE frames with a `data:` prefix containing a JSON object. Every 
 | `RUN_FINISHED` | `thread_id`, `run_id` | After all output — run is done |
 | `THINKING_START` | — | Agent enters a reasoning/thinking phase (a deep agent: before its first thought since the last reply; tool calls may fall inside it) |
 | `THINKING_TEXT_MESSAGE_START` | — | Opens one thought |
-| `THINKING_TEXT_MESSAGE_CONTENT` | `delta: str` | One discrete thought step: a step a LangGraph agent narrates, or one part of a reasoning model's summary (see **Reasoning summaries**). Always the whole thought, between its `THINKING_TEXT_MESSAGE_START` and `_END` |
+| `THINKING_TEXT_MESSAGE_CONTENT` | `delta: str` | Text of the open thought: a step a LangGraph agent narrates (sent whole), or a streamed piece of one part of a reasoning model's summary (see **Reasoning summaries**). The pieces between one `THINKING_TEXT_MESSAGE_START` and its `_END` are one thought: the UI grows one step from them and the bridge stores them as one event |
 | `THINKING_TEXT_MESSAGE_END` | — | Closes the thought |
 | `THINKING_END` | — | Reasoning phase complete: sent right before the reply's `TEXT_MESSAGE_START` (a phase that no reply follows — a HITL pause, a run ending on tool calls — stays open) |
 | `TEXT_MESSAGE_START` | `message_id: str` | Agent begins producing a text response — once **per model call** that has text |
@@ -117,6 +117,7 @@ All custom events share a wrapper shape:
 | `workflow.node_output` | `{output, branch, durationMs, error}` | **Workflow runs only**, closes a node's own events: its output and taken branch, or `error: {code, message}` with `output: null` when it failed |
 | `bridge.approval_decision` | `{decision, comment?}` | **Bridge-synthesized** into a workflow run's event log when a `waiting` run is resumed; carries the paused node's `workflow` block so the timeline places it on that node |
 | `TASK_LAUNCHED` | `TaskLaunchedEvent` `{task_id, name, description}` | **Async sub-agents (plan 41).** A run started a background task (`start_async_task` returned). **Agents side:** the normalizer emits it as a `CUSTOM` event (`name` + `value`) when the launch's ToolMessage arrives and its text carries `task_id: <id>`; `name` is the call's `subagent_type`, `description` its `description` arg (a `/resume` stream learns a gated launch's args through `seed_pending_tasks`). Once per call id, across the run's streams (`_RunMemory.launched`). No tool card opens for a launch; a launch that failed (error result, or no task id in it) is shown instead as an ordinary `start_async_task` tool call ending in error. The UI folds it into a `task_ref` block ("Started task") at the log position, linked to the task's node in the conversation's task tree — the block carries no status of its own. The UI also accepts it as a bare `{"type": "TASK_LAUNCHED", task_id, …}` event; deduplicated by `task_id` (a resume replays the launch) |
+| `USER_INTERJECTION` | `UserInterjectionEvent` `{text, queued_at?}` | **Steering (SSE plan phase 5).** A message the user sent while the run worked, read at its next step. **Agents side:** `SteeringMiddleware` (`harness/middlewares/steering.py`, main agent of an interactive run only) adds it before a model call as a `HumanMessage` with `additional_kwargs.lc_source == "user_interjection"` (an `updates` chunk of its `before_model` node); the normalizer emits this `CUSTOM` event for it and never reads it as a task notification. Folded into a `user_interjection` block (`UserInterjectionBlockView`: the user's bubble, smaller, inside the answer, labelled "You, while it worked"), persisted with the run's `raw_events`. Same dual shape as `TASK_LAUNCHED`; top-level only |
 | `TASK_SETTLED_INLINE` | `TaskSettledInlineEvent` `{task_id, name, status}` | **Async sub-agents (plan 41).** A task's result was pulled into this busy run instead of waking the orchestrator with a run of its own. **Agents side:** deepagents' `AsyncSubAgentMiddleware` adds a notification message to the running agent's state (an `updates` chunk of its `before_agent` / `before_model` / `after_model` node); the normalizer reads its `TaskEvent` from `additional_kwargs.lc_data` when `lc_source == "async_subagent"` (else the deprecated `deepagents_notification` key) and emits a `CUSTOM` event: `name` = `agent_name`, `status` mapped onto the settled `TaskStatus` (`success`, `error`, `cancelled`; `timeout` → `error`). A `waiting` notification is not announced, nor is a `before_agent` rewrite of the run's own input (a message already in state, with an id). Once per `(task_id, run_id, status)` per stream. The notification itself is **never** rendered as user text (a non-AI message produces no `TEXT_MESSAGE_*`). Folded into a `task_settled` block: the inline "✓ researcher finished" marker, persisted with the run's `raw_events`. Same dual shape and dedupe as `TASK_LAUNCHED` |
 | `bridge.events_truncated` | `{maxEvents}` | **Bridge-synthesized**, once, when a workflow run hits `WORKFLOW_RUN_MAX_EVENTS`; afterwards only `RUN_*` and `HITL_INTERRUPT` are stored |
 
@@ -276,10 +277,10 @@ flowchart TD
     Z -->|Yes| Y["_on_summary_call()<br/>(compaction start + usage only)"]
     Z -->|No| B["message_kind(msg)"]
     B -->|"tool"| C["_on_tool_result()"]
-    B -->|"ai"| R["reasoning_parts() → hold each part<br/>(a new part sends the one before)"]
+    B -->|"ai"| R["reasoning_parts() → stream each part<br/>(START on its first text, CONTENT per piece;<br/>a new part ENDs the one before)"]
     R --> D["message_text()"]
     D -->|empty| E["done"]
-    D -->|non-empty| F["send the held thought<br/>(THINKING_START once per phase,<br/>then THINKING_TEXT_MESSAGE_START/CONTENT/END)"]
+    D -->|non-empty| F["END the open thought<br/>(THINKING_START was sent once per phase)"]
     F --> G{"text message open<br/>for this model call?"}
     G -->|No| H["THINKING_END if a phase is open<br/>emit TEXT_MESSAGE_START"]
     G -->|Yes| I["skip"]
@@ -289,7 +290,7 @@ flowchart TD
 
 **Reasoning summaries.** OpenAI never returns a reasoning model's reasoning (through the Responses API it is an encrypted item, sent back unread next turn), only — when asked — its own summary of it, in parts (`**Title**
 
-body`). Deep agents ask for it on every reasoning model in the tree (`harness/models/reasoning_summary.py`: `reasoning={"summary": REASONING_SUMMARY}` through deepagents' `ProviderProfile`; which models reason: their `reasoning` in `ALLOWED_AGENT_MODELS`, else langchain-openai's table). The normalizer turns each part into **one** `THINKING_TEXT_MESSAGE_CONTENT` (`reasoning_parts()`): a streamed piece is held until its part is complete — the next part, the first text delta, or the model call's final message in `updates` sends it — because the bridge never coalesces thoughts, so a thought per token would render as a thought per token. The final message then sends nothing again (`streamed` flag); on an updates-only stream it sends every part, before the message's text and tool calls. The UI needs nothing new: a thought is a markdown step in the same CoT as the tool calls, in order (a background task's, in its drill-down). Encrypted reasoning alone yields nothing.
+body`). Deep agents ask for it on every reasoning model in the tree (`harness/models/reasoning_summary.py`: `reasoning={"summary": REASONING_SUMMARY}` through deepagents' `ProviderProfile`; which models reason: their `reasoning` in `ALLOWED_AGENT_MODELS`, else langchain-openai's table). The normalizer streams each part as **one** thought (`reasoning_parts()`): `THINKING_TEXT_MESSAGE_START` when the part's first visible text arrives, a `THINKING_TEXT_MESSAGE_CONTENT` per streamed piece at once, and `_END` when the next part, the first text delta or the model call's final message in `updates` arrives. (It used to hold each part until it was complete, so a thought appeared as one block after a pause; the bridge now coalesces a thought's pieces into one stored event, and the UI grows one step from them — `fold.openThought`.) The final message then sends nothing again (`streamed` flag); on an updates-only stream it sends every part, before the message's text and tool calls. A thought is a markdown step in the same CoT as the tool calls, in order (a background task's, in its drill-down), filling in as it streams. Encrypted reasoning alone yields nothing.
 
 **Every provider.** `message_text()` and `reasoning_parts()` read a message through LangChain's standard `content_blocks` (translated per `response_metadata["model_provider"]`, which every integration sets), falling back to the raw content list when a translator raises. Reply text is only `text` blocks — never reasoning or tool input; a bare string in a content list, as Gemini sends, is text. Reasoning is OpenAI summary parts, Anthropic and Bedrock thinking, Gemini thoughts and LangChain v1 `reasoning` blocks, plus `additional_kwargs["reasoning_content"]` (DeepSeek, xAI, Groq, Ollama), which the OpenAI translator skips. Tool calls come from `msg.tool_calls`, which every integration fills (`tool_calls()`).
 
@@ -323,7 +324,7 @@ flowchart TD
 | State | Holds |
 | --- | --- |
 | `_reply` (`_Reply`) | `started` (`TEXT_MESSAGE_START` sent for this model call), `streamed` (chunks came over `messages`) |
-| `_thought` (`_Thought`) | the summary part held (`part`, `text`), `streamed` (this model call's parts came over `messages`), `open` (`THINKING_START` sent, `THINKING_END` not yet) |
+| `_thought` (`_Thought`) | the summary part being streamed (`part`, `sent` = its START is out and its END not yet), `streamed` (this model call's parts came over `messages`), `open` (`THINKING_START` sent, `THINKING_END` not yet) |
 
 `THINKING_START` goes out before the first thought since the last reply; the phase spans every thought and tool call until the next reply, whose `TEXT_MESSAGE_START` is preceded by `THINKING_END`. A phase no reply follows (a HITL pause, a run that ends on tool calls) is left open — the UI closes it with the run.
 
@@ -496,7 +497,7 @@ sequenceDiagram
     loop For each resume chunk
         Task->>Task: runtime.apply_event(event)
         Task->>Redis: XADD inference:run:{id}:events
-        Redis-->>UI: WS frame
+        Redis-->>UI: SSE frame
     end
     Note over Task: Run can pause again; the loop in _run re-enters this flow.
 
@@ -528,11 +529,11 @@ The UI uses `useInferenceRuns` to manage the full lifecycle: starting runs, obse
 
 ### Run Observation
 
-`connectInferenceWebSocket(userId, runId, callback, signal)` opens a WebSocket to `/v1/inference/runs/{userId}/{runId}/ws` and sends a `{"type":"subscribe","since":<lastSeenSeq>|null}` frame on open. Every server frame is normalized into an `InferenceRunEvent` shape and passed to `applyRunEvent()`, which merges it via `mergeRunEvent()`:
+`connectInferenceStream(userId, runId, callback, signal)` (`shared/lib/api/inference-stream.ts`) reads `GET /v1/inference/runs/{userId}/{runId}/events?since=<lastSeenSeq>` as Server-Sent Events (`fetch` + `readSseStream`). Every server frame is normalized into an `InferenceRunEvent` shape and passed to `applyRunEvent()`, which merges it via `mergeRunEvent()`:
 
 ```mermaid
 flowchart TD
-    A["WS frame arrives"] --> A2{"frame.type"}
+    A["SSE frame arrives"] --> A2{"frame.type"}
     A2 -->|"event / snapshot / terminal"| A3["Map to InferenceRunEvent"]
     A3 --> B{"event.type"}
     B -->|"snapshot"| C["Full state — foldTimeline(run.rawEvents)<br/>(live snapshot or terminal/DB path)"]
@@ -545,12 +546,12 @@ flowchart TD
     G & H --> I["Update conversation list flags<br/>(activeRunId, isStreaming)"]
     I --> J["Patch message into conversation detail<br/>(snapshot/terminal frames only)"]
     J --> K["If run for current conversation:<br/>update ThinkingState"]
-    K --> L["If not active:<br/>abort controller → close WS"]
+    K --> L["If not active:<br/>abort controller → close the stream"]
 ```
 
-Per-event `seq` numbers (stamped by the bridge, distinct from the Redis entry-id `seq` on the WS envelope) make the fold idempotent: events already folded — e.g. the overlap between the live snapshot and the first deltas — are skipped via `timeline.lastSeq`. The `ThinkingState` update derives its flat thought strings from the folded timeline (`timelineThoughtStrings`), falling back to `message.thinking` on terminal frames.
+Per-event `seq` numbers (stamped by the bridge, distinct from the Redis entry-id `seq` in the SSE `id:` line) make the fold idempotent: events already folded — e.g. the overlap between the live snapshot and the first deltas — are skipped via `timeline.lastSeq`. The `ThinkingState` update derives its flat thought strings from the folded timeline (`timelineThoughtStrings`), falling back to `message.thinking` on terminal frames.
 
-Every successful frame updates `lastSeenInferenceSeq[runId]` with the server-assigned `seq` (Redis stream ID). On any non-terminal close, the client reconnects with exponential backoff `[250, 500, 1000, 2000, 5000]` ms, resending `subscribe` with the latest cursor — missed events replay from Redis (1 h post-terminal TTL). Close codes `4401` / `4403` / `4404` are surfaced as `PermanentInferenceWebSocketError` without retry; the toast surface only fires after 5 sustained transient failures.
+Every successful frame updates `lastSeenInferenceSeq[runId]` with the server-assigned `seq` (Redis stream ID). On any drop before the terminal frame (`0`/`429`/`5xx`, or the stream ending early), the client reconnects with backoff `[250, 500, 1000, 2000, 5000, 10000, 15000, 30000]` ms, held at 30 s, with `?since=` the latest cursor — missed events replay from Redis (1 h post-terminal TTL). Any frame resets the backoff, and an offline tab waits for `online`. `400` / `401` (after the silent refresh in `requestRaw`) / `403` / `404` are final and raised as `PermanentInferenceStreamError` without retry.
 
 ### Run Lifecycle
 
@@ -564,16 +565,17 @@ sequenceDiagram
     UI->>Bridge: POST /v1/inference/runs/{user_id}/start
     Bridge-->>UI: InferenceStartResponse {detail, summary, run, message}
     UI->>UI: applyRunEvent({type:"snapshot", ...})
-    UI->>Bridge: WS /v1/inference/runs/{user_id}/{run_id}/ws
-    UI-->>Bridge: {"type":"subscribe","since":null}
+    UI->>Bridge: GET /v1/inference/runs/{user_id}/{run_id}/events (SSE)
     Bridge->>Redis: XREAD BLOCK STREAMS inference:run:{id}:events 0
     Redis-->>Bridge: (seq, payload)
-    Bridge-->>UI: {"type":"event","seq":"...","payload":...}
-    Bridge-->>UI: {"type":"terminal","payload":<final state>} → close 1000
+    Bridge-->>UI: event: event (id = seq)
+    Bridge-->>UI: event: terminal (final state), end of response
     UI->>UI: abort controller — stop observing
 ```
 
-`beginRun()` calls `startInference()`, applies the returned conversation detail/summary plus the run placeholder state, and immediately begins observing via `observeRun()` → `connectInferenceWebSocket()`. The start endpoint is backend-owned: normal send, edit, retry, new conversation, and shared conversation continuation all persist their user-side action, create the AI placeholder, and return hydrated state from one request. The abort controller stored in `controllersRef` is used both to close the WebSocket on unmount and to signal that a run has ended (triggered by `applyRunEvent` when the terminal event arrives).
+The frames arrive as `event: snapshot` / `event: event` (with `id: <seq>`) / `event: terminal`, with `: ping` heartbeats in between; a reconnect passes `?since=` — see `docs/flows/inference-streaming.md` § Phase 4.
+
+`beginRun()` calls `startInference()`, applies the returned conversation detail/summary plus the run placeholder state, and immediately begins observing via `observeRun()` → `connectInferenceStream()`. The start endpoint is backend-owned: normal send, edit, retry, new conversation, and shared conversation continuation all persist their user-side action, create the AI placeholder, and return hydrated state from one request. The abort controller stored in `controllersRef` is used both to close the stream on unmount and to signal that a run has ended (triggered by `applyRunEvent` when the terminal event arrives).
 
 **Page load hydration** — on mount, `useEffect` calls `getActiveInferenceRuns(userId)`. For each active run returned, `observeRunId()` is called so the UI reconnects to any stream that was already running before the page loaded.
 
@@ -623,23 +625,25 @@ Under plan 41 every sub-agent is a background **task** that outlives the run tha
 ```mermaid
 flowchart LR
     REST["GET /v1/conversations/{user}/{conv}/tasks<br/>(on open + every channel reconnect)"] --> TREE
-    CH["WS /v1/conversations/{user}/{conv}/ws<br/>task · run_started · queue"] --> TREE["taskTree.ts<br/>flat by task_id"]
+    CH["SSE …/conversations/{user}/{conv}/events<br/>task · run_started · queue"] --> TREE["taskTree.ts<br/>flat by task_id"]
     CH -->|run_started| RUNS["useInferenceRuns.attachRun<br/>(same as a run the client started)"]
-    CH -->|queue| CHIP["composer queued chip"]
-    TS["WS /v1/tasks/{user}/{task}/ws<br/>(open drill-down + waiting tasks)"] -->|"AG-UI events"| NODE["node timeline<br/>(reduceTimelineEvents)"]
+    CH -->|queue| CHIP["composer queued messages"]
+    TS["SSE …/tasks/{user}/{task}/events<br/>(open drill-down + waiting tasks)"] -->|"AG-UI events"| NODE["node timeline<br/>(reduceTimelineEvents)"]
     NODE --> TREE
     TREE --> CARDS["SubagentTreeCard via taskTreeAdapter<br/>+ TaskSidePanel drill-down"]
 ```
 
-**The conversation channel** (`connectConversationChannel`, subscribe frame `{"type":"subscribe"}`):
+Both streams are Server-Sent Events, followed through `shared/lib/api/reconnecting-stream.ts` (`runReconnectingStream`) with the same reconnect rules as the run stream; each event's `data` is the frame below, its `id` the frame's `seq`.
+
+**The conversation channel** (`connectConversationChannel`; no cursor):
 
 | Frame | Client effect |
 | --- | --- |
 | `{"type":"task","event":"TASK_STARTED"\|"TASK_STATUS"\|"TASK_SETTLED","task":TaskOut}` | `applyTaskFrame` — upsert by `task_id` |
-| `{"type":"run_started","run":RunOut,"from_queue"?:bool}` | `attachRun(run)`: snapshot + run socket, exactly like a run the client started. When the run's parent row (the wake-up's notice row, or the queued message) is not in the open conversation yet, the conversation detail is re-read. `from_queue: true` (UI-side extension, optional) clears the queued chip |
-| `{"type":"queue","queued_message":{…}\|null}` | Shows / clears the composer's queued chip |
+| `{"type":"run_started","run":RunOut,"from_queue"?:bool}` | `attachRun(run)`: snapshot + run stream, exactly like a run the client started. When the run's parent row (the wake-up's notice row, or the queued message) is not in the open conversation yet, the conversation detail is re-read. `from_queue: true` (UI-side extension, optional) marks a run started from the queue; it does not clear the queue display — the `queue` frame published just before it says what is left |
+| `{"type":"queue","queued_messages":[…]}` | Replaces the composer's queued messages with this list (oldest first, `[]` when empty) |
 
-Frames sent while the socket was down are not replayed, so every (re)connect re-reads `GET …/tasks` (throttled to one read per 2 s).
+Frames sent while the stream was down are not replayed, so every (re)connect re-reads `GET …/tasks` (throttled to one read per 2 s).
 
 **Ordering rules of the tree** (`features/inference/taskTree.ts`), so frames may land in any order:
 
@@ -649,13 +653,13 @@ Frames sent while the socket was down are not replayed, so every (re)connect re-
 - usage only grows;
 - Stop is optimistic (`stopping` until the task settles); for `STOP_GRACE_MS` (10 s) after a user stop, a non-settled frame for that cancelled task is treated as emitted before the cancel and ignored; after it, a settled task may reopen (plan §3.4).
 
-**The task socket** (`connectTaskSocket`, subscribe `{"type":"subscribe","since":<last stream id>|null}`) behaves like the run socket: `snapshot` (optionally carrying `task` and the coalesced `events` so far) re-folds the node, `{"type":"event","seq","event"}` folds one AG-UI event with the **same reducer as a top-level run** (a task's stream is exactly what the normalizer emits for one; its own children appear as `task_ref` blocks), `terminal` closes the node's timeline. The UI opens one for the task in the drill-down and for every task in `waiting` (its approval card needs the interrupt from its events).
+**The task stream** (`connectTaskStream`; `?since=<last stream id>` on reconnect) behaves like the run stream: `snapshot` (optionally carrying `task` and the coalesced `events` so far) re-folds the node, `{"type":"event","seq","event"}` folds one AG-UI event with the **same reducer as a top-level run** (a task's stream is exactly what the normalizer emits for one; its own children appear as `task_ref` blocks), `terminal` closes the node's timeline. The UI opens one for the task in the drill-down and for every task in `waiting` (its approval card needs the interrupt from its events).
 
 **What the timeline no longer does.** `finalizeTimeline` ends only the blocking `task` sub-agent blocks of the run (which only answers recorded before plan 41's cut-over contain); it never touches `task_ref` blocks or a sub-agent block flagged `asyncTask` (the adapter's cards). `subagentRunStatus` returns an `asyncTask` card's own status, so a task still running after its run ended is never shown as cancelled.
 
 **Rendering.** A `task_ref` block renders the task's live card (status badge for `pending`/`running`/`waiting_children`/`waiting`/`success`/`error`/`cancelled`, plus a client-only `stopping`; elapsed time, model, usage) with its subtree nested inside; a card opens `TaskSidePanel` (in `RunSidePanels.tsx`) on that task at any depth; every active node — and the panel header — has Stop (`POST /v1/tasks/{user}/{task}/cancel`). The tree stays on the AI message whose id is the tasks' `spawned_by_message_id`. A message with `kind == "task_notification"` (a wake-up's input row) renders as a conversation marker from `task_notice` — the headline "Researcher finished · 2m 14s" (opens the task) above a wavy rule labelled "✓ Finished" / "Failed" / "Stopped", the same shape as the compaction marker (`TaskMarker` in `ConversationMarkers.tsx`, which holds every conversation marker; a `task_settled` block draws the same marker) — never as a user bubble; `transformMessage` whitelists `kind` and `task_notice`. A waiting task's approval is a `HitlInterruptCard` in its drill-down, resumed through `POST /v1/tasks/{user}/{task}/resume` with the run-resume body; a line above the composer points to it.
 
-**Composer queue.** While a run streams in a persisted conversation, a send goes out with `queue_if_busy: true` (no optimistic bubble). A 202 `{queued: true, queued_message}` shows the queued chip; its × calls `DELETE /v1/conversations/{user}/{conv}/queued-message` and puts the text back into an empty composer; a second send replaces the held message. The chip clears on `queue: null` or on the `run_started` of the queued send.
+**Composer queue.** While a run streams in a persisted conversation, a send goes out with `queue_if_busy: true` (no optimistic bubble). A 202 `{queued: true, queued_messages: [...]}` carries the whole queue, the new message last; a later send is appended, up to `INFERENCE_QUEUE_MAX_MESSAGES` (default 5) — one more is a 409 ("You can queue up to N messages while an answer is running.") and its text stays in the composer. `useBackgroundTasks` holds the list (`queuedMessages: QueuedMessage[]`, `holdQueuedMessages`, `cancelQueuedMessage(messageId)`); every `queue` frame replaces it. `ComposerTaskNotices` shows one queued message as one compact line and several as a small stack: a header (clock, "Queued · N", the hint, Send now) and one numbered line per message. Each message has its own ×, which calls `DELETE /v1/conversations/{user}/{conv}/queued-messages/{message_id}` (`deleteQueuedMessage`) and puts its text back into an empty composer. A `run_started` with `from_queue` does not clear the display by itself; the `queue` frame published just before it says what is left. The hint says when the messages go in: "Read at the next step, or sent after this answer" ("…sent together after this answer" for several) when the first is plain text (steering: the run claims the leading plain messages, each appears in the answer as its own `user_interjection` block, and the `queue` frame drops them), "Sent when this answer ends" when the first is a slash command. While the answer runs, the queue also has **Send now** (`ComposerTaskNotices.tsx`, `onSendNow`): it is the normal stop (`handleStopStreaming`), and the run-end hook sends the queue's next batch whenever a run ends, a cancelled one included — the leading plain messages for one agent, stacked on that run's leaf and answered once.
 
 ---
 

@@ -1,10 +1,10 @@
 # Dialogue Bridge — Complete Reference (Replication Guide, Inference-Focused)
 
-This is an exhaustive, replicate-from-scratch reference for the **`dialogue_bridge`** service (`magenticx/dialogue_bridge/`) — the backend-for-frontend (BFF) of mAgenticX and the only service the browser talks to. It reflects the **current shipped code**. The bridge's headline responsibility, and the deepest section here (§10–§12), is **how it handles inference**: detached server-owned runs, a per-run Redis-Streams event log, and WebSocket observers with cursor replay.
+This is an exhaustive, replicate-from-scratch reference for the **`dialogue_bridge`** service (`magenticx/dialogue_bridge/`) — the backend-for-frontend (BFF) of mAgenticX and the only service the browser talks to. It reflects the **current shipped code**. The bridge's headline responsibility, and the deepest section here (§10–§12), is **how it handles inference**: detached server-owned runs, a per-run Redis-Streams event log, and Server-Sent-Events observers with cursor replay.
 
 **Stack:** Python 3.12 · FastAPI · uvicorn (port **8002**) · SQLAlchemy async + asyncpg · Pydantic v2 · Redis (event log + skills cache) · Alembic · pgvector · runs as non-root `1000:1000`.
 
-> **README drift:** the checked-in `README.md` predates two refactors. Ignore it where it (a) references old `core/` paths (`core/database.py`, `core/auth_session.py`, `core/proxy.py`, `core/rate_limit.py`) — the real layout is `core/database/{engine,models}.py`, `core/auth/{session,tokens,signing,providers,oidc,parked}.py`, `core/security/{internal_trust,rate_limit,user_rate_limit,tls}.py`; (b) describes a `sessions` table and `SESSION_MAX_PER_USER` — that table was **dropped** (migration `0008`), auth is now stateless JWTs signed by an OCI KMS HSM key, with Microsoft Entra as the only sign-in (plan 29; Vault userpass + Transit before); (c) implies SSE is the primary observer transport — it's **WebSocket** now (SSE is legacy/deprecated).
+> **README drift:** the checked-in `README.md` predates two refactors. Ignore it where it (a) references old `core/` paths (`core/database.py`, `core/auth_session.py`, `core/proxy.py`, `core/rate_limit.py`) — the real layout is `core/database/{engine,models}.py`, `core/auth/{session,tokens,signing,providers,oidc,parked}.py`, `core/security/{internal_trust,rate_limit,user_rate_limit,tls}.py`; (b) describes a `sessions` table and `SESSION_MAX_PER_USER` — that table was **dropped** (migration `0008`), auth is now stateless JWTs signed by an OCI KMS HSM key, with Microsoft Entra as the only sign-in (plan 29; Vault userpass + Transit before).
 
 ---
 
@@ -20,7 +20,7 @@ This is an exhaustive, replicate-from-scratch reference for the **`dialogue_brid
 8. [Security (CSRF, rate limits, internal trust, TLS)](#8-security-csrf-rate-limits-internal-trust-tls)
 9. [HTTP API — all routers](#9-http-api--all-routers)
 10. [**Inference — architecture & lifecycle**](#10-inference--architecture--lifecycle)
-11. [**Inference — event transport (Redis Streams + WebSocket)**](#11-inference--event-transport-redis-streams--websocket)
+11. [**Inference — event transport (Redis Streams + SSE)**](#11-inference--event-transport-redis-streams--sse)
 12. [**Inference — cancel, HITL resume, persistence, reaping**](#12-inference--cancel-hitl-resume-persistence-reaping)
 13. [Conversation & message tree](#13-conversation--message-tree)
 14. [Attachments & blobs](#14-attachments--blobs)
@@ -92,7 +92,7 @@ magenticx/dialogue_bridge/
 │   ├── agents/                 catalog · user_agents · tools (per-agent tools/model) · skills · memories · commands
 │   ├── conversations/          conversations · messages · attachments · search · sharing (share links) · favicons
 │   ├── documents/              documents · comments · suggestions (canvas, plan 44)
-│   ├── inference/              runs (start, WS observe, cancel, active runs) · tasks · voice · speech
+│   ├── inference/              runs (start, SSE observe, cancel, active runs) · tasks · voice · speech
 │   ├── automation/             scheduled_tasks · workflows (/v1/workflows + /v1/workflow-runs)
 │   └── internal/               conversations · memory (service-to-service, require_internal_caller)
 ├── schema/                     Pydantic DTOs in the same domain folders as router/ + re-exporting __init__.py
@@ -124,7 +124,7 @@ magenticx/dialogue_bridge/
 │   │   ├── history.py          history assembly, path resolution, nearest_committed_ai, multimodal serialization
 │   │   ├── event_log.py        ★ RedisEventLog (XADD/XREAD/EXPIRE) per-run stream
 │   │   ├── channel · composer_queue · hitl · effort · activity · output_capture · speech · voice
-│   │   └── tasks/              background sub-agent tasks (plan 41): tasks · consumers · streams · sockets · wakeups
+│   │   └── tasks/              background sub-agent tasks (plan 41): tasks · consumers · streams · wakeups
 │   └── automation/             scheduled_tasks (Scheduler loop) · workflows (definitions proxy) ·
 │                               workflow_runs (★ run manager, event stream, watchdog) · workflow_schedules
 ├── utils/                      generic helpers only — no knowledge of any feature
@@ -181,7 +181,7 @@ Groups (env alias → default):
 - **Signing** — `SESSION_SIGNING_BACKEND`→`kms` (or `file`, dev only), `SESSION_SIGNING_ACTIVE_KID`→100, `SESSION_SIGNING_KEYS` (`kid:key_version_ocid`), `SESSION_SIGNING_LEGACY_KIDS` (verify-only), `SESSION_SIGNING_PUBLIC_KEYS_DIR`→`/app/signing_keys`, plus `OCI_KMS_*` / `OCI_*` for the KMS key and its signing principal. Incomplete → startup fail, in every environment.
 - **TLS** — `INTERNAL_CA_CERT_PATH` (str; drives Postgres verify-full + Redis TLS), `INTERNAL_CLIENT_CERT_PATH`/`_KEY_PATH` (SecretStr).
 - **Upstream** — `AGENTS_SERVICE_URL`→`https://agents:8003`.
-- **Inference** — `INFERENCE_TOOL_RESULT_MAX_CHARS`→16000, `INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS`→10.0.
+- **Inference** — `INFERENCE_TOOL_RESULT_MAX_CHARS`→16000, `INFERENCE_SSE_HEARTBEAT_SECONDS`→15.0.
 - **Pricing** (`PricingSettings`) — `MODEL_PRICES_JSON` / `MODEL_PRICES_JSON_FILE`→empty: a JSON override merged over `utils/pricing.py`'s default prices (USD per 1M tokens). Parsed when that module is imported; **invalid → startup fail**. See [configuration](../architecture/configuration.md#model-pricing-pricingsettings).
 - **Speech / Attachments / Share / Generation / Embeddings** — dictation 25MiB; attachments 25MiB each + 10/msg + DOCX-preview-token TTL 60s; share default 30d / max 365d; embeddings `EMBEDDINGS_ENABLED`→True, `dimensions`→1536 (must match agents + migration 0010), sweeper batch 64 / 0.75s active / 8s idle.
 - **HTTP timeouts** — per-upstream `httpx.Timeout` (inference read/write 180s; generation 120s; voice 75s).
@@ -277,7 +277,7 @@ Partial/`postgresql_where` and pgvector-opclass indexes are always hand-written 
 - `validate_userId` (`utils/validators.py`) → the standard per-user gate.
 - `validate_convId`/`_full` → load `ConversationTable` scoped by `(id, user_id)`, 404 if not owned.
 - `require_csrf_protection` → for non-GET/HEAD/OPTIONS, constant-time compare `X-CSRF-Token` header vs CSRF cookie (double-submit); pure-bearer clients (no access cookie) are exempt.
-- `authenticate_websocket_user` (for the inference WS) → verifies the access-cookie JWT, denylist, `act`, and `sub == user_id`; **returns `None` instead of raising** (caller sends a WS close code).
+- The live streams (run stream, conversation channel, task drill-down) are ordinary `GET` routes, so they use `validate_userId` like any other read (401 / 404, no special socket auth).
 
 **Refresh** (`POST /v1/auth/session/refresh`, CSRF-gated): `require_refresh_session` verifies the refresh cookie; `refresh_guard.status(sid,jti)=="reuse"` → revoke the whole session + 401 (replay defense); else `rotate_session` mints a new pair reusing the original `sid`, `refresh_guard.rotate` advances the `jti` and graces the old one for `JWT_REFRESH_REUSE_GRACE_SECONDS`; re-issue cookies. Stateless — no DB write.
 
@@ -290,7 +290,7 @@ Partial/`postgresql_where` and pgvector-opclass indexes are always hand-written 
 ## 8. Security (CSRF, rate limits, internal trust, TLS)
 
 - **CSRF** — double-submit cookie on every state-mutating endpoint (`require_csrf_protection`).
-- **Rate limiting, one engine (fastapi-redis-sdk), two layers** — policies in `core/security/rate_limit.py`, installed by `core/cache/integration.py`. (1) Global budget middleware: ~300/min per verified-JWT-user (`verified_identity`; IP fallback), Redis-counted (atomic Lua window; survives deploys, holds across replicas), header-silent, exempts `/health` + `/v1/internal/*`. (2) Strict `rate_limit` dependencies (emit `X-RateLimit-*` + `Retry-After` on 429) — policy: *paid APIs, outward artifacts, and unbounded-storage writes get their own per-user window*: auth `/login` + `/oidc/login` 4/60 per resolved IP, `/session/refresh` 10/60 per IP (OCI KMS mint), inference `/start` 10/60 per user, speech router 20/60 per user, voice `/realtime/{uid}/session` 15/60 (paid Realtime), share create 10/60 (public tokens), PDF export 10/60 (heavy render), custom-skill upload 10/60 (disk writes), message POST 30/60 (blob growth), suggestions 10/60 (LLM-backed), Artifacts file listing 120/60 (`FILES_LIST_RATE_LIMIT_*`, a join over all the user's files per search keystroke), canvas document reads 120/60 (`DOCUMENT_READ_RATE_LIMIT_*`), saves 30/60 (`DOCUMENT_SAVE_RATE_LIMIT_*`, plan 44) and comment writes 60/60 (`DOCUMENT_COMMENT_RATE_LIMIT_*`, plan 44 4.4). The run-stream **WebSocket** is outside the HTTP middleware — `allow_ws_connect` meters handshakes in-route (20/60 per verified user, close code `4429`). Everything **fails open** on a Redis outage (logged + counted as degraded), same stance as the logout denylist.
+- **Rate limiting, one engine (fastapi-redis-sdk), two layers** — policies in `core/security/rate_limit.py`, installed by `core/cache/integration.py`. (1) Global budget middleware: ~300/min per verified-JWT-user (`verified_identity`; IP fallback), Redis-counted (atomic Lua window; survives deploys, holds across replicas), header-silent, exempts `/health` + `/v1/internal/*`. (2) Strict `rate_limit` dependencies (emit `X-RateLimit-*` + `Retry-After` on 429) — policy: *paid APIs, outward artifacts, and unbounded-storage writes get their own per-user window*: auth `/login` + `/oidc/login` 4/60 per resolved IP, `/session/refresh` 10/60 per IP (OCI KMS mint), inference `/start` 10/60 per user, speech router 20/60 per user, voice `/realtime/{uid}/session` 15/60 (paid Realtime), share create 10/60 (public tokens), PDF export 10/60 (heavy render), custom-skill upload 10/60 (disk writes), message POST 30/60 (blob growth), suggestions 10/60 (LLM-backed), Artifacts file listing 120/60 (`FILES_LIST_RATE_LIMIT_*`, a join over all the user's files per search keystroke), canvas document reads 120/60 (`DOCUMENT_READ_RATE_LIMIT_*`), saves 30/60 (`DOCUMENT_SAVE_RATE_LIMIT_*`, plan 44) and comment writes 60/60 (`DOCUMENT_COMMENT_RATE_LIMIT_*`, plan 44 4.4). The three live streams (run stream, conversation channel, task drill-down) share `stream_connect_rate_limit`, 20 connects / 60 s per user (`STREAM_CONNECT_RATE_LIMIT_*`). Everything **fails open** on a Redis outage (logged + counted as degraded), same stance as the logout denylist.
 - **Internal trust** (`core/security/internal_trust.py`) — `require_internal_caller` validates `X-Internal-Proxy-Secret` against `INTERNAL_SERVICE_SECRET` (`is_internal_service_request`, `secrets.compare_digest`; 403 else); `internal_service_headers(request_id[,session_id,user_id])` builds outbound headers for the agents hop (always the service secret; auto-derives raw `X-User-Id`/`X-Session-Id` from the request context so ids correlate with the DB); `resolve_client_ip` only trusts forwarded headers when `is_trusted_proxy_request` matches `TRUSTED_PROXY_SECRET` (the nginx edge marker, which authorizes nothing).
 - **mTLS** (`core/security/tls.py`) — `get_httpx_verify()`/`get_httpx_client_cert()` for the bridge→agents hop; same single-SSLContext approach as the agents service.
 - **Three unauthenticated endpoints**: `GET /health`, `GET /v1/shared-conversations/{token}` (public share), `GET /v1/attachments/public/{token}` (HMAC-token-gated Office blob for the Online Viewer, served with `CSP: default-src 'none'; sandbox;` + `nosniff` + `no-store`).
@@ -304,7 +304,7 @@ nginx strips `/api/`, so the browser calls `/api/v1/...` and FastAPI sees `/v1/.
 
 **Auth** `/v1/auth`: `POST /login` (public, rate-limited), `GET /session` (session), `POST /session/refresh` (refresh+CSRF), `POST /logout` (CSRF).
 
-**Inference** `/v1/inference` — see §10–§12: `POST /runs/{user_id}/start`, `GET /runs/{user_id}` (`?status=active`), `WS /runs/{user_id}/{run_id}/ws`, `POST …/cancel`, `POST …/resume`.
+**Inference** `/v1/inference` — see §10–§12: `POST /runs/{user_id}/start`, `GET /runs/{user_id}` (`?status=active`), `GET /runs/{user_id}/{run_id}/events` (SSE), `POST …/cancel`, `POST …/resume`.
 
 **Conversations** `/v1/conversations`: `POST /{uid}` (create), `POST /{uid}/{cid}/fork`, `POST …/share`, `POST …/share/export-pdf`, `DELETE …/share/{share_id}`, `GET /{uid}` + `/pinned` + `/archived` + `/shares`, `GET /{uid}/{cid}` (detail), `GET /{uid}/{cid}/sources` (citation sources, plan 42 — see §13), canvas documents `GET /{uid}/{cid}/documents` · `…/documents/latest?path=` · `…/documents/versions?path=` · `…/documents/versions/{n}?path=` and `POST …/documents/versions` (plan 44, `router/documents/documents.py` — see §13), canvas comments `GET …/documents/comments?path=` · `POST …/documents/comments` · `PATCH …/documents/comments/{id}` · `DELETE …/documents/comments/{id}` (plan 44 4.4, `router/documents/comments.py`), canvas suggestions `GET …/documents/suggestion?path=` · `PUT …/documents/suggestion` · `DELETE …/documents/suggestion?path=` (plan 44 4.6, `router/documents/suggestions.py`), canvas export `POST …/documents/export` (plan 44 4.5, `router/documents/documents.py`), `DELETE /{uid}/{cid}`, `PATCH …/title` · `…/archive` · `…/unarchive` · `…/pin` · `…/unpin`, `POST …/report`.
 
@@ -336,7 +336,7 @@ Schemas live in the `schema/` package — one module per concept, all re-exporte
 
 ## 10. Inference — architecture & lifecycle
 
-**The run *is* the assistant `messages` row.** There is no `inference_runs` table. A message becomes a run when its `streaming_status` is non-NULL; its `id` is simultaneously the `run_id`, the `assistantMessageId`, and the AG-UI `message_id` root, **and** the Redis stream key. The run executes as a **detached asyncio task** owned by a process-global `InferenceRunManager`. The HTTP `start` returns immediately; the browser watches over a WebSocket.
+**The run *is* the assistant `messages` row.** There is no `inference_runs` table. A message becomes a run when its `streaming_status` is non-NULL; its `id` is simultaneously the `run_id`, the `assistantMessageId`, and the AG-UI `message_id` root, **and** the Redis stream key. The run executes as a **detached asyncio task** owned by a process-global `InferenceRunManager`. The HTTP `start` returns immediately; the browser watches over Server-Sent Events.
 
 **Two thread ids:** `checkpoint_thread_id` is **branch-scoped** (the LangGraph durable-saver thread, shared across a branch's runs); `run_id` is **per-run** (AG-UI bindings + Redis key). Keep them distinct.
 
@@ -354,7 +354,7 @@ Then `create_inference_run_record` (`engine/inference/runs/records.py`): reaps s
 
 ### "Try it" — `POST /v1/agents/{user_id}/custom/try` → `start_agent_trial` (`engine/agents/trials.py`, plan 40)
 
-The agent builder chats with a draft **as it is now**, uncommitted, through this same pipeline. Body `AgentTrialStart{agentId?, conversationId?, message, draft: {spec, files}, approvals: {toolKey: bool|null}}`; answers the same `InferenceStartResponse` (201), so the builder observes the run over the same WebSocket / resume / cancel routes.
+The agent builder chats with a draft **as it is now**, uncommitted, through this same pipeline. Body `AgentTrialStart{agentId?, conversationId?, message, draft: {spec, files}, approvals: {toolKey: bool|null}}`; answers the same `InferenceStartResponse` (201), so the builder observes the run over the same SSE stream / resume / cancel routes.
 
 - **Checks, cheapest first:** `agentId` must be the caller's own active agent and `conversationId` the caller's **trial** (404 otherwise, before anything goes upstream); then the agents service validates the draft (`/custom-agents/validate`) → **422 `{message, errors, issues}`**, the shape Commit shows. A trial of a saved agent cannot change its slug (422 on `slug`).
 - **Conversation:** `new` (no `conversationId`) creates `is_private=True, is_trial=True`, no title; `send` appends to the trial's one branch (parent = its newest message — no edit/retry/fork/branch/share). An existing agent → `agent_id` is its row (real memory, real tool rows). A new draft → `agent_id` NULL and a `TrialAgent` stand-in (`engine/agents/trial_drafts.py`: slug/name/icon from the spec, `owner_user_id` = caller, `id=None`, type `deep agent`).
@@ -371,7 +371,7 @@ Process-global manager with per-run dicts (`_tasks`, `_cancel_events`, `_runtime
 2. Build `run_meta` once (static wire fields → no per-chunk DB hit).
 3. Resolve the **per-message agent** (`run.agent_id or conversation.agent_id` — a conversation may mix agents); `thread_id = run.checkpoint_thread_id or run.id`.
 4. **Payload-mode decision** (re-derived from the tree via `nearest_committed_ai` — nearest AI ancestor carrying *both* `checkpoint_thread_id` and `checkpoint_id`):
-   - **`delta_resume`** — committed ancestor on the *same* thread → send only the new user message.
+   - **`delta_resume`** — committed ancestor on the *same* thread → send only the new user turn (the run's user message and any user messages stacked right above it, `history.stacked_user_turn`).
    - **`delta_fork`** — committed ancestor on a *different* thread (edit/retry) → send new message + `fork_from={thread_id, checkpoint_id}`.
    - **`full_seed`** — no committed checkpoint → send the full reconstructed branch history (`prepare_inference_history`, strips a trailing empty AI placeholder), cold-seed a thread.
 5. Serialize history (`serialise_message_with_images_for_agent`): images inlined as base64 `data:` URLs; non-image attachments as text bullets (deep agents get `/conversation/input/<name>` references). Seed deep-agent input files (PUT to the agent's input dir).
@@ -396,21 +396,21 @@ Assigns a monotonic `seq`, then:
 - **`CUSTOM`** — `SUBAGENT_EVENT` unwraps its inner event (only streams from before the plan 41 cut-over carried it: every sub-agent is now a background task with its own run and event log, so a new run never sends it — the handling stays for those older runs); nested `HITL_INTERRUPT` → `register_interrupt`, nested `TOKEN_USAGE` → `_accumulate_usage(main_agent=False)`, nested `TOOL_USAGE` → `_accumulate_tool_usage(main_agent=False)`; top-level `HITL_INTERRUPT`/`TOKEN_USAGE`/`TOOL_USAGE` likewise (`main_agent=True`; a `purpose: compaction` usage is grouped as `("compaction", "Compaction", model)`, plan 34) — every call adds to the token, cached, reasoning and latency sums, but only a main-agent call replaces the context snapshot (`context_tokens`/`context_window`/`compaction_percent`/`model_name`). Every call is also grouped by (scope, agent, model) — a sub-agent named by the `task_id → subagent_type` map built from top-level `TASK_SUBAGENT`, a call first seen bare then wrapped moved to its sub-agent — and `_finish_run` books those groups as `message_usage` rows, the conversation's `usage_*` totals and the user's daily rollups (see [usage-analytics](../flows/usage-analytics.md)). Plan 41: each call is also priced (`_call_metrics` → `utils/pricing.call_cost_micros`; unknown model → `unpriced_calls`), counted as truncated when `truncated` is true, and — when it reported `ttft_ms` — adds to `ttft_ms`/`ttft_calls`/`gen_ms`/`gen_output_tokens`; `TOOL_USAGE` is deduped by `tool_call_id` into `(scope, agent, tool)` groups booked as `tool_usage` rows and `tool_usage_daily`; **`CHECKPOINT_COMMITTED`** captures `produced_checkpoint_id` and **returns `None`** — deliberately not streamed and not persisted to `raw_events` (it carries internal thread/checkpoint UUIDs that must not leak into share snapshots/clones).
 - **THINKING_*** — tracks thinking duration + collects thought previews.
 - **TEXT_MESSAGE_CHUNK/CONTENT** — concatenated into `content`; first content chunk closes the thinking timer and, if it is non-empty, settles the answer's `first_token_ms` (from the runtime's creation; left `None` if a HITL interrupt registered first).
-- Every non-suppressed event → `_append_raw` (with **coalescing**: consecutive text deltas by `(messageId, namespace)` and `TOOL_CALL_ARGS` by `toolCallId` merge into one entry — even one level down inside `SUBAGENT_EVENT` by `task_id`; **`THINKING_TEXT_MESSAGE_CONTENT` is NOT coalesced** — discrete steps). Every other CUSTOM event — e.g. plan 42's `SOURCES` (`{tool_call_id, sources}`) — has no coalesce key and is stored as-is, one entry per event, top-level or wrapped.
+- Every non-suppressed event → `_append_raw` (with **coalescing**: consecutive text deltas by `(messageId, namespace)` and `TOOL_CALL_ARGS` by `toolCallId` merge into one entry — even one level down inside `SUBAGENT_EVENT` by `task_id`; and consecutive `THINKING_TEXT_MESSAGE_CONTENT` pieces by namespace — one streamed thought, since every emitter brackets each thought with `THINKING_TEXT_MESSAGE_START`/`_END`; `thoughts` (→ `reasoning_steps`) likewise grows one entry per thought). Every other CUSTOM event — e.g. plan 42's `SOURCES` (`{tool_call_id, sources}`) — has no coalesce key and is stored as-is, one entry per event, top-level or wrapped.
 - **Interrupts tracked as an identity set** (`pending_interrupt_ids`, keyed by `interrupt.id`) — a sub-agent interrupt is delivered twice (top-level + wrapped), and each `/resume` resolves exactly one id, so a bare counter would drift and the run would hang forever.
 - **Token usage** summed across all AI messages + resume legs, deduped by `message_id`.
 
 ---
 
-## 11. Inference — event transport (Redis Streams + WebSocket)
+## 11. Inference — event transport (Redis Streams + SSE)
 
-The browser transport is a **WebSocket**, not SSE. SSE is only the upstream (bridge → agents) hop. The full path:
+Both hops are SSE: agents → bridge (the upstream AG-UI stream) and bridge → browser (the run's frames from Redis). The full path:
 
 ```text
 agents /stream (SSE) → bridge _do_stream: parse_sse_bytes → runtime.apply_event (accumulate/coalesce/truncate)
    → _publish_delta → RedisEventLog.append (XADD)  [inference:run:{run_id}:events]
-   ◀ WS subscriber: stream_run_events → RedisEventLog.read_since (XREAD BLOCK)
-   → router sends {snapshot|event|terminal} JSON frames → browser
+   ◀ SSE subscriber: stream_run_events → RedisEventLog.read_since (XREAD BLOCK)
+   → stream_run_sse writes event: snapshot | event | terminal → browser
 ```
 
 The detached task produces into Redis whether or not any browser is attached — that's what makes reconnect/resume/replay work.
@@ -427,17 +427,13 @@ The detached task produces into Redis whether or not any browser is attached —
 - `read_since(since, ...)` → `XREAD BLOCK 30000` from `since` (or `"0"` for full backlog); returns when a terminal-status frame is seen, `cancel_event` set, or `on_idle()` true (escape hatch for a terminal-in-DB run whose terminal frame never reached this consumer).
 - `mark_terminal(run_id)` → `EXPIRE key 3600` (replay window after the run ends; after expiry the durable record is the `messages` row).
 
-**WebSocket endpoint** `WS /v1/inference/runs/{user_id}/{run_id}/ws` (`router/inference/runs.py`):
-
-1. `websocket_origin_allowed` (`Origin` must be in `CORS_ALLOWED_ORIGINS`; absent = not a browser, allowed) → else close `4403`. Then `authenticate_websocket_user` (access cookie); failure → close `4401`. Codes `4401`/`4403`/`4404`/`4400` mirror HTTP.
-2. `get_active_run_for_user` (owner-scoped); missing → `4404`.
-3. `accept()`, then wait ≤`INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS` (10s) for the first frame `{"type":"subscribe","since":"<seq>"|null}`.
-4. `async for seq, event in stream_run_events(run_id, since)`: `SNAPSHOT_SEQ_SENTINEL` → `{"type":"snapshot","payload":...}`; else `{"type":"event","seq":seq,"payload":...}`.
-5. After the stream ends, always send a **DB-authoritative** `{"type":"terminal","payload":<final state>}` (flips the run to its real status even if the terminal stream entry was lost), then close.
+**SSE endpoint** `GET /v1/inference/runs/{user_id}/{run_id}/events` (`router/inference/runs.py` `stream_inference_run_events`) — the only browser transport (it replaced the WebSocket route, SSE plan phase 3): `validate_userId` (session cookie, `401`) + `stream_connect_rate_limit` (`429`) → `get_active_run_for_user` (owner-scoped, `404`) → cursor from `?since=` or `Last-Event-ID`, validated as a Redis entry id (`400`) → `db.close()` → `StreamingResponse(stream_run_sse(run_id, since))` with `SSE_RESPONSE_HEADERS` (`Cache-Control: no-cache, no-transform`, `X-Accel-Buffering: no`). `stream_run_sse` frames the same `stream_run_events` output as `event: snapshot` (no id), `id: <seq>` + `event: event`, then a **DB-authoritative** `event: terminal` with `build_terminal_payload` (flips the run to its real status even if the terminal stream entry was lost), wrapped in `utils/sse.with_heartbeat` (`: ping` every `INFERENCE_SSE_HEARTBEAT_SECONDS`, awaiting the same pending read — no buffer, so a slow client reads behind and never drops frames).
 
 **`stream_run_events`** — three cases: terminal-in-DB → one DB `snapshot`, return; fresh subscribe (`since` None) on an in-process live run → capture `last_entry_id` first, yield a **synthesized live snapshot** (`build_live_snapshot` from the in-process runtime — full coalesced `raw_events`, so MAXLEN trimming never strands a late subscriber), then tail from the captured cursor (client dedupes by `seq`); reconnect (`since` given) or no in-process runtime → plain Redis replay from cursor with `_run_went_terminal` as the `on_idle` escape.
 
-**nginx** (`agentic_ui/nginx.conf.template`) — a dedicated `location ^~ /api/v1/inference/runs/` block forwards `Upgrade`/`Connection` (WS handshake), injects the proxy secret + request id, disables buffering, and sets `proxy_read_timeout/send_timeout 3600s` so live tails aren't dropped. **Browser client** (`agentic_ui/src/lib/api.ts` `connectInferenceWebSocket`) persists `lastSeenInferenceSeq`, resends it as `since` on reconnect (backoff `[250,500,1000,2000,5000]`ms), treats close `4401/4403/4404` as permanent.
+**nginx** (`agentic_ui/nginx.conf.template`) — a dedicated `location ^~ /api/v1/inference/runs/` block clears `Connection` (`proxy_set_header Connection ""`, keep-alive to the upstream), injects the proxy secret + request id, disables buffering and gzip, passes the bridge's `X-Accel-Buffering: no` on to Nginx Proxy Manager (`proxy_pass_header`; nginx hides `X-Accel-*` by default), and sets `proxy_read_timeout/send_timeout 3600s` so live tails aren't dropped. A regex location `^/api/v1/(conversations|tasks)/[^/]+/[^/]+/events$` does the same for the background-task streams (the conversation channel and a task's drill-down, `router/inference/tasks.py` `conversation_events` / `task_events`), which the client follows through `reconnecting-stream.ts`. The shared pieces: `utils/validators.validate_stream_cursor` (`?since=` / `Last-Event-ID`, `400` unless a Redis entry id) and `utils/sse.frames_to_sse` (one event per JSON frame — `event:` its `type`, `id:` its `seq` — plus the heartbeat). Being plain HTTP, all three streams are covered by CORS: a foreign origin is never allowed to read the response, so no separate Origin check is needed. **Browser client** (`agentic_ui/src/shared/lib/api/inference-stream.ts` `connectInferenceStream`) reads the stream with `fetch` + `readSseStream` through `requestRaw` (a 401 first gets the silent session refresh), persists `lastSeenInferenceSeq`, resumes with it on reconnect (backoff `[250…30000]`ms, held at 30 s; an offline tab waits for `online`), and treats `400`/`401`/`403`/`404` as final.
+
+**Steering** (`engine/inference/steering.py`, SSE plan phase 5). A plain-text message queued behind run `R` for the agent that runs (`steerable()`) also sets the Redis key `run:{R}:steer` (`SteerDoorbell`, TTL `INFERENCE_STEER_DOORBELL_TTL_SECONDS`), after the queue's commit. The agents service claims it with `POST /v1/internal/conversations/{conversation_id}/interjection/claim` `{user_id, run_id}` (`router/internal/conversations.py`, `require_internal_caller`): `claim_interjection()` locks the conversation row, checks the owner (`404`), and hands over the **leading** messages of `queued_messages` that wait behind this run, are plain text and are for this agent, while the run is active (`200 {"messages": [{content, queued_at}, ...]}`, schema `InterjectionsOut`); the first message that does not qualify ends the claim, so the rest keep their order. It writes one `kind = 'interjection'` row per claimed message, takes them off the queue, clears the doorbell and publishes the `queue` frame with what is left. With nothing to hand over it answers `204` and clears the doorbell while it still holds the lock, so a message queued meanwhile rings it again. The run-end send (`composer_queue._claim_all`) and a cancel clear the doorbell too.
 
 **Stream instrumentation** (`core/logging/stream_metrics.py`) — `StreamMetrics` tracks chunk_count, bytes_forwarded, first-byte latency, total duration, and (with a separator) event_count, for both the upstream inference SSE and blob downloads.
 
@@ -451,7 +447,7 @@ The detached task produces into Redis whether or not any browser is attached —
 
 **Persistence — `_finish_run`** (idempotent; the single terminal write): onto the same `messages` row it writes `streaming_status` (completed/cancelled/failed) + `streaming_completed_at`, `content`, `reasoning_steps`, `reasoning_time_seconds`, **`raw_events`** (deep-copied coalesced log), `input_tokens`/`output_tokens`, `is_error`/`error_message`, and **`checkpoint_id = runtime.produced_checkpoint_id`** (only if the agent reported a head — advances the branch head so the next `send` resumes / edit-retry forks from it). It also clears `active_assistant_message_id` and updates the conversation preview/`last_message_at`. **Zero DB writes per stream chunk** — only at creation and finalization (plus small cancel/cleanup writes off the happy path).
 
-**Orphan reaping** — `cleanup_orphaned_inference_runs()` (lifespan startup) bulk-flips every active-status message to `failed` and clears all `active_assistant_message_id`, because a process restart killed the in-memory tasks; a reconnecting client gets a `terminal(failed)` frame rather than a hung socket.
+**Orphan reaping** — `cleanup_orphaned_inference_runs()` (lifespan startup) bulk-flips every active-status message to `failed` and clears all `active_assistant_message_id`, because a process restart killed the in-memory tasks; a reconnecting client gets a `terminal(failed)` frame rather than a hung stream.
 
 **Run state machine:**
 
@@ -462,7 +458,7 @@ create → queued → (launch) running
    running ──stream ends, no pending interrupts──► completed
    running ──stream ends, pending interrupts──► PAUSED ──resume──► (new _do_resume leg) → running
                                                         └─cancel──► cancelled
-terminal → _finish_run writes content+raw_events+checkpoint_id; event_log.mark_terminal (TTL); WS sends terminal frame
+terminal → _finish_run writes content+raw_events+checkpoint_id; event_log.mark_terminal (TTL); SSE observers get the terminal frame
 ```
 
 ---
@@ -551,7 +547,7 @@ Queue-based structured logging (mirrors the agents service): a non-blocking `Que
 **Sharp edges (don't get bitten):**
 
 - **The run *is* the assistant message** — `run_id == assistantMessageId == messages.id`, and that same value is the Redis stream key and the AG-UI `message_id` root. Branch `checkpoint_thread_id` stays distinct from `run_id`.
-- **Transport is WebSocket, not SSE** (SSE is only the upstream agents hop; the legacy browser SSE route is deprecated). The WS terminal frame is **DB-authoritative** to survive lost stream entries.
+- **The browser transport is SSE with delta frames** (one event per Redis entry, never the whole run per token — that was what made the first SSE route stutter). The terminal frame is **DB-authoritative** to survive lost stream entries.
 - **`CHECKPOINT_COMMITTED` is captured but never persisted** to `raw_events` (thread/checkpoint UUIDs must not leak into share snapshots); only `checkpoint_id` lands on the message column.
 - **Interrupts are tracked by id, never a counter** — before the plan 41 cut-over a sub-agent interrupt was double-delivered (top-level + `SUBAGENT_EVENT`), so a counter would drift and the run would hang; ids stay the rule (a background task's approval now lives on the task).
 - **Payload mode (`delta_resume`/`delta_fork`/`full_seed`) is re-derived at run time from the message tree** via `nearest_committed_ai`, independent of the create-time thread allocation.

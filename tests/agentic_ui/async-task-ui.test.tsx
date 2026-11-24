@@ -12,7 +12,7 @@ vi.mock("@/shared/ui/ai-elements/response", () => ({
 const api = vi.hoisted(() => ({
   listConversationTasks: vi.fn(),
   connectConversationChannel: vi.fn(),
-  connectTaskSocket: vi.fn(),
+  connectTaskStream: vi.fn(),
   cancelAsyncTask: vi.fn(),
   resumeAsyncTask: vi.fn(),
   deleteQueuedMessage: vi.fn(),
@@ -280,27 +280,61 @@ describe("composer notices", () => {
     const onCancel = vi.fn();
     render(
       <ComposerTaskNotices
-        queuedMessage={{
-          id: null,
-          content: "and check the 2025 numbers",
-          attachmentCount: 0,
-          commandName: null,
-          queuedAt: T0,
-        }}
+        queuedMessages={[
+          {
+            id: "q1",
+            content: "and check the 2025 numbers",
+            attachmentCount: 0,
+            commandName: null,
+            queuedAt: T0,
+          },
+        ]}
         onCancelQueued={onCancel}
       />,
     );
     const chip = screen.getByRole("status");
     expect(within(chip).getByText("Queued")).toBeInTheDocument();
     expect(within(chip).getByText("and check the 2025 numbers")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Cancel the queued message" }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cancel the queued message: and check the 2025 numbers" }),
+    );
+    expect(onCancel).toHaveBeenCalledWith("q1");
+  });
+
+  it("stacks several queued messages, in order, each with its own ×", () => {
+    const onCancel = vi.fn();
+    const line = (id: string, content: string) => ({
+      id,
+      content,
+      attachmentCount: 0,
+      commandName: null,
+      queuedAt: T0,
+    });
+    render(
+      <ComposerTaskNotices
+        queuedMessages={[line("a", "only 2025"), line("b", "and in euros"), line("c", "shorter")]}
+        onCancelQueued={onCancel}
+        onSendNow={() => {}}
+      />,
+    );
+    const stack = screen.getByRole("status", { name: "3 queued messages" });
+    expect(within(stack).getByText("Queued · 3")).toBeInTheDocument();
+    expect(within(stack).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "1only 2025",
+      "2and in euros",
+      "3shorter",
+    ]);
+    expect(
+      screen.getByRole("button", { name: "Send now: stop the answer and send these 3 messages" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel the queued message: and in euros" }));
+    expect(onCancel).toHaveBeenCalledWith("b");
   });
 
   it("prompts for a waiting task's approval and opens its drill-down", () => {
     const value = contextValue(treeOf(task("w", { name: "fact-checker", status: "waiting" })));
     render(
-      withTasks(value, <ComposerTaskNotices queuedMessage={null} onCancelQueued={() => {}} />),
+      withTasks(value, <ComposerTaskNotices queuedMessages={[]} onCancelQueued={() => {}} />),
     );
     fireEvent.click(screen.getByRole("button", { name: "Review fact-checker's approval" }));
     expect(value.openTask).toHaveBeenCalledWith("w");
@@ -318,7 +352,7 @@ describe("useBackgroundTasks", () => {
         return new Promise(() => {});
       },
     );
-    api.connectTaskSocket.mockImplementation(() => new Promise(() => {}));
+    api.connectTaskStream.mockImplementation(() => new Promise(() => {}));
   });
 
   function mount(onRunStarted = vi.fn(), toast = vi.fn()) {
@@ -347,38 +381,30 @@ describe("useBackgroundTasks", () => {
     const { result, onRunStarted } = mount();
     await act(async () => {});
     act(() =>
-      result.current.holdQueuedMessage({
-        id: null,
-        content: "next",
-        attachmentCount: 0,
-        commandName: null,
-        queuedAt: T0,
-      }),
+      result.current.holdQueuedMessages([
+        { id: "q0", content: "next", attachmentCount: 0, commandName: null, queuedAt: T0 },
+      ]),
     );
-    expect(result.current.queuedMessage?.content).toBe("next");
+    expect(result.current.queuedMessages.map((m) => m.content)).toEqual(["next"]);
     const run = { id: "r2", conversationId: CONV } as never;
     act(() => channelFrame({ type: "run_started", run, fromQueue: false }));
     expect(onRunStarted).toHaveBeenCalledWith(run, { fromQueue: false });
-    // A wake-up run does not clear the chip…
-    expect(result.current.queuedMessage).not.toBeNull();
-    // …the queued message's own run does, and so does `queue: null`.
+    // A run starting does not clear the queue by itself: the `queue` frame
+    // the bridge publishes first says what is left (later messages may wait).
     act(() => channelFrame({ type: "run_started", run, fromQueue: true }));
-    expect(result.current.queuedMessage).toBeNull();
+    expect(result.current.queuedMessages).toHaveLength(1);
     act(() =>
       channelFrame({
         type: "queue",
-        queuedMessage: {
-          id: "q",
-          content: "x",
-          attachmentCount: 0,
-          commandName: null,
-          queuedAt: T0,
-        },
+        queuedMessages: [
+          { id: "q", content: "x", attachmentCount: 0, commandName: null, queuedAt: T0 },
+          { id: "r", content: "y", attachmentCount: 0, commandName: null, queuedAt: T0 },
+        ],
       }),
     );
-    expect(result.current.queuedMessage?.id).toBe("q");
-    act(() => channelFrame({ type: "queue", queuedMessage: null }));
-    expect(result.current.queuedMessage).toBeNull();
+    expect(result.current.queuedMessages.map((m) => m.id)).toEqual(["q", "r"]);
+    act(() => channelFrame({ type: "queue", queuedMessages: [] }));
+    expect(result.current.queuedMessages).toEqual([]);
   });
 
   it("stops optimistically, then reconciles from the cancel answer", async () => {
@@ -413,7 +439,7 @@ describe("useBackgroundTasks", () => {
     api.listConversationTasks.mockResolvedValue([task("w", { status: "waiting" })]);
     mount();
     await act(async () => {});
-    expect(api.connectTaskSocket).toHaveBeenCalledWith(
+    expect(api.connectTaskStream).toHaveBeenCalledWith(
       "u-1",
       "w",
       expect.any(Function),
@@ -426,19 +452,21 @@ describe("useBackgroundTasks", () => {
     const { result } = mount();
     await act(async () => {});
     const held = { id: "q", content: "x", attachmentCount: 0, commandName: null, queuedAt: T0 };
-    act(() => result.current.holdQueuedMessage(held));
+    const other = { id: "r", content: "y", attachmentCount: 0, commandName: null, queuedAt: T0 };
+    act(() => result.current.holdQueuedMessages([held, other]));
     await act(async () => {
-      await result.current.cancelQueuedMessage();
+      await result.current.cancelQueuedMessage("q");
     });
-    expect(result.current.queuedMessage).toEqual(held);
+    expect(result.current.queuedMessages).toEqual([held, other]);
 
     api.deleteQueuedMessage.mockResolvedValue(undefined);
     let cancelled: unknown = null;
     await act(async () => {
-      cancelled = await result.current.cancelQueuedMessage();
+      cancelled = await result.current.cancelQueuedMessage("q");
     });
+    expect(api.deleteQueuedMessage).toHaveBeenLastCalledWith("u-1", CONV, "q");
     expect(cancelled).toEqual(held);
-    expect(result.current.queuedMessage).toBeNull();
+    expect(result.current.queuedMessages).toEqual([other]);
   });
 });
 
@@ -448,7 +476,15 @@ describe("the send flow while a run streams", () => {
     const onMessageQueued = vi.fn();
     const queueInferenceSend = vi.fn(async () => ({
       queued: true as const,
-      queuedMessage: null,
+      queuedMessages: [
+        {
+          id: "q1",
+          content: "and check the 2025 numbers",
+          attachmentCount: 0,
+          commandName: null,
+          queuedAt: T0,
+        },
+      ],
     }));
     const beginInferenceRun = vi.fn();
     const setShowAiTransition = vi.fn();
@@ -491,8 +527,8 @@ describe("the send flow while a run streams", () => {
     expect(beginInferenceRun).not.toHaveBeenCalled();
     expect(setMessages).not.toHaveBeenCalled();
     expect(setShowAiTransition).not.toHaveBeenCalledWith(true);
-    expect(onMessageQueued).toHaveBeenCalledWith(
+    expect(onMessageQueued).toHaveBeenCalledWith([
       expect.objectContaining({ content: "and check the 2025 numbers" }),
-    );
+    ]);
   });
 });

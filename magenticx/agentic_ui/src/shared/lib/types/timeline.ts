@@ -322,6 +322,17 @@ export type TaskInputBlock = {
   text: string;
 };
 
+/**
+ * A message the user sent while the run worked, which the run read at its next
+ * step (SSE plan phase 5, USER_INTERJECTION) — drawn where the agent read it,
+ * so the answer around it makes sense. Persisted with the run's events.
+ */
+export type UserInterjectionBlock = {
+  kind: "user_interjection";
+  id: string;
+  text: string;
+};
+
 export type TimelineBlock =
   | ThinkingBlock
   | ContentBlock
@@ -331,7 +342,8 @@ export type TimelineBlock =
   | CompactionBlock
   | TaskRefBlock
   | TaskSettledBlock
-  | TaskInputBlock;
+  | TaskInputBlock
+  | UserInterjectionBlock;
 
 export type TimelineTerminalStatus = "completed" | "cancelled" | "failed";
 
@@ -357,6 +369,13 @@ export type TimelineFoldIndexes = {
    * Optional so folds built before nested sub-agents were tracked still type.
    */
   nestedTasks?: Record<string, { parentKey: string; type?: string; description?: string }>;
+  /**
+   * A thought is streaming: THINKING_TEXT_MESSAGE_START seen, END not yet. Its
+   * CONTENT pieces grow one thought item (at `item` of thinking block `block`,
+   * null until the first piece) instead of each adding a step. Optional so
+   * folds made before thoughts streamed still type.
+   */
+  openThought?: { block: number; item: number | null } | null;
 };
 
 export type SubagentFoldIndexes = {

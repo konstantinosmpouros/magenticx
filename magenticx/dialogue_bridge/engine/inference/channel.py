@@ -3,8 +3,8 @@
 What a browser watching a conversation must learn without having started it:
 background-task frames (``{"type": "task", ...}``), runs the server launched
 on its own (``run_started`` — a wake-up, a queued send, a scheduled fire) and
-the composer queue's state (``queue``). The conversation WebSocket
-(``router/inference/tasks.py``) tails it.
+the composer queue's state (``queue``). The conversation's SSE
+stream (``router/inference/tasks.py``) tails it.
 
 **Why a stream, not pub/sub.** A socket that drops for a moment reconnects with
 the last entry id it saw and loses nothing; pub/sub would drop every frame
@@ -14,7 +14,7 @@ stream is the one source. It is small and short-lived — capped at
 ``ASYNC_TASKS_CHANNEL_MAXLEN`` entries and EXPIREd
 ``ASYNC_TASKS_CHANNEL_TTL_SECONDS`` after its last frame — because the durable
 state is in PostgreSQL (``conversation_tasks``, ``messages``,
-``conversations.queued_message``); a client that was away longer re-reads that.
+``conversations.queued_messages``); a client that was away longer re-reads that.
 
 Publishing never raises: losing a live frame is better than failing the
 status update, wake-up or run start that produced it.
@@ -148,22 +148,22 @@ async def publish_run_started(run: InferenceRunOut, *, from_queue: bool = False)
     await conversation_channel.publish(run.conversationId, frame)
 
 
-async def publish_queue(conversation_id: str, queued: Optional[QueuedMessageOut]) -> None:
-    """The composer queue's new state (``None`` = nothing queued)."""
-    frame = QueueFrame(queued_message=queued).model_dump(mode="json")
+async def publish_queue(conversation_id: str, queued: list[QueuedMessageOut]) -> None:
+    """The composer queue's new state: every queued message, oldest first (``[]`` = none)."""
+    frame = QueueFrame(queued_messages=queued).model_dump(mode="json")
     await conversation_channel.publish(conversation_id, frame)
 
 
 async def channel_frames(
-    conversation_id: str, since: Optional[str], queued: Optional[QueuedMessageOut]
+    conversation_id: str, since: Optional[str], queued: list[QueuedMessageOut]
 ) -> AsyncIterator[dict[str, Any]]:
-    """The conversation socket's frames: the queue's current state first (from
+    """The conversation stream's frames: the queue's current state first (from
     the database — the channel may have expired), then every channel frame
     after ``since`` (or, on a fresh subscribe, from now on), each with its
     ``seq`` for a later ``since``."""
     # The cursor is taken before the queue snapshot goes out, so a frame
     # published in between is tailed rather than lost.
     cursor = since or await conversation_channel.last_entry_id(conversation_id)
-    yield QueueFrame(queued_message=queued).model_dump(mode="json")
+    yield QueueFrame(queued_messages=queued).model_dump(mode="json")
     async for entry_id, frame in conversation_channel.tail(conversation_id, cursor):
         yield {**frame, "seq": entry_id}

@@ -608,7 +608,7 @@ async def stream_task_events(
     yield snapshot
 
     cursor = since or "0"
-    block_ms = settings.async_tasks.task_ws_block_ms
+    block_ms = settings.async_tasks.task_stream_block_ms
     while True:
         entries = await task_streams.task_events_wait(task_id, cursor, block_ms=block_ms)
         for entry_id, event in entries:

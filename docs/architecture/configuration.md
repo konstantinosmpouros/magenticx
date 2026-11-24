@@ -122,7 +122,9 @@ Who signs session JWTs and which public keys verify them. Production signs with 
 | --- | --- | --- |
 | `AGENTS_SERVICE_URL` | `https://agents:8003` | Base URL of the agents service. |
 | `INFERENCE_TOOL_RESULT_MAX_CHARS` | `16000` | Cap on stored `TOOL_CALL_RESULT` content in the event log; oversized results are truncated and flagged. |
-| `INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS` | `10.0` | Timeout waiting to subscribe to a run's Redis stream. |
+| `INFERENCE_QUEUE_MAX_MESSAGES` | `5` | Composer queue: the most messages a conversation holds while an answer runs (1–20). One more queued send is a 409 and its text stays in the composer. |
+| `INFERENCE_STEER_DOORBELL_TTL_SECONDS` | `86400` | Steering: the longest the Redis doorbell `run:{id}:steer` outlives a run that never cleared it (60 s – 7 days). Only a cap — a claim, the run-end send or a cancel clears it. |
+| `INFERENCE_SSE_HEARTBEAT_SECONDS` | `15.0` | A run's SSE stream sends a `: ping` comment after this long without a frame, so idle proxies (Cloudflare ~100 s) keep it open (1–60). |
 | `AUTH_RATE_LIMIT_MAX_ATTEMPTS` | `15` | Login attempts per window (per resolved client IP). Covers `POST /login` (including `?park=true`, the add-account path) and `GET /oidc/login`, so a single user adding an account spends more than one attempt; shared NAT/proxy egress IPs spend several. |
 | `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Auth rate-limit window. |
 | `INFERENCE_RATE_LIMIT_MAX_ATTEMPTS` | `10` | Inference starts per window (per user). |
@@ -167,7 +169,7 @@ Who signs session JWTs and which public keys verify them. Production signs with 
 | `USAGE_ANALYTICS_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `60` / `60` | Every Settings → Usage read (plan 33), per user, after auth. Generous for browsing; one conversation's page can count older answers from their event logs. |
 | `FILES_LIST_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `120` / `60` | The Artifacts page's file listing (`GET /v1/attachments/files/{user_id}`, plan 44), per user, after auth. Metadata only, but each page (search, filters, load more) joins across all of the user's files. |
 | `REFRESH_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `10` / `60` | Session refresh (OCI KMS mint) per client IP. |
-| `WS_CONNECT_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `20` / `60` | Run-stream WebSocket handshakes per user (enforced in-route; close code `4429`). |
+| `STREAM_CONNECT_RATE_LIMIT_MAX_ATTEMPTS` / `_WINDOW_SECONDS` | `20` / `60` | Connects to the live SSE streams per user — the run stream, the conversation channel and the task drill-down share one budget (`stream_connect_rate_limit`, `429`). Replaces `WS_CONNECT_RATE_LIMIT_*`. |
 | `USER_RATE_LIMIT_MAX_CALLS` | `300` | App-wide aggregate budget per verified user (per-IP fallback) per window. |
 | `USER_RATE_LIMIT_WINDOW_SECONDS` | `60` | Budget window. |
 | `INFERENCE_MAX_ACTIVE_RUNS_PER_USER` | `5` | Concurrent in-flight runs per user. |
@@ -342,7 +344,7 @@ Per-destination `httpx` timeouts, in seconds. Each destination has four knobs: `
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `CORS_ALLOWED_ORIGINS` | `localhost:8080/8050` + `127.0.0.1:8080/8050` (CSV, or a JSON list; the `CORS_*` tuples are `NoDecode`, so a plain origin is not JSON-parsed) | Allowed browser origins, for CORS **and** the WebSocket `Origin` check. **Cannot contain `*` while credentials are on**, and outside `APP_ENV=development`/`test` only `https` origins on public hosts (the localhost defaults raise at startup). Dennis sets `https://agents.magenticx.com`. |
+| `CORS_ALLOWED_ORIGINS` | `localhost:8080/8050` + `127.0.0.1:8080/8050` (CSV, or a JSON list; the `CORS_*` tuples are `NoDecode`, so a plain origin is not JSON-parsed) | Allowed browser origins for CORS (which also keeps a foreign origin from reading the SSE streams). **Cannot contain `*` while credentials are on**, and outside `APP_ENV=development`/`test` only `https` origins on public hosts (the localhost defaults raise at startup). Dennis sets `https://agents.magenticx.com`. |
 | `CORS_ALLOW_CREDENTIALS` | `true` | Allow cookies on cross-origin requests. |
 | `CORS_ALLOW_METHODS` | `GET,POST,PUT,PATCH,DELETE` (CSV) | Allowed methods. |
 | `CORS_ALLOW_HEADERS` | auto | Defaults to `Accept, Content-Type, Authorization, Range, If-Range, <csrf header>` if unset. |
@@ -489,7 +491,9 @@ A model newer than the pinned `langchain-openai` needs both facts stated. An unk
 | `PLATFORM_SKILLS_ROOT` | `harness/skill_registry/platform_skills` (in the image) | Where the platform skills are read from. Tests point it elsewhere; leave it in deployments. |
 | `CONVERSATION_FILE_MAX_BYTES` | `104857600` (100 MB) | Largest single conversation file (plan 36). A technical safety limit — one file is held in memory to encrypt and write it — not a quota: there is none, and no TTL. An over-cap `write_file`/`edit_file` returns an error the model can act on. |
 | `CONVERSATION_INPUT_CACHE_BYTES` | `134217728` (128 MB) | Process-wide cache of upload bytes read from the bridge for `/conversation/input/`, keyed by content hash. `0` disables it. |
-| `BRIDGE_CONVERSATIONS_PATH` | `/v1/internal/conversations` | The bridge's internal routes behind `/conversation/input/` (on `DIALOGUE_BRIDGE_URL`). |
+| `BRIDGE_CONVERSATIONS_PATH` | `/v1/internal/conversations` | The bridge's internal conversation routes: the uploads behind `/conversation/input/` and the steering claim (on `DIALOGUE_BRIDGE_URL`). |
+| `STEERING_ENABLED` | `true` | Steering: the main agent of an interactive run reads a message the user sent while it worked, before its next model call. Off: the message is sent when the run ends, as before. |
+| `STEERING_CLAIM_TIMEOUT_SECONDS` | `3.0` | Timeout of the steering claim call to the bridge (0 < x ≤ 30). It sits in front of a model call, so it gives up fast; a missed message is read at the next step or sent at the run end. |
 | `VIEW_IMAGE_MAX_BYTES` | `10485760` (10 MB) | Largest image `view_image` will hand to the model. Unlike the AG-UI preview bounds this caps the **model's** copy, so it guards context cost rather than display size. |
 | `OUTPUT_MAX_FILE_BYTES` / `OUTPUT_MAX_FILES` | `26214400` (25 MB) / `20` | Caps on the presented-file read the bridge snapshots at run end: larger files are reported missing, more paths per request is a 422. |
 | `SANDBOX_EXECUTION_ENABLED` | `false` | Fail-closed kill switch for sandboxed command execution: while false, workspace assembly refuses to mint a sandbox-capable default backend, which is exactly what would make deepagents expose its `execute` tool. Both composes turn it on (local `${SANDBOX_EXECUTION_ENABLED:-true}`, Dennis `true`); set it `false` and release to remove `execute`. See [sandboxed-execution.md](../flows/sandboxed-execution.md). |

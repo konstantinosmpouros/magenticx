@@ -94,7 +94,7 @@ class TaskStreams:
             return self._reader
         async with self._lock:
             if self._reader is None:
-                block_ms = max(settings.async_tasks.read_block_ms, settings.async_tasks.task_ws_block_ms)
+                block_ms = max(settings.async_tasks.read_block_ms, settings.async_tasks.task_stream_block_ms)
                 self._reader = create_redis_client(socket_timeout=block_ms / 1000 + STREAM_READ_TIMEOUT_MARGIN_SECONDS)
         return self._reader
 

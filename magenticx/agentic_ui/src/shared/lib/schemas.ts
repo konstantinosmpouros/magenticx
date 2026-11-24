@@ -1784,9 +1784,10 @@ export const TaskBusyConversationsSchema = z
   .transform((body) => body.conversationIds);
 
 /**
- * The one queued composer message (plan 41 §3.6). §14 leaves its shape open
- * (`{...}`); the UI reads only what the chip shows — the text, how many files
- * ride with it, its slash command — and tolerates anything else.
+ * One of the conversation's queued composer messages (plan 41 §3.6). §14
+ * leaves its shape open (`{...}`); the UI reads only what the chip shows — its
+ * id (to cancel it), the text, how many files ride with it, its slash command
+ * — and tolerates anything else.
  */
 const toQueuedMessageFields = (raw: Record<string, unknown>) => ({
   id: wfNullableString(raw.id),
@@ -1801,15 +1802,22 @@ export const toQueuedMessage = (raw: unknown) =>
     : null;
 export type QueuedMessage = NonNullable<ReturnType<typeof toQueuedMessage>>;
 
+/** The whole queue, oldest first; anything that is not a list reads as empty. */
+export const toQueuedMessages = (raw: unknown): QueuedMessage[] =>
+  Array.isArray(raw)
+    ? raw.map(toQueuedMessage).filter((message): message is QueuedMessage => message !== null)
+    : [];
+
 /**
  * `POST /runs/{user}/start` with `queue_if_busy`: either a started run (the
- * usual body, mapped by the api layer) or the 202 `{queued, queued_message}`.
+ * usual body, mapped by the api layer) or the 202 `{queued, queued_messages}`
+ * — the whole queue, the new message last.
  */
 export const InferenceStartOrQueueSchema = z.record(z.unknown()).transform((raw) =>
   raw.queued === true
     ? {
         queued: true as const,
-        queuedMessage: toQueuedMessage(atField(raw, "queued_message", "queuedMessage")),
+        queuedMessages: toQueuedMessages(atField(raw, "queued_messages", "queuedMessages")),
       }
     : { queued: false as const, body: raw },
 );
@@ -1926,7 +1934,7 @@ export const toConversationChannelFrame = (raw: unknown) => {
   if (frame.type === "queue") {
     return {
       type: "queue" as const,
-      queuedMessage: toQueuedMessage(atField(frame, "queued_message", "queuedMessage")),
+      queuedMessages: toQueuedMessages(atField(frame, "queued_messages", "queuedMessages")),
     };
   }
   return null;

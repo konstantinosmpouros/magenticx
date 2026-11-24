@@ -664,68 +664,6 @@ async def revoke_current_session(request: Request) -> tuple[str, str | None] | N
     return None
 
 
-async def authenticate_websocket_user(
-    websocket_cookies: dict[str, str] | object,
-    user_id: str,
-) -> AuthUser | None:
-    """Validate a WebSocket connection's access JWT cookie and user binding.
-
-    Returns the bound :class:`AuthUser` on success or ``None`` on any failure.
-    Unlike the REST dependency chain this does NOT raise — the caller emits a
-    clean close frame with a descriptive code.
-    """
-    cookies_get = getattr(websocket_cookies, "get", None)
-    if cookies_get is None:
-        return None
-    token = (cookies_get(SESSION_ACCESS_COOKIE_NAME) or "").strip()
-    if not token:
-        return None
-    try:
-        claims = await verify_token(token, ACCESS_TYPE)
-    except TokenError:
-        return None
-    sid = claims.get("sid")
-    if not sid or await logout_denylist.is_revoked(sid):
-        return None
-    if not claims.get("act", True):
-        return None
-    # A pending deletion freezes the account; live run streams are not among the
-    # few things it may still do.
-    if claims.get("pdl"):
-        return None
-    if claims.get("sub") != user_id:
-        logger.warning(
-            "ws_user_scope_mismatch",
-            "WebSocket caller attempted to access another user scope",
-            requested_user_id=user_id,
-            authenticated_user_id=claims.get("sub"),
-        )
-        return None
-    set_context(user_id=claims["sub"], session_id=sid)
-    return AuthUser(id=claims["sub"], is_active=bool(claims.get("act", True)))
-
-
-def websocket_origin_allowed(websocket_headers: object) -> bool:
-    """Whether a WebSocket handshake may proceed, by its ``Origin``.
-
-    Browsers apply no CORS to WebSocket handshakes and send the session cookie
-    to any same-site page, so a page on a sibling subdomain could otherwise open
-    a user's sockets (cross-site WebSocket hijacking). A browser always sends
-    ``Origin``: one outside ``CORS_ALLOWED_ORIGINS`` (``null`` included) is
-    refused. A handshake without one is no browser, so it cannot ride a
-    victim's cookie, and the session check alone decides it.
-    """
-    get = getattr(websocket_headers, "get", None)
-    origin = (get("origin") if get is not None else None) or ""
-    if not origin:
-        return True
-    allowed = {o.rstrip("/").lower() for o in settings.cors.allowed_origins}
-    if origin.rstrip("/").lower() in allowed:
-        return True
-    logger.warning("ws_origin_refused", "WebSocket handshake from a disallowed origin", origin=origin[:200])
-    return False
-
-
 async def require_csrf_protection(request: Request) -> None:
     if request.method.upper() in {"GET", "HEAD", "OPTIONS"}:
         return

@@ -498,7 +498,19 @@ class InferenceSettings(BaseSettings):
     # Cap stored TOOL_CALL_RESULT content in the per-run event log; oversized
     # results are cut and flagged with "truncated": true so the UI can say so.
     tool_result_max_chars: int = Field(16000, validation_alias="INFERENCE_TOOL_RESULT_MAX_CHARS")
-    ws_subscribe_timeout_seconds: float = Field(10.0, validation_alias="INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS")
+    # The run's SSE stream sends a `: ping` comment after this long without a
+    # frame, so a run that thinks (or waits at an approval) is not cut by an
+    # idle proxy timeout — Cloudflare's is ~100 s, nginx's read timeout 3600 s.
+    sse_heartbeat_seconds: float = Field(15.0, ge=1, le=60, validation_alias="INFERENCE_SSE_HEARTBEAT_SECONDS")
+    # How many messages the composer may queue behind a running answer. One
+    # more is refused (409) and stays in the composer.
+    queue_max_messages: int = Field(5, ge=1, le=20, validation_alias="INFERENCE_QUEUE_MAX_MESSAGES")
+    # Steering (SSE plan, phase 5): how long the "a message waits behind this
+    # run" doorbell (Redis `run:{id}:steer`) may outlive a run that never
+    # cleared it. Only a cap — a claim, a run-end send or a cancel clears it.
+    steer_doorbell_ttl_seconds: int = Field(
+        86400, ge=60, le=7 * 86400, validation_alias="INFERENCE_STEER_DOORBELL_TTL_SECONDS"
+    )
     # Several approvals pending at once (parallel sub-agents) and answered
     # together go to the agents service in ONE resume, keyed by interrupt id.
     # Off: one resume per decision, in the order the run surfaced them — still
@@ -1271,10 +1283,10 @@ class RateLimitSettings(BaseSettings):
     # (pre-auth path, like login).
     refresh_max_attempts: int = Field(10, validation_alias="REFRESH_RATE_LIMIT_MAX_ATTEMPTS")
     refresh_window_seconds: int = Field(60, validation_alias="REFRESH_RATE_LIMIT_WINDOW_SECONDS")
-    # Run-stream WebSocket handshakes — the SDK middleware is HTTP-only, so the
-    # socket route enforces this itself (see rate_limit.allow_ws_connect).
-    ws_connect_max_attempts: int = Field(20, validation_alias="WS_CONNECT_RATE_LIMIT_MAX_ATTEMPTS")
-    ws_connect_window_seconds: int = Field(60, validation_alias="WS_CONNECT_RATE_LIMIT_WINDOW_SECONDS")
+    # Opening a live SSE stream (run, conversation channel, task drill-down),
+    # per user (rate_limit.stream_connect_rate_limit).
+    stream_connect_max_attempts: int = Field(20, validation_alias="STREAM_CONNECT_RATE_LIMIT_MAX_ATTEMPTS")
+    stream_connect_window_seconds: int = Field(60, validation_alias="STREAM_CONNECT_RATE_LIMIT_WINDOW_SECONDS")
     # App-wide per-identity budget (the fastapi-redis-sdk global limiter): one
     # aggregate budget per verified user (per-IP fallback for unauthenticated
     # requests), counted in Redis. Default 300 calls / 60s.
@@ -1361,7 +1373,7 @@ class AsyncTaskSettings(BaseSettings):
     channel_ttl_seconds: int = Field(86400, ge=60, validation_alias="ASYNC_TASKS_CHANNEL_TTL_SECONDS")
     # The task drill-down socket checks for a settled task this often while
     # its event stream is quiet.
-    task_ws_block_ms: int = Field(5000, ge=100, le=60000, validation_alias="ASYNC_TASKS_TASK_WS_BLOCK_MS")
+    task_stream_block_ms: int = Field(5000, ge=100, le=60000, validation_alias="ASYNC_TASKS_TASK_STREAM_BLOCK_MS")
     # Tasks one GET /conversations/.../tasks returns at most.
     list_limit_max: int = Field(500, ge=1, le=5000, validation_alias="ASYNC_TASKS_LIST_LIMIT_MAX")
 
@@ -1532,8 +1544,7 @@ class Settings(BaseSettings):
                 f"APP_ENV={self.app.env!r} must sign with OCI KMS."
             )
 
-        # CORS (and the WebSocket Origin check, which reads the same list)
-        # trusts browsers on these origins with credentials. Outside
+        # CORS trusts browsers on these origins with credentials. Outside
         # development only https origins on real hosts: the localhost defaults
         # would otherwise follow the bridge into production.
         if self.app.env not in {"development", "test"}:

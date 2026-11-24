@@ -8,7 +8,7 @@ import {
 } from "react";
 import {
   cancelInferenceRun,
-  connectInferenceWebSocket,
+  connectInferenceStream,
   getActiveInferenceRuns,
   resumeInferenceRun,
   startInference,
@@ -227,7 +227,7 @@ export function useInferenceRuns({
   useEffect(() => () => frameSchedulerRef.current?.cancel(), []);
 
   /**
-   * Fold one WebSocket frame (or a start/cancel/resume answer) into the run.
+   * Fold one stream frame (or a start/cancel/resume answer) into the run.
    *
    * Every frame is folded here, synchronously and in order — nothing is
    * dropped, merged or reordered; each thinking delta lands in the timeline.
@@ -363,7 +363,7 @@ export function useInferenceRuns({
         }, delay);
       };
 
-      void connectInferenceWebSocket(userId, runId, applyRunEvent, controller.signal)
+      void connectInferenceStream(userId, runId, applyRunEvent, controller.signal)
         .then(() => {
           // Without this delete a cleanly-resolved run could never be
           // re-observed — the guard above would see the stale controller.
@@ -403,7 +403,7 @@ export function useInferenceRuns({
   useEffect(() => {
     if (currentActiveRunId) {
       // Paint the transition dot from the conversation detail, which reports
-      // `activeRunId` well before `getActiveInferenceRuns` and the WebSocket
+      // `activeRunId` well before `getActiveInferenceRuns` and the stream
       // handshake resolve. Waiting for the socket's snapshot frame is what left
       // a refresh showing empty space under the user's message for a beat.
       //

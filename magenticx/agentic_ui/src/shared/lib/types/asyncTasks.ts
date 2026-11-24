@@ -27,7 +27,7 @@ export type {
 export type ConversationChannelFrame =
   | { type: "task"; event: AsyncTaskFrameEvent; task: AsyncTask }
   | { type: "run_started"; run: InferenceRun; fromQueue: boolean }
-  | { type: "queue"; queuedMessage: QueuedMessage | null };
+  | { type: "queue"; queuedMessages: QueuedMessage[] };
 
 /**
  * One node's live view, fed by its own socket while it is open (drill-down)

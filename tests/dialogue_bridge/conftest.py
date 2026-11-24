@@ -84,7 +84,7 @@ os.environ.setdefault("USAGE_ANALYTICS_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("FILES_LIST_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("COMPACTION_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("REFRESH_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
-os.environ.setdefault("WS_CONNECT_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
+os.environ.setdefault("STREAM_CONNECT_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("WORKFLOW_READ_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("WORKFLOW_MUTATE_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
 os.environ.setdefault("WORKFLOW_BUILDER_RATE_LIMIT_MAX_ATTEMPTS", "1000000")
@@ -119,6 +119,7 @@ from engine.inference.event_log import event_log as run_event_log
 from engine.agents.trial_drafts import trial_drafts
 from engine.automation.workflow_runs import workflow_event_log
 from engine.inference.channel import conversation_channel
+from engine.inference.steering import steer_doorbell
 from engine.inference.tasks.streams import task_streams
 from engine.conversations.favicons import favicon_cache
 
@@ -129,7 +130,7 @@ from engine.conversations.favicons import favicon_cache
 # still swap their own in (test_event_log, test_multi_account).
 _REDIS_HOLDERS = (
     logout_denylist, session_revocation, refresh_guard, parked_sessions, compaction_locks, run_event_log, trial_drafts,
-    workflow_event_log, conversation_channel, task_streams, favicon_cache,
+    workflow_event_log, conversation_channel, task_streams, favicon_cache, steer_doorbell,
 )
 # Holders with a second pool for blocking stream reads.
 _REDIS_READERS = (run_event_log, workflow_event_log, conversation_channel, task_streams)

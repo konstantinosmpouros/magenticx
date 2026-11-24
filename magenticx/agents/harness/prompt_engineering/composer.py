@@ -17,11 +17,12 @@ one answer to "what does the prompt look like":
 6. citations — how to cite the ``[src:ID]`` sources a search tool returns
 7. efficient file work
 8. working out loud — short updates to the user between tool calls
-9. long-term memory
-10. the current date and time
+9. messages the user sends while the agent works (steering)
+10. long-term memory
+11. the current date and time
 
-Stable sections first, volatile last: 1-9 are fixed for a given agent and run,
-so a provider can cache that prefix, while 10 changes every minute. Reversing
+Stable sections first, volatile last: 1-10 are fixed for a given agent and run,
+so a provider can cache that prefix, while 11 changes every minute. Reversing
 those two would cost the cache on every request — see ``temporal_prompt``.
 
 Every section returns "" when its feature is off, so an agent with nothing
@@ -37,6 +38,7 @@ from harness.prompt_engineering.prompts.efficiency_prompt import efficiency_prom
 from harness.prompt_engineering.prompts.filesystem_prompt import filesystem_prompt
 from harness.prompt_engineering.prompts.memory_prompt import memory_prompt
 from harness.prompt_engineering.prompts.progress_prompt import progress_prompt
+from harness.prompt_engineering.prompts.steering_prompt import steering_prompt
 from harness.prompt_engineering.prompts.temporal_prompt import temporal_prompt
 
 #: The platform sections, in composition order. A section is `(name, builder)`;
@@ -49,6 +51,7 @@ _SECTIONS = (
     ("citations", citations_prompt),
     ("efficiency", efficiency_prompt),
     ("progress", progress_prompt),
+    ("steering", steering_prompt),
     ("memory", memory_prompt),
     ("temporal", temporal_prompt),
 )

@@ -86,7 +86,7 @@ export type InferenceStartResponse = {
  */
 export type InferenceStartOutcome =
   | { queued: false; response: InferenceStartResponse }
-  | { queued: true; queuedMessage: QueuedMessage | null };
+  | { queued: true; queuedMessages: QueuedMessage[] };
 
 // Wire frames from the inference run stream. "snapshot" carries the full
 // state (terminal runs: DB-built run+message; in-flight runs: run.rawEvents

@@ -62,7 +62,7 @@ from core.database import (
 )
 from core.logging import get_logger
 from core.settings import settings
-from schema import InferenceRunOut, OutboxItem
+from schema import InferenceRunOut, OutboxItem, queued_items_from_column
 from engine.account.status import open_deletion
 from engine.agents.catalog import get_agent_by_id
 from engine.inference.tasks.tasks import (
@@ -72,7 +72,7 @@ from engine.inference.tasks.tasks import (
     agents_mark_notified,
     upsert_task_mirror,
 )
-from engine.inference.composer_queue import pending_queue_conversations, send_queued_message
+from engine.inference.composer_queue import pending_queue_conversations, send_queued_messages
 from engine.inference.channel import publish_run_started
 from engine.inference.runs.manager import inference_run_manager
 from engine.inference.runs.finish import register_run_finished_hook
@@ -338,9 +338,9 @@ async def on_run_finished(run_id: str, session_factory: SessionFactory) -> None:
         if conversation is None or conversation.is_trial:
             return
         conversation_id, user_id = conversation.id, conversation.user_id
-        has_queued = conversation.queued_message is not None
+        has_queued = bool(queued_items_from_column(conversation.queued_messages))
         stopped_by_user = run.streaming_cancel_requested_at is not None
-    if has_queued and await send_queued_message(conversation_id, after_run_id=run_id, session_factory=session_factory):
+    if has_queued and await send_queued_messages(conversation_id, after_run_id=run_id, session_factory=session_factory):
         return
     if not settings.async_tasks.enabled:
         return
@@ -361,7 +361,7 @@ async def reconcile_once(session_factory: Optional[SessionFactory] = None) -> No
             db, older_than_seconds=settings.async_tasks.queue_sweep_after_seconds
         )
     for conversation_id in due:
-        await send_queued_message(conversation_id, session_factory=session_factory)
+        await send_queued_messages(conversation_id, session_factory=session_factory)
 
     try:
         items = await agents_list_unnotified(settings.async_tasks.unnotified_limit)

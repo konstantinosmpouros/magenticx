@@ -87,6 +87,27 @@ def test_apply_thinking_text_appends_thought():
     assert runtime.thoughts == ["step one", "step two"]
 
 
+def test_a_streamed_thought_is_one_step_live_and_stored():
+    """A thought streams as START, CONTENT pieces, END: one reasoning step and one
+    stored event per thought, so a reload shows the steps the live stream did."""
+    runtime = InferenceRunRuntime()
+    for event in (
+        {"type": "THINKING_START"},
+        {"type": "THINKING_TEXT_MESSAGE_START"},
+        {"type": "THINKING_TEXT_MESSAGE_CONTENT", "delta": "Look it "},
+        {"type": "THINKING_TEXT_MESSAGE_CONTENT", "delta": "up."},
+        {"type": "THINKING_TEXT_MESSAGE_END"},
+        {"type": "THINKING_TEXT_MESSAGE_START"},
+        {"type": "THINKING_TEXT_MESSAGE_CONTENT", "delta": "Answer short."},
+        {"type": "THINKING_TEXT_MESSAGE_END"},
+    ):
+        runtime.apply_event(event)
+
+    assert runtime.thoughts == ["Look it up.", "Answer short."]
+    stored = [e["delta"] for e in runtime.raw_events if e["type"] == "THINKING_TEXT_MESSAGE_CONTENT"]
+    assert stored == ["Look it up.", "Answer short."]
+
+
 def test_apply_tool_call_start_records_tool_thought():
     runtime = InferenceRunRuntime()
     runtime.apply_event({"type": "TOOL_CALL_START", "toolCallName": "search"})

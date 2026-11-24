@@ -25,7 +25,20 @@ def _payloads(frames):
 
 
 def _thoughts(events):
-    return [e["delta"] for e in events if e["type"] == "THINKING_TEXT_MESSAGE_CONTENT"]
+    """Each thought's whole text: its streamed pieces joined, START to END."""
+    thoughts: list[str] = []
+    open_ = False
+    for e in events:
+        if e["type"] == "THINKING_TEXT_MESSAGE_START":
+            thoughts.append("")
+            open_ = True
+        elif e["type"] == "THINKING_TEXT_MESSAGE_CONTENT":
+            if not open_:
+                thoughts.append("")
+            thoughts[-1] += e["delta"]
+        elif e["type"] == "THINKING_TEXT_MESSAGE_END":
+            open_ = False
+    return thoughts
 
 
 def _summary_chunk(part: int, text: str, *, block: int = 0) -> AIMessageChunk:
@@ -155,7 +168,7 @@ def test_reasoning_parts_shapes():
 
 # --- the normalizer -------------------------------------------------------------
 
-def test_streamed_summary_parts_become_one_thought_each_before_the_reply():
+def test_streamed_summary_parts_stream_as_one_thought_each_before_the_reply():
     norm = AGUIStreamNormalizer(thread_id="t-rs")
     frames = []
     for chunk in (
@@ -166,11 +179,14 @@ def test_streamed_summary_parts_become_one_thought_each_before_the_reply():
     ):
         frames += norm.handle_chunk(("messages", chunk))
     events = _payloads(frames)
-    # One thinking phase, each part a complete thinking text message, ended
-    # right before the reply's text message starts.
+    # One thinking phase; each part one thinking text message whose pieces go
+    # out as they arrive (never held to the part's end); ended right before
+    # the reply's text message starts.
     assert [e["type"] for e in events] == [
         "THINKING_START",
-        "THINKING_TEXT_MESSAGE_START", "THINKING_TEXT_MESSAGE_CONTENT", "THINKING_TEXT_MESSAGE_END",
+        "THINKING_TEXT_MESSAGE_START",
+        "THINKING_TEXT_MESSAGE_CONTENT", "THINKING_TEXT_MESSAGE_CONTENT", "THINKING_TEXT_MESSAGE_CONTENT",
+        "THINKING_TEXT_MESSAGE_END",
         "THINKING_TEXT_MESSAGE_START", "THINKING_TEXT_MESSAGE_CONTENT", "THINKING_TEXT_MESSAGE_END",
         "THINKING_END",
         "TEXT_MESSAGE_START", "TEXT_MESSAGE_CHUNK",
@@ -188,17 +204,18 @@ def test_streamed_summary_parts_become_one_thought_each_before_the_reply():
 
 def test_a_streamed_thought_goes_out_before_the_tool_call_it_led_to():
     norm = AGUIStreamNormalizer(thread_id="t-rs")
-    frames = norm.handle_chunk(("messages", _summary_chunk(0, "**Search**\n\nI need the docs.")))
-    assert frames == []  # held until the part is complete
+    live = _payloads(norm.handle_chunk(("messages", _summary_chunk(0, "**Search**\n\nI need the docs."))))
+    # Sent at once, not held until the part is complete.
+    assert [e["type"] for e in live] == [
+        "THINKING_START", "THINKING_TEXT_MESSAGE_START", "THINKING_TEXT_MESSAGE_CONTENT",
+    ]
     final = AIMessage(content=[{"type": "reasoning", "index": 0, "summary": [{"index": 0, "text": "**Search**\n\nI need the docs."}]}],
                       tool_calls=[{"id": "tc-1", "name": "search", "args": {"q": "docs"}}])
     events = _payloads(norm.handle_chunk(("updates", {"model": {"messages": [final]}})))
     types = [e["type"] for e in events]
-    assert types[:6] == [
-        "THINKING_START", "THINKING_TEXT_MESSAGE_START", "THINKING_TEXT_MESSAGE_CONTENT", "THINKING_TEXT_MESSAGE_END",
-        "TOOL_CALL_START", "TOOL_CALL_ARGS",
-    ]
-    assert _thoughts(events) == ["**Search**\n\nI need the docs."]
+    # The settle ends the thought before the tool call it led to, without repeating it.
+    assert types[:3] == ["THINKING_TEXT_MESSAGE_END", "TOOL_CALL_START", "TOOL_CALL_ARGS"]
+    assert _thoughts(live + events) == ["**Search**\n\nI need the docs."]
 
 
 def test_updates_only_streams_send_every_part_from_the_final_message():

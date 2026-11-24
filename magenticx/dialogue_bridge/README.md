@@ -6,7 +6,7 @@ The `dialogue_bridge` service is the backend-for-frontend layer for the Agentic 
 - stateless, KMS-signed session cookies and CSRF protection
 - Postgres persistence for users, conversations, messages, attachments, blobs, and user preferences
 - agent catalog caching and tool catalog proxying
-- detached inference run lifecycle — server-owned asyncio tasks with WebSocket observers backed by per-run Redis Streams
+- detached inference run lifecycle — server-owned asyncio tasks with Server-Sent Events observers backed by per-run Redis Streams
 
 This README documents the current implementation under `magenticx/dialogue_bridge`.
 
@@ -19,7 +19,7 @@ The bridge is the main application-facing API. It owns seven major areas:
 3. Persistence of chat state and binary attachments.
 4. Proxying agent capabilities from the `agents` service.
 5. Browser-facing safety concerns such as CSRF, CORS, rate limiting, and proxy-aware client IP handling.
-6. Detached inference run lifecycle — spawning server-owned asyncio tasks, appending AG-UI events to per-run Redis Streams, serving WebSocket observers with cursor-based replay, and writing the terminal snapshot to Postgres on completion.
+6. Detached inference run lifecycle — spawning server-owned asyncio tasks, appending AG-UI events to per-run Redis Streams, serving SSE observers with cursor-based replay, and writing the terminal snapshot to Postgres on completion.
 7. Workflow runs (plan 38) — starting, resuming and cancelling runs of the user's workflows, persisting every engine event to `workflow_run_events`, and serving history + live tail over SSE (definitions themselves are proxied to the agents service).
 
 It does not:
@@ -61,7 +61,7 @@ flowchart LR
 - caches active agent manifests from the `agents` service
 - proxies MCP tool catalog requests through the bridge (an empty list when MCP is off on the agents service)
 - proxies dictation uploads to the `agents` speech-to-text endpoint
-- owns detached inference runs and exposes WebSocket observer streams to the browser (with a deprecated SSE endpoint kept for one release cycle)
+- owns detached inference runs and exposes Server-Sent Events observer streams to the browser
 
 ### 3.4 User preferences
 
@@ -77,7 +77,7 @@ flowchart TD
     B -->|conversations/messages| E[Postgres via SQLAlchemy]
     B -->|inference| F[Start run + AI placeholder]
     F --> G[Detached task posts to agents stream]
-    G --> H[WebSocket observer fan-out via Redis Stream]
+    G --> H[SSE observer fan-out via Redis Stream]
     B -->|attachments| I[Blob streaming / image pagination]
 ```
 
@@ -376,7 +376,7 @@ sequenceDiagram
     Bridge->>DB: persist user action + AI placeholder (streaming_status='queued')
     Bridge->>Task: launch(message.id)
     Bridge->>UI: detail + summary + run + assistant message
-    UI->>Bridge: WS /v1/inference/runs/{user}/{run}/ws (subscribe since=null)
+    UI->>Bridge: GET /v1/inference/runs/{user}/{run}/events (SSE, no cursor)
     Bridge-->>UI: DB snapshot if already terminal, otherwise live tail
     Task->>DB: load conversation + messages + attachments
     Task->>Task: validate messagePath
@@ -475,16 +475,14 @@ The endpoint returns the latest conversation detail/summary, the run shape (buil
 
 ### 11.3 Observer subscription
 
-Browsers connect via WebSocket at `/v1/inference/runs/{user_id}/{run_id}/ws`. The handler authenticates the session cookie, accepts the upgrade, waits for the client's first frame (`{"type": "subscribe", "since": "<seq>" | null}`), then drives `stream_run_events(run_id, since=since)`:
+Browsers read `GET /v1/inference/runs/{user_id}/{run_id}/events` as Server-Sent Events. The normal HTTP dependencies check the session (`401`), the per-user connect limit (`429`), the run's owner (`404`) and the cursor (`?since=` or `Last-Event-ID`, `400` unless a Redis entry id), then `stream_run_events(run_id, since=since)` drives the response:
 
-1. if the run is already terminal, a single `{"type": "snapshot", "payload": ...}` frame is sent from the Postgres snapshot and the connection closes
-2. otherwise, the handler `XREAD BLOCK`s the Redis stream from the supplied cursor (or `0` for full backlog), sending each event as `{"type": "event", "seq": "<stream-id>", "payload": ...}`
-3. when a terminal-status event is seen, a `{"type": "terminal"}` frame is sent and the connection closes cleanly
-4. on transient disconnect the client reconnects with `since=<last-seen-seq>`; missed events are replayed from Redis up to the TTL window (1 h after terminal)
+1. on a fresh subscribe (no cursor), one `event: snapshot` — the Postgres state of a terminal run, or a synthesized live snapshot of an in-flight one
+2. then `event: event` with `id: <stream-id>` per Redis stream entry (the new AG-UI events of one upstream chunk), read with `XREAD BLOCK` from the cursor
+3. `event: terminal` with the DB-built final state, after which the stream ends; `: ping` comments every `INFERENCE_SSE_HEARTBEAT_SECONDS` keep a quiet stream open
+4. on a drop the client reconnects with `since=<last-seen-seq>`; missed events are replayed from Redis up to the TTL window (1 h after terminal)
 
-The legacy SSE endpoint at `GET /v1/inference/runs/{user_id}/{run_id}/stream` is kept for one release cycle so older clients can still observe; it reads from the same Redis stream and emits `text/event-stream` frames without sequence-ID metadata. New code should use the WebSocket route.
-
-Multiple browsers can observe the same run simultaneously — Redis Streams support fan-out natively (each WebSocket handler is an independent `XREAD` consumer).
+Multiple browsers can observe the same run simultaneously — Redis Streams support fan-out natively (each stream response is an independent `XREAD` consumer).
 
 ### 11.4 Cancellation
 
@@ -497,7 +495,7 @@ When the agent emits `__interrupt__`, the agents-service normalizer turns it int
 - **empty** → genuine completion → terminal write + Redis EXPIRE.
 - **non-empty** → the run is paused on a checkpoint. `_run` keeps the task alive and races `cancel_event` against a per-run `resume_event`.
 
-`POST /v1/inference/runs/{user_id}/{run_id}/resume` carries the user's decision (`approve` / `reject`, plus optional `reason` / `value`) into `InferenceRunManager.request_resume(run_id, payload)`, which stores the payload and flips the event. `_run` wakes, removes the payload's `interrupt_id` from the pending set (falling back to the oldest entry when absent), and spawns `_do_resume(...)` — a parallel to `_do_stream` that POSTs to the agents service's `/agents/{slug}/resume` endpoint. The agents service rehydrates the cached `InMemorySaver` for the same `thread_id` and feeds `Command(resume=...)` into `graph.astream(...)`. New events flow back through the same Redis stream the original run wrote to, so the WebSocket observers transparently see the resumed activity. A 409 from the agents service (no cached checkpoint — e.g., process restart between interrupt and resume) is translated into a failed terminal status with a user-readable error message.
+`POST /v1/inference/runs/{user_id}/{run_id}/resume` carries the user's decision (`approve` / `reject`, plus optional `reason` / `value`) into `InferenceRunManager.request_resume(run_id, payload)`, which stores the payload and flips the event. `_run` wakes, removes the payload's `interrupt_id` from the pending set (falling back to the oldest entry when absent), and spawns `_do_resume(...)` — a parallel to `_do_stream` that POSTs to the agents service's `/agents/{slug}/resume` endpoint. The agents service rehydrates the cached `InMemorySaver` for the same `thread_id` and feeds `Command(resume=...)` into `graph.astream(...)`. New events flow back through the same Redis stream the original run wrote to, so the stream observers transparently see the resumed activity. A 409 from the agents service (no cached checkpoint — e.g., process restart between interrupt and resume) is translated into a failed terminal status with a user-readable error message.
 
 ### 11.6 DB write policy
 
@@ -657,7 +655,7 @@ Either `content` or at least one attachment must be present for non-placeholder 
 | --- | --- | --- |
 | `/v1/inference/runs/{user_id}/start` | `POST` | Backend-owned start for new, send, edit, retry, and shared continuation |
 | `/v1/inference/runs/{user_id}` | `GET` | List runs (`?status=active` for hydration) |
-| `/v1/inference/runs/{user_id}/{run_id}/ws` | `WS` | WebSocket observer with `since=<seq>` resume — replays from Redis Stream |
+| `/v1/inference/runs/{user_id}/{run_id}/events` | `GET` | SSE observer with `since=<seq>` / `Last-Event-ID` resume — replays from Redis Stream |
 | `/v1/inference/runs/{user_id}/{run_id}/stream` | `GET` | **Deprecated** legacy SSE observer; kept for one release cycle |
 | `/v1/inference/runs/{user_id}/{run_id}/cancel` | `POST` | Signal asyncio cancel |
 | `/v1/inference/runs/{user_id}/{run_id}/resume` | `POST` | Approve / reject a HITL `__interrupt__` paused on the agents-service checkpoint and resume the run |
@@ -970,7 +968,7 @@ Configured environment there includes:
 - Microsoft Entra ID is the only way to sign in; there is no password route.
 - The bridge stores raw binary blobs in Postgres, not in external object storage.
 - Image attachments are returned as base64 in the image pagination endpoint.
-- Inference runs survive browser disconnects. The asyncio background task continues regardless of whether any WebSocket observer is connected. A reconnecting observer resends `{"type":"subscribe","since":<lastSeq>}`; the handler replays missed events from the per-run Redis stream and then continues live-tailing. If the run already terminated, the handler emits a single Postgres-backed snapshot frame and closes.
+- Inference runs survive browser disconnects. The asyncio background task continues regardless of whether any stream observer is connected. A reconnecting observer resends `{"type":"subscribe","since":<lastSeq>}`; the handler replays missed events from the per-run Redis stream and then continues live-tailing. If the run already terminated, the handler emits a single Postgres-backed snapshot frame and closes.
 - On startup, `cleanup_orphaned_inference_runs()` marks any rows still in `queued`, `running`, or `cancelling` status as `failed`. This covers runs that were interrupted by a process restart and prevents stale active-run locks from blocking new inference on those conversations.
 
 ## 22. Quick File References
@@ -980,7 +978,7 @@ Configured environment there includes:
 - `core/auth/oidc.py`: Microsoft Entra sign-in
 - `core/auth/signing.py`: session signing keys (OCI KMS / dev file key)
 - `core/database/models.py`: ORM schema
-- `router/inference/runs.py`: backend-owned inference start, WebSocket observation (`inference_run_websocket`), deprecated SSE fallback, cancellation, and active-run listing
+- `router/inference/runs.py`: backend-owned inference start, SSE observation (`stream_inference_run_events`), cancellation, and active-run listing
 - `router/inference/speech.py`: speech and dictation endpoints
 - `engine/inference/history.py`: branch resolution and multimodal serialization
 - `engine/inference/runs/`: detached run lifecycle — InferenceRunManager, InferenceRunRuntime, create/observe/cleanup

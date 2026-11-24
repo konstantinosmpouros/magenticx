@@ -180,9 +180,11 @@ class TaskResumeIn(InferenceRunResumeIn):
 
 
 class QueuedMessageOut(BaseModel):
-    """The conversation's one queued composer message (§3.6, §14.4)."""
+    """One of the conversation's queued composer messages (§3.6, §14.4)."""
     model_config = ConfigDict(extra="ignore")
 
+    #: Stable per message: the composer cancels one by it (``DELETE …/queued-messages/{id}``).
+    id: str
     content: Optional[str] = None
     command: Optional[CommandInvocation] = None
     # The reasoning effort picked with it; re-sent with the message (engine/inference/composer_queue.py).
@@ -193,9 +195,10 @@ class QueuedMessageOut(BaseModel):
 
 class QueuedStartResponse(BaseModel):
     """``POST /runs/{user_id}/start`` with ``queue_if_busy`` on a busy
-    conversation: 202, the message is held and sent when the run ends."""
+    conversation: 202, the message joins the queue (the whole queue, in order,
+    the new one last) and is sent when the run ends — or read by it mid-run."""
     queued: Literal[True] = True
-    queued_message: QueuedMessageOut
+    queued_messages: list[QueuedMessageOut]
 
 
 # Conversation channel frames (§14.4) — the server side of
@@ -214,15 +217,32 @@ class RunStartedFrame(BaseModel):
 
 
 class QueueFrame(BaseModel):
+    """The composer queue as it now is: every queued message, oldest first (``[]`` when empty)."""
     type: Literal["queue"] = "queue"
-    queued_message: Optional[QueuedMessageOut] = None
+    queued_messages: list[QueuedMessageOut] = Field(default_factory=list)
 
 
-def queued_message_from_column(value: Any) -> Optional[QueuedMessageOut]:
-    """``conversations.queued_message`` → its wire shape, or None when empty/invalid."""
-    if not isinstance(value, dict):
+def queued_items_from_column(value: Any) -> list[dict[str, Any]]:
+    """``conversations.queued_messages`` → its stored items, oldest first.
+
+    A list of dicts; anything else (NULL, or an item that is not a dict) reads
+    as empty / is skipped, so a damaged value can never block the queue.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def queued_message_from_item(item: Any) -> Optional[QueuedMessageOut]:
+    """One stored queue item → its wire shape, or None when it is unreadable."""
+    if not isinstance(item, dict):
         return None
     try:
-        return QueuedMessageOut.model_validate(value)
+        return QueuedMessageOut.model_validate(item)
     except ValueError:
         return None
+
+
+def queued_messages_from_column(value: Any) -> list[QueuedMessageOut]:
+    """``conversations.queued_messages`` → the wire shapes of its readable items."""
+    return [m for m in (queued_message_from_item(i) for i in queued_items_from_column(value)) if m is not None]

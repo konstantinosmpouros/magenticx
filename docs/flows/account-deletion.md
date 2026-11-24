@@ -71,7 +71,7 @@ Nothing is deleted; everything is **gated**, so a cancel restores the account ex
 | Signing in | allowed — the token carries `pdl` (pending deletion), set from the database at sign-in, refresh and account switch |
 | API calls | `require_current_user` refuses a `pdl` session with 403, from the token alone (no database read on the hot path) |
 | Still open | deletion status and cancel, the [data export](data-export.md), sign-out — via `require_current_user_even_if_pending` / `validate_userId_even_if_pending` |
-| Live run streams (WebSocket) | refused |
+| Live streams (run, conversation channel, task drill-down — SSE) | refused, like any API call (403) |
 | Scheduled tasks | skipped by the scheduler's claim query, not modified |
 | Public share links | answer 404, not revoked |
 | The UI | the start-up bootstrap loads nothing and the shell shows only the pending screen: the date, *Cancel deletion*, *Download my data*, *Sign out* |

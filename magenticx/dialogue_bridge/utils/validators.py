@@ -1,4 +1,7 @@
-from fastapi import Depends, HTTPException
+import re
+from typing import Optional
+
+from fastapi import Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -11,6 +14,24 @@ from core.database import (
     get_db,
 )
 from core.auth.session import AuthUser, require_bound_user_id, require_bound_user_id_even_if_pending
+
+
+# A `since` cursor / `Last-Event-ID` is a Redis stream entry id ("<ms>-<n>").
+_STREAM_CURSOR = re.compile(r"^\d{1,20}-\d{1,20}$")
+
+
+async def validate_stream_cursor(
+    since: Optional[str] = Query(None, max_length=64),
+    last_event_id: Optional[str] = Header(None, alias="Last-Event-ID", max_length=64),
+) -> Optional[str]:
+    """The resume cursor of an SSE stream: ``?since=`` or, failing that, the
+    ``Last-Event-ID`` header a reconnecting client sends. Both are Redis stream
+    entry ids; anything else is refused with 400 before the stream opens, so a
+    bad cursor never reaches an ``XREAD``."""
+    cursor = since or last_event_id or None
+    if cursor is not None and not _STREAM_CURSOR.match(cursor):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid stream cursor.")
+    return cursor
 
 
 async def validate_userId(

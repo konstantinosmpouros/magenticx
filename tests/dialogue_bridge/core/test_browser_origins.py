@@ -1,5 +1,6 @@
-"""Which browser origins the bridge trusts: CORS in production, and the
-``Origin`` check on every WebSocket handshake (cross-site WebSocket hijacking)."""
+"""Which browser origins the bridge trusts: CORS, in production too. The live
+streams are plain HTTP (SSE), so the same CORS guards them: a page on a sibling
+subdomain is sent the user's cookie but may never read a stream's response."""
 
 from __future__ import annotations
 
@@ -10,10 +11,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
-from starlette.websockets import WebSocketDisconnect
 
 import core.settings as settings_module
-from core.auth.session import websocket_origin_allowed
+from utils.validators import validate_userId
 from core.settings import (
     AppSettings,
     CorsSettings,
@@ -25,48 +25,29 @@ from core.settings import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 EVIL = "https://evil.magenticx.com"
-SOCKETS = [
-    "/v1/tasks/{user}/task-1/ws",
-    "/v1/conversations/{user}/conv-1/ws",
-    "/v1/inference/runs/{user}/run-1/ws",
+STREAMS = [
+    "/v1/tasks/{user}/task-1/events",
+    "/v1/conversations/{user}/conv-1/events",
+    "/v1/inference/runs/{user}/run-1/events",
 ]
 
 
-# --- the WebSocket Origin check ---------------------------------------------------
+# --- the live streams ---------------------------------------------------------------
 
-@pytest.mark.parametrize("headers, allowed", [
-    ({}, True),                                   # no browser: the session check decides
-    ({"origin": "http://localhost:8050"}, True),  # a configured origin
-    ({"origin": "HTTP://LOCALHOST:8050/"}, True),  # case and a trailing slash don't matter
-    ({"origin": EVIL}, False),                    # a sibling subdomain
-    ({"origin": "null"}, False),                  # a sandboxed frame or a file
-])
-def test_websocket_origin_allowed(headers, allowed):
-    assert "http://localhost:8050" in settings.cors.allowed_origins
-    assert websocket_origin_allowed(headers) is allowed
+@pytest.mark.parametrize("path", STREAMS)
+async def test_a_foreign_origin_is_never_allowed_to_read_a_stream(client, seeded_user, path):
+    response = await client.get(path.format(user=seeded_user.id), headers={"origin": EVIL})
+    assert response.headers.get("access-control-allow-origin") != EVIL
 
 
-@pytest.mark.parametrize("path", SOCKETS)
-def test_every_socket_refuses_a_foreign_origin_before_anything_else(app, seeded_user, path):
+@pytest.mark.parametrize("path", STREAMS)
+async def test_a_stream_needs_a_session(app, seeded_user, path, monkeypatch):
+    # The real session check, not the suite's signed-in stand-in.
+    monkeypatch.delitem(app.dependency_overrides, validate_userId)
     # No `with`: the app's lifespan (migrations, loops) must not run here.
     client = TestClient(app)
-    with (
-        pytest.raises(WebSocketDisconnect) as refused,
-        client.websocket_connect(path.format(user=seeded_user.id), headers={"origin": EVIL}),
-    ):
-        pass
-    assert refused.value.code == 4403
-
-
-@pytest.mark.parametrize("path", SOCKETS)
-def test_an_allowed_origin_still_needs_a_session(app, seeded_user, path):
-    client = TestClient(app)
-    with (
-        pytest.raises(WebSocketDisconnect) as refused,
-        client.websocket_connect(path.format(user=seeded_user.id), headers={"origin": "http://localhost:8050"}),
-    ):
-        pass
-    assert refused.value.code == 4401
+    response = client.get(path.format(user=seeded_user.id), headers={"origin": "http://localhost:8050"})
+    assert response.status_code == 401
 
 
 # --- production CORS ----------------------------------------------------------------

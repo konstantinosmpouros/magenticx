@@ -163,6 +163,50 @@ def prepare_inference_history(
     return history_messages, history
 
 
+def stacked_user_turn(messages: list[MessageTable], last: MessageTable) -> list[MessageTable]:
+    """The user messages a run answers, oldest first: ``last`` and the user
+    messages stacked right above it.
+
+    Usually just ``last``. Queued messages go out stacked — each its own user
+    message, one under the other, answered once (``composer_queue``) — and a
+    run continuing a saved checkpoint is sent only what is new, so it must get
+    the whole stack, not its last message. The walk stops at the first answer.
+    """
+    by_id = {m.id: m for m in messages}
+    turn = [last]
+    parent = by_id.get(last.parent_message_id) if last.parent_message_id else None
+    while parent is not None and parent.sender == "user":
+        turn.append(parent)
+        parent = by_id.get(parent.parent_message_id) if parent.parent_message_id else None
+    return list(reversed(turn))
+
+
+def with_interjections(
+    history_messages: list[MessageTable],
+    history: list[dict],
+    by_answer: dict[str, list[MessageTable]],
+    *,
+    include_input_paths: bool = False,
+) -> list[dict]:
+    """``history`` with each answer's interjections (steering) put back in front of it.
+
+    A message the user sent while an answer ran was read by that answer
+    mid-way, so a rebuilt history shows it just before the answer it shaped —
+    the closest a flat history gets to "after that answer's tool results". The
+    rows are not in the branch tree (``ConversationTable.messages``), so the
+    path ``history`` was built from does not carry them.
+    """
+    if not by_answer:
+        return history
+    out: list[dict] = []
+    for message, serialised in zip(history_messages, history):
+        if message.sender == "ai":
+            for row in by_answer.get(message.id, ()):
+                out.append(serialise_message_with_images_for_agent(row, include_input_paths=include_input_paths))
+        out.append(serialised)
+    return out
+
+
 def serialise_message_with_images_for_agent(msg: MessageTable, *, include_input_paths: bool = False) -> dict:
     """
     Convert a MessageTable (with attachments) into a LangChain message with multimodal content.

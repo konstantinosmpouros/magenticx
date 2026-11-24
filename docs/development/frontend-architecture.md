@@ -69,7 +69,7 @@ src/
                    #   useInferenceRuns, useRunTimeline, inferenceErrors, index (barrel);
                    #   async sub-agent tasks (plan 41): taskTree (the conversation-level
                    #   tree fold), useBackgroundTasks (tree + conversation channel + task
-                   #   sockets + composer queue), backgroundTasks-context
+                   #   streams + composer queue), backgroundTasks-context
     automations/   # the Automations page (plan 38): AutomationsPage, automations_parts/*
                    #   (AutomationCard, ScheduleForm, AutomationFormDialog, AutomationToolbar,
                    #   TemplateSection, TemplateCard, EmptyState, ErrorState), hooks/useAutomations,

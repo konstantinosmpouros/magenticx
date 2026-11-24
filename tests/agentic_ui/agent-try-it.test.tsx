@@ -25,7 +25,7 @@ const api = vi.hoisted(() => ({
   startAgentTrial: vi.fn(),
   resetAgentTrial: vi.fn(async () => undefined),
   cancelInferenceRun: vi.fn(),
-  connectInferenceWebSocket: vi.fn(async () => undefined),
+  connectInferenceStream: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/shared/lib/api", async (importOriginal) => ({
@@ -313,13 +313,13 @@ describe("Try it", () => {
     const live = started(1, "Hi", "");
     live.run.status = "running";
     api.startAgentTrial.mockResolvedValueOnce(live);
-    api.connectInferenceWebSocket.mockImplementationOnce(() => new Promise(() => undefined));
+    api.connectInferenceStream.mockImplementationOnce(() => new Promise(() => undefined));
     api.cancelInferenceRun.mockResolvedValueOnce({ ...live.run, status: "cancelled" });
     renderAt("/agents/new?via=canvas");
     await fill();
     const panel = await openTryIt();
     await sendFrom(panel, "Hi");
-    expect(api.connectInferenceWebSocket).toHaveBeenCalledWith(
+    expect(api.connectInferenceStream).toHaveBeenCalledWith(
       "u1",
       "r1",
       expect.any(Function),

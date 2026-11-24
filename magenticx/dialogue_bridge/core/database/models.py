@@ -314,13 +314,15 @@ class ConversationTable(Base):
     last_context_window = Column(Integer, nullable=True)
     usage_updated_at = Column(DateTime, nullable=True)
 
-    # The composer's one queued message (plan 41 §3.6, migration 0046): a user
-    # message sent while the conversation had an active run, held here and
-    # sent as a normal ``send`` when that run ends. One slot — a second send
-    # replaces it — so a column, not a table. Kept in the database so it
-    # survives a bridge restart. NULL when nothing is queued. Text and a slash
-    # command only, never attachment bytes (engine/inference/composer_queue.py).
-    queued_message = Column(_nullable_jsonb(), nullable=True)
+    # The composer's queued messages (plan 41 §3.6, migrations 0046 / 0053):
+    # user messages sent while the conversation had an active run, oldest
+    # first, held here until that run reads them (steering) or ends — then
+    # the leading plain ones go out stacked under one answer. A short list
+    # (INFERENCE_QUEUE_MAX_MESSAGES), so a column, not a table; kept in the
+    # database so it survives a bridge restart. NULL when nothing is queued.
+    # Text and a slash command only, never attachment bytes
+    # (engine/inference/composer_queue.py).
+    queued_messages = Column(_nullable_jsonb(), nullable=True)
 
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -333,6 +335,15 @@ class ConversationTable(Base):
         cascade="all, delete-orphan",
         passive_deletes=True,
         foreign_keys="MessageTable.conversation_id",
+        # The branch tree only: a message the user sent while a run worked
+        # (kind 'interjection', steering) hangs under the answer that read it
+        # but is not a turn of its own — loaded here it would read as a branch
+        # of that answer or as the conversation's newest leaf. Search,
+        # embeddings and the export query ``messages`` directly and see it.
+        primaryjoin=lambda: and_(
+            MessageTable.conversation_id == ConversationTable.id,
+            or_(MessageTable.kind.is_(None), MessageTable.kind != "interjection"),
+        ),
         # Ties on created_at are real, not theoretical: a run writes the user
         # message and its AI placeholder in one transaction, and Postgres now()
         # is the transaction's start time, so both rows carry the same
@@ -366,8 +377,10 @@ MessageSenderEnum = Enum("user", "ai", name="message_sender_enum")
 # NULL for every ordinary message. ``task_notification`` is the wake-up input
 # row: sender stays "user" because the orchestrator receives it as a
 # HumanMessage, but the UI renders it as a compact system notice — never as
-# the user's words.
-MessageKindEnum = Enum("task_notification", name="message_kind_enum")
+# the user's words. ``interjection`` (migration 0052, steering): a message the
+# user sent while a run worked, which that run read at a step boundary; parented
+# on that answer and kept out of the branch tree (ConversationTable.messages).
+MessageKindEnum = Enum("task_notification", "interjection", name="message_kind_enum")
 
 
 class MessageTable(Base):

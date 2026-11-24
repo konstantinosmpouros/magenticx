@@ -4,7 +4,8 @@ A deep agent streams ``["messages", "updates"]``:
 
 * ``messages`` - token chunks: the reply text and the reasoning summary.
 * ``updates``  - settled node outputs: tool calls and results, the plan,
-  interrupts, token usage, pulled task notifications.
+  interrupts, token usage, pulled task notifications, and the user's messages
+  read mid-run (steering).
 
 Nothing runs nested in the graph: every sub-agent is a background task (plan
 41) streaming on its own thread through a normalizer of its own, so one
@@ -23,6 +24,7 @@ from pydantic import ValidationError
 from core.logging import get_logger
 from harness.agui.emitter import AGUIEmitter, Event, encode
 from harness.middlewares.sources import SOURCES_KEY
+from harness.middlewares.steering import INTERJECTION_DATA_KEY, INTERJECTION_SOURCE
 from harness.middlewares.summarization import COMPACTION_KEY
 from harness.middlewares.tool_metrics import TOOL_METRICS_KEY
 from harness.middlewares.usage_metrics import METRICS_KEY as USAGE_METRICS_KEY
@@ -60,6 +62,9 @@ class _RunMemory:
     """
 
     launched: set[str] = field(default_factory=set)  # TASK_LAUNCHED sent (a resume replays results)
+    # USER_INTERJECTION sent, by (text, queued_at): a later state update can
+    # carry the same message again (with its id by then), and a resume replays.
+    interjections: set[tuple[str, str | None]] = field(default_factory=set)
 
 
 _RUNS: dict[str, _RunMemory] = {}
@@ -189,10 +194,15 @@ class _Call:
 
 @dataclass
 class _Thought:
-    """The current reasoning-summary part, held until it is complete."""
+    """The current reasoning-summary part, streamed as it arrives.
+
+    One part is one thought step in the UI: THINKING_TEXT_MESSAGE_START when
+    its first visible text arrives, a CONTENT event per streamed piece, END
+    when the next part (or the reply, or the settle) begins.
+    """
 
     part: str | None = None
-    text: str = ""
+    sent: bool = False  # this part's THINKING_TEXT_MESSAGE_START is out, its END not yet
     streamed: bool = False  # this model call's parts came over "messages"
     open: bool = False  # THINKING_START sent, THINKING_END not yet
 
@@ -305,7 +315,7 @@ class AGUIStreamNormalizer:
 
     # -------------------------------------------------------- messages mode
     def _on_message(self, msg: Any, metadata: dict[str, Any] | None) -> list[Event]:
-        """A token chunk: reasoning (held per part) and reply text; or a tool result."""
+        """A token chunk: reasoning (streamed per part) and reply text; or a tool result."""
         if isinstance(metadata, dict) and metadata.get("lc_source") == "summarization":
             # A compaction's internal summary call: never the reply.
             return self._on_summary_call(msg)
@@ -351,7 +361,7 @@ class AGUIStreamNormalizer:
                     self._on_tool_result(out, msg)
                 elif kind == "ai":
                     self._on_model_reply(out, msg, node, meta)
-                else:
+                elif not self._on_interjection(out, msg):
                     self._on_task_notification(out, msg, node, update)
         return out
 
@@ -386,19 +396,33 @@ class AGUIStreamNormalizer:
 
     # -------------------------------------------------------------- thoughts
     def _buffer_thought(self, out: list[Event], key: str, text: str) -> None:
-        """A streamed piece of a summary part; a new part sends the one before."""
+        """A streamed piece of a summary part, sent on at once; a new part ends the one before.
+
+        Held back only until the part has visible text, so a part that never
+        says anything opens no step. (Holding whole parts made the reasoning
+        appear as one block after a pause — the lag users saw.)
+        """
         thought = self._thought
         if thought.part is not None and thought.part != key:
             self._flush_thought(out)
         thought.part, thought.streamed = key, True
-        thought.text += text
+        if not thought.sent:
+            text = text.lstrip()
+            if not text:
+                return
+            if not thought.open:
+                thought.open = True
+                self._add(out, self.emitter.thinking_start())
+            self._add(out, self.emitter.thought_start())
+            thought.sent = True
+        self._add(out, self.emitter.thought_delta(text))
 
     def _flush_thought(self, out: list[Event]) -> None:
-        """Send the part held so far as one thought (the UI shows each thought as a step)."""
+        """End the part being streamed (the UI shows each part as one step)."""
         thought = self._thought
-        text, thought.part, thought.text = thought.text.strip(), None, ""
-        if text:
-            self._send_thought(out, text)
+        if thought.sent:
+            self._add(out, self.emitter.thought_end())
+        thought.part, thought.sent = None, False
 
     def _send_thought(self, out: list[Event], text: str) -> None:
         """One thought: THINKING_START once per thinking phase, then the thought as a
@@ -409,7 +433,8 @@ class AGUIStreamNormalizer:
         out.extend(self.emitter.thought(text))
 
     def _close_thinking(self, out: list[Event]) -> None:
-        """The reply starts: the thinking phase before it ends."""
+        """The reply starts: the thinking phase before it ends (a thought still open first)."""
+        self._flush_thought(out)
         if self._thought.open:
             self._thought.open = False
             self._add(out, self.emitter.thinking_end())
@@ -571,6 +596,31 @@ class AGUIStreamNormalizer:
         tool = UPDATE_ASYNC_TASK_TOOL_NAME if action == "update" else START_ASYNC_TASK_TOOL_NAME
         self._tool_card_open(out, call_id, tool, call["args"])
         self._tool_card_close(out, call_id, msg, error=True)
+
+    def _on_interjection(self, out: list[Event], msg: Any) -> bool:
+        """USER_INTERJECTION for a message the user sent while the run worked.
+
+        ``SteeringMiddleware`` adds it to the state before a model call, marked
+        with ``lc_source``; any other human message is not one. Returns whether
+        ``msg`` was one, so it is never read as a task notification too.
+        """
+        kwargs = msg.get("additional_kwargs") if isinstance(msg, Mapping) else getattr(msg, "additional_kwargs", None)
+        if not isinstance(kwargs, Mapping) or kwargs.get("lc_source") != INTERJECTION_SOURCE:
+            return False
+        content = msg.get("content") if isinstance(msg, Mapping) else getattr(msg, "content", None)
+        text = content if isinstance(content, str) else message_text(msg)
+        if not text:
+            return True
+        data = kwargs.get(INTERJECTION_DATA_KEY)
+        queued_at = data.get("queued_at") if isinstance(data, Mapping) else None
+        key = (text, queued_at if isinstance(queued_at, str) else None)
+        if key in self._run.interjections:
+            return True
+        self._run.interjections.add(key)
+        self._add(out, self.emitter.user_interjection(
+            text=text, queued_at=queued_at if isinstance(queued_at, str) else None,
+        ))
+        return True
 
     def _on_task_notification(self, out: list[Event], msg: Any, node: Any, update: Mapping[str, Any]) -> None:
         """TASK_SETTLED_INLINE for a settled task's outcome pulled into the run.

@@ -142,12 +142,12 @@ sequenceDiagram
     B->>A: POST /users/{uid}/custom-agents/validate (422 → issues)
     B->>B: trial conversation (is_trial, is_private) + run record
     B->>R: trial:draft:{run_id} (TTL 2 h)
-    B-->>UI: InferenceStartResponse (observed over the run WebSocket)
+    B-->>UI: InferenceStartResponse (observed over the run SSE stream)
     B->>A: POST /agents/{slug}/stream {definition, config} (and every /resume leg)
     A->>A: build_trial_definition — uncached; /reference/ from the draft's files
 ```
 
-The bridge reuses the whole run pipeline (event log, WebSocket frames, approvals and ask-user, Stop, usage), with the definition sent inline instead of loaded from the database. A trial of a saved agent runs under that agent's catalog row, so it uses the agent's real memory, skills and saved tool rows, with the draft's approvals laid over them for that run only. A never-created draft has no catalog row: its trial conversation has `agent_id` NULL (allowed only when `is_trial`), runs as a transient agent built from the draft, and has memory off.
+The bridge reuses the whole run pipeline (event log, SSE frames, approvals and ask-user, Stop, usage), with the definition sent inline instead of loaded from the database. A trial of a saved agent runs under that agent's catalog row, so it uses the agent's real memory, skills and saved tool rows, with the draft's approvals laid over them for that run only. A never-created draft has no catalog row: its trial conversation has `agent_id` NULL (allowed only when `is_trial`), runs as a transient agent built from the draft, and has memory off.
 
 | Key fact | Value / detail |
 | --- | --- |

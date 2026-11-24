@@ -430,8 +430,8 @@ export function useChatWorkspace({
     stopTask,
     resumeTask,
     isDecisionSent,
-    queuedMessage,
-    holdQueuedMessage,
+    queuedMessages,
+    holdQueuedMessages,
     cancelQueuedMessage,
   } = backgroundTasks;
   const backgroundTasksContext = useMemo<BackgroundTasksContextValue | null>(
@@ -1136,7 +1136,7 @@ export function useChatWorkspace({
       (canQueueSend ? composer.isSendingMessage : isCurrentConversationBusy) || isCompacting,
     isConversationStreaming: isCurrentConversationStreaming,
     queueInferenceSend: canQueueSend ? beginOrQueueRun : undefined,
-    onMessageQueued: holdQueuedMessage,
+    onMessageQueued: holdQueuedMessages,
     setMessages: setConversationMessages,
     setCurrentMessage,
     setPendingCommand: composer.setPendingCommand,
@@ -1155,12 +1155,12 @@ export function useChatWorkspace({
   });
 
   /**
-   * The queued chip's ×: cancel the queued message, and put its text back in
-   * the composer when the composer is empty — nothing typed is lost, which is
-   * why the cancel asks no confirmation.
+   * A queued line's ×: cancel that message, and put its text back in the
+   * composer when the composer is empty — nothing typed is lost, which is why
+   * the cancel asks no confirmation.
    */
-  const handleCancelQueuedMessage = useCallback(async () => {
-    const cancelled = await cancelQueuedMessage();
+  const handleCancelQueuedMessage = useCallback(async (messageId: string) => {
+    const cancelled = await cancelQueuedMessage(messageId);
     if (cancelled?.content && !getCurrentMessage().trim()) {
       setCurrentMessage(cancelled.content);
     }
@@ -1627,7 +1627,7 @@ export function useChatWorkspace({
     backgroundTasksContext,
     // Inline citations (plan 42): the sources the chat's pills resolve against.
     citationSources,
-    queuedMessage,
+    queuedMessages,
     canQueueSend,
     handleCancelQueuedMessage,
     resolvedPreferences,

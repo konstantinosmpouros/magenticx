@@ -38,7 +38,10 @@ from engine.inference.history import (
     nearest_committed_ai,
     prepare_inference_history,
     serialise_message_with_images_for_agent,
+    stacked_user_turn,
+    with_interjections,
 )
+from engine.inference.steering import interjections_by_answer
 from engine.agents.trial_drafts import TrialAgent, overlay_approvals, trial_drafts
 from utils.validators import load_conversation_full
 from engine.inference.runs.state import ACTIVE_RUN_STATUSES, _now
@@ -100,7 +103,7 @@ class InferenceRunManager:
     def __init__(self) -> None:
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._cancel_events: dict[str, asyncio.Event] = {}
-        # Live run state exposed to WebSocket subscribers: a late subscriber
+        # Live run state exposed to stream subscribers: a late subscriber
         # gets one synthesized snapshot frame built from the in-process
         # runtime (full coalesced event log) instead of replaying the Redis
         # stream from 0, which makes MAXLEN trimming irrelevant.
@@ -211,7 +214,7 @@ class InferenceRunManager:
     async def publish(self, run_id: str, event: dict[str, Any]) -> None:
         """Append the event to the durable per-run Redis Stream.
 
-        Subscribers consume via :func:`stream_run_events` over the WebSocket
+        Subscribers consume via :func:`stream_run_events` over the SSE
         endpoint, backed by the same stream. Failure to write is logged but
         never raised — losing the wire frame is preferable to crashing the
         inference run.
@@ -332,21 +335,49 @@ class InferenceRunManager:
                 else:
                     payload_mode = "full_seed"
 
+                # Messages the user sent while answers ran (steering) are not
+                # in the branch tree: a rebuilt history puts each in front of
+                # the answer that read it, and this run's own — a retry carries
+                # the retried answer's — follow its user message.
                 if payload_mode == "full_seed":
-                    _history_messages, history = prepare_inference_history(
+                    history_messages, history = prepare_inference_history(
                         logger=logger,
                         messages=conversation.messages,
                         message_ids=run.streaming_message_path,
                         include_input_paths=is_deep_agent,
                     )
-                    sent_messages = len(history)
+                    answer_ids = [m.id for m in history_messages if m.sender == "ai"]
+                    interjections = await interjections_by_answer(db, [*answer_ids, run.id])
+                    history = with_interjections(
+                        history_messages, history, interjections, include_input_paths=is_deep_agent
+                    )
                 else:
+                    interjections = await interjections_by_answer(db, [run.id])
                     history = [
-                        serialise_message_with_images_for_agent(
-                            parent_user_message, include_input_paths=is_deep_agent
-                        )
+                        serialise_message_with_images_for_agent(message, include_input_paths=is_deep_agent)
+                        for message in stacked_user_turn(conversation.messages, parent_user_message)
                     ]
-                    sent_messages = 1
+                own_interjections = interjections.get(run.id, [])
+                history.extend(
+                    serialise_message_with_images_for_agent(row, include_input_paths=is_deep_agent)
+                    for row in own_interjections
+                )
+                sent_messages = len(history)
+                if own_interjections:
+                    # The answer shows them as it would have mid-run: at its start.
+                    carried = [
+                        event for event in (
+                            runtime.apply_event({
+                                "type": "CUSTOM",
+                                "name": "USER_INTERJECTION",
+                                "value": {"text": row.content or ""},
+                                "timestamp": int(time.time() * 1000),
+                            })
+                            for row in own_interjections
+                        )
+                        if event is not None
+                    ]
+                    await self._publish_delta(run_id, run_meta, runtime, carried)
 
                 logger.info(
                     "inference_run_started",

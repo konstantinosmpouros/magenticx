@@ -83,14 +83,16 @@ def _coalesce_key(event: dict[str, Any]) -> tuple[Any, ...] | None:
     the same key are collapsed into one event with a concatenated ``delta`` so
     the persisted log stays block-lossless without keeping per-token entries.
 
-    THINKING_TEXT_MESSAGE_CONTENT is deliberately NOT coalesced: each thinking
-    event is a discrete thought step (custom-mode agents emit one event per
-    thought), so merging them would collapse steps on hydration that the live
-    stream showed separately.
+    THINKING_TEXT_MESSAGE_CONTENT pieces merge too: a thought now streams as
+    START, CONTENT pieces, END, so consecutive CONTENT events are always one
+    thought's pieces — every emitter brackets each thought with START / END,
+    which sit between two thoughts and keep them apart.
     """
     event_type = event.get("type")
     if event_type in _TEXT_DELTA_TYPES:
         return ("text", event.get("messageId"), repr(event.get("namespace")))
+    if event_type == "THINKING_TEXT_MESSAGE_CONTENT":
+        return ("thought", repr(event.get("namespace")))
     if event_type == "TOOL_CALL_ARGS":
         return ("tool_args", event.get("toolCallId"))
     return None
@@ -167,6 +169,9 @@ class InferenceRunRuntime:
     def __init__(self) -> None:
         self.content = ""
         self.thoughts: list[str] = []
+        # A thought is streaming (its START seen, END not yet): its pieces
+        # extend the last entry of ``thoughts`` instead of each adding one.
+        self._thought_streaming = False
         self.raw_events: list[dict[str, Any]] = []
         self.first_event_ts = 0.0
         self.thinking_start = 0.0
@@ -491,9 +496,21 @@ class InferenceRunRuntime:
         elif event_type == "THINKING_START":
             self.thinking_start = time.perf_counter()
             self.thinking_end = 0.0
+        elif event_type == "THINKING_TEXT_MESSAGE_START":
+            self.thoughts.append("")
+            self._thought_streaming = True
         elif event_type == "THINKING_TEXT_MESSAGE_CONTENT":
-            self.thoughts.append(str(event.get("delta") or ""))
+            delta = str(event.get("delta") or "")
+            if self._thought_streaming and self.thoughts:
+                self.thoughts[-1] += delta
+            else:
+                self.thoughts.append(delta)
+        elif event_type == "THINKING_TEXT_MESSAGE_END":
+            self._thought_streaming = False
+            if self.thoughts and not self.thoughts[-1].strip():
+                self.thoughts.pop()
         elif event_type == "TOOL_CALL_START":
+            self._thought_streaming = False
             self.thoughts.append(f"[tool] {event.get('toolCallName') or 'tool'}")
         elif event_type == "THINKING_END":
             self.thinking_end = time.perf_counter()

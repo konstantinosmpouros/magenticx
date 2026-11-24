@@ -894,6 +894,23 @@ class AsyncTasksSettings(BaseSettings):
         return resolved or ""
 
 
+class SteeringSettings(BaseSettings):
+    """Messages the user sends while a run works (SSE plan, phase 5 "steering").
+
+    A message queued behind a running answer is read by that run at its next
+    model call (``harness.middlewares.steering``) instead of waiting for the
+    run to end. The bridge keeps the message; the agent only claims it, so with
+    this off (or the bridge unreachable) the message is simply sent once the
+    run ends, as before.
+    """
+    model_config = _BASE_MODEL_CONFIG
+
+    enabled: bool = Field(True, validation_alias="STEERING_ENABLED")
+    # The claim call sits in front of a model call, so it must give up fast: a
+    # message it missed is still delivered at the next step or when the run ends.
+    claim_timeout_seconds: float = Field(3.0, gt=0, le=30, validation_alias="STEERING_CLAIM_TIMEOUT_SECONDS")
+
+
 # ---------------------------------------------------------------------------
 # Top-level settings
 # ---------------------------------------------------------------------------
@@ -924,6 +941,7 @@ class Settings(BaseSettings):
     agui: AguiSettings = Field(default_factory=AguiSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     async_tasks: AsyncTasksSettings = Field(default_factory=AsyncTasksSettings)
+    steering: SteeringSettings = Field(default_factory=SteeringSettings)
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
 
     @model_validator(mode="after")

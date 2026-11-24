@@ -2,7 +2,7 @@
 
 These tests exercise :class:`engine.inference.event_log.RedisEventLog` against an
 in-process fakeredis instance, covering the three behaviours we rely on for
-the WebSocket-based inference streaming:
+the inference streaming (SSE):
 
 1. Sequence IDs returned by ``append()`` are monotonic strings — clients can
    compare them lexically and resume from the last-seen value.

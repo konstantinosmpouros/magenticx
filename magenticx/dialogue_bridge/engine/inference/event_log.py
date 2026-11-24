@@ -45,7 +45,7 @@ class RedisEventLog:
     run), and one for the blocking ``XREAD`` of the live tail, whose socket
     timeout outlasts the block time (see
     :func:`core.cache.client.stream_read_socket_timeout`). With the default
-    timeout every idle read died after 5 s and dropped the WebSocket.
+    timeout every idle read died after 5 s and dropped the live stream.
     """
 
     def __init__(self, key_prefix: str = _INFERENCE_KEY_PREFIX) -> None:

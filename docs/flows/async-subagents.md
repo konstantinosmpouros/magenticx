@@ -1,6 +1,6 @@
 # Async Sub-agents
 
-Since plan 41 every sub-agent runs as a **background task**. The orchestrator calls `start_async_task`, gets a task id back in about a second, and its run ends; the task keeps working in the agents service on its own LangGraph thread, inside our own harness, while the user keeps chatting. A task can start tasks of its own, down to depth 3. When a depth-1 task's whole subtree has settled, the orchestrator is **woken** with a notification and reports the result. The agents service owns the tasks (`agent_runtime.async_tasks`) and runs them; the **dialogue bridge** mirrors them for the UI (`chat_db.conversation_tasks`), relays their events, wakes the orchestrator, holds the composer's one queued message, and fans everything a watching browser needs out on a per-conversation channel. This document is written in two halves: the bridge (Phases 1–6) and the agents service (the three "Agents half" sections).
+Since plan 41 every sub-agent runs as a **background task**. The orchestrator calls `start_async_task`, gets a task id back in about a second, and its run ends; the task keeps working in the agents service on its own LangGraph thread, inside our own harness, while the user keeps chatting. A task can start tasks of its own, down to depth 3. When a depth-1 task's whole subtree has settled, the orchestrator is **woken** with a notification and reports the result. The agents service owns the tasks (`agent_runtime.async_tasks`) and runs them; the **dialogue bridge** mirrors them for the UI (`chat_db.conversation_tasks`), relays their events, wakes the orchestrator, holds the composer's queued messages, and fans everything a watching browser needs out on a per-conversation channel. This document is written in two halves: the bridge (Phases 1–6) and the agents service (the three "Agents half" sections).
 
 ---
 
@@ -8,8 +8,8 @@ Since plan 41 every sub-agent runs as a **background task**. The orchestrator ca
 
 ```mermaid
 flowchart LR
-  UI["agentic_ui"] <-- "WS: conversation channel<br/>task drill-down, run socket" --> BR["dialogue_bridge"]
-  UI -- "REST: tasks, stop, approve,<br/>queued message" --> BR
+  UI["agentic_ui"] <-- "SSE: conversation channel<br/>task drill-down, run stream" --> BR["dialogue_bridge"]
+  UI -- "REST: tasks, stop, approve,<br/>queued messages" --> BR
   BR -- "SSE /agents/{slug}/stream<br/>(orchestrator runs, wake-ups)" --> AG["agents service<br/>TaskRunner + /ap"]
   BR -- "internal /tasks API (§14.3)" --> AG
   AG -- "XADD tasks:status · tasks:outbox<br/>task:{id}:events" --> RS[("Redis")]
@@ -35,14 +35,14 @@ sequenceDiagram
     BR->>R: XRANGE task:{id}:events (coalesce)
     BR->>DB: upsert conversation_tasks (+ raw_events, usage booked)
     BR->>R: XADD conversation:{cid}:channel {type: task}
-    R-->>UI: conversation socket: task frame
+    R-->>UI: conversation channel (SSE): task frame
     AG->>R: XADD tasks:outbox OutboxItem (depth-1 subtree settled)
     R-->>BR: XREADGROUP bridge
     BR->>DB: notice row (kind=task_notification) + send run on the branch leaf
     BR->>AG: POST /agents/{slug}/stream (delta_resume, input = the notice)
     BR->>R: XADD channel {type: run_started}
     BR->>AG: POST /tasks/{id}/notified
-    R-->>UI: run_started → attach via the run socket
+    R-->>UI: run_started → attach via the run stream
 ```
 
 ---
@@ -88,7 +88,7 @@ flowchart TD
 
 ## Phase 3 — Safety nets: run end and reconcile
 
-**Run end** (`on_run_finished`, a run-finished hook called after every run's terminal frame): the conversation's **queued message is sent first** — the user asked for it, and the run it starts pulls any settled result before its first model call anyway. Only when nothing was queued (or the queued send was refused) does the hook wake the orchestrator, **once**, for a settled depth-1 task the mirror still shows unhandled; it asks the agents service (`GET /tasks/unnotified?user_id=&conversation_id=`) only when the mirror has such a task, so an ordinary run end costs one query.
+**Run end** (`on_run_finished`, a run-finished hook called after every run's terminal frame): the conversation's **queued messages are sent first** (`send_queued_messages`, the next batch, stacked) — the user asked for them, and the run it starts pulls any settled result before its first model call anyway. Only when nothing was queued (or the queued batch was refused) does the hook wake the orchestrator, **once**, for a settled depth-1 task the mirror still shows unhandled; it asks the agents service (`GET /tasks/unnotified?user_id=&conversation_id=`) only when the mirror has such a task, so an ordinary run end costs one query.
 
 **Reconcile loop** (at startup — after orphaned runs are failed — and every `ASYNC_TASKS_RECONCILE_INTERVAL_SECONDS`): sends queued messages older than `ASYNC_TASKS_QUEUE_SWEEP_AFTER_SECONDS` whose conversation has no active run (what a restart left behind), then works through `GET /tasks/unnotified`, one wake per conversation per pass. Redis has no persistence; this is why no notification is lost across a bridge or Redis restart.
 
@@ -96,33 +96,39 @@ flowchart TD
 
 ## Phase 4 — The composer queue
 
-While the conversation has an active run (usually a wake-up run reporting results), a `send` with `"queue_if_busy": true` is held in `conversations.queued_message` and answered **202** `{"queued": true, "queued_message": {content, command, effort, agent_id, queued_at}}`. One slot: a second send replaces it. `DELETE /v1/conversations/{user_id}/{conversation_id}/queued-message` cancels it. When the run it waited for ends, it is sent as a normal `send` on that run's leaf (`engine/inference/composer_queue.send_queued_message`).
+While the conversation has an active run (usually a wake-up run reporting results), a `send` with `"queue_if_busy": true` is appended to `conversations.queued_messages` — a list, oldest first — and answered **202** `{"queued": true, "queued_messages": [{id, content, command, effort, agent_id, queued_at}, ...]}`, the whole queue with the new message last. The list holds up to `INFERENCE_QUEUE_MAX_MESSAGES` (default 5); one more is a **409** "You can queue up to N messages while an answer is running." and the text stays in the composer. `DELETE /v1/conversations/{user_id}/{conversation_id}/queued-messages/{message_id}` cancels one message. When the run they wait for ends, `engine/inference/composer_queue.send_queued_messages` claims the whole list and splits it (`next_batch`): the batch is the leading run of plain messages for one agent, or — when the first is a slash command — that command alone. The batch goes out **stacked**: each message its own user row, each parented on the one before (the first on the leaf of the run that ended), and one answer under the last. The rest go back to the front of the list, waiting for that answer (`after_run_id` = the new run), and go out when it ends. Plain-text messages for the agent that runs are usually read earlier, by the run itself at its next step (steering — see [inference-streaming § Steering](inference-streaming.md)); the run-end send is then the fallback for whatever the run did not read.
+
+**Send now.** While the answer runs, the composer queue (`features/chat/components/ComposerTaskNotices.tsx`) has a **Send now** button (`onSendNow`). It is the normal stop (`handleStopStreaming`): the run-end hook `on_run_finished` sends the queue's next batch whenever a run ends, a cancelled one included, so stopping the run is all it takes — the leading plain messages go out at once, stacked on that run's leaf and answered once. There is no separate endpoint.
 
 | Key fact | Value / detail |
 | --- | --- |
 | What can be queued | Text, a slash command and a reasoning effort, validated when queued (agent usable, command known). A send with **files** keeps the 409 — bytes are never parked in a JSON column |
-| Exactly once | Sending locks the row, reads and empties the slot in one transaction; racing senders (run-end hook, loop, the queue route itself) cannot both get it |
-| Transient refusal | 409 (another run started first) or 429 (the user's run cap): put back unless a newer message took the slot; sent at the next run end or loop pass |
+| Cap | `INFERENCE_QUEUE_MAX_MESSAGES` (default 5, 1–20); one more queued send is a 409 |
+| Exactly once | Sending locks the row and claims the whole list in one transaction (`_claim_all`); racing senders (run-end hook, reconcile loop, the queue route itself, a steering claim) cannot both get a message. What is not sent now goes back to the front (`_requeue_front`), ahead of anything queued meanwhile |
+| Batches | The leading plain messages for one agent go out together, stacked (one user row each, one answer); a slash command is a turn of its own; a message for another agent waits for the answer before it |
+| Refusal | Transient — 409 (another run started first) or 429 (the user's run cap): everything goes back to the front, sent at the next run end or loop pass. Permanent (any other refusal): the batch is dropped, the rest are kept |
 | Race at queue time | If the run ended between the check and the commit, the queue route sends it at once |
-| UI | `queue` frames on the conversation channel (`queued_message` or `null`) |
+| UI | `queue` frames on the conversation channel (`queued_messages`, `[]` when empty); one compact line for one message, a numbered stack for several, each with its own × (cancel by id), and, while the answer runs, Send now (stop the run) |
 
 ---
 
 ## Phase 5 — The conversation channel and the drill-down
 
-**Conversation channel** — one Redis Stream per conversation, `conversation:{id}:channel` (`ASYNC_TASKS_CHANNEL_MAXLEN` entries, EXPIREd `ASYNC_TASKS_CHANNEL_TTL_SECONDS` after the last frame), tailed by `WS /v1/conversations/{user_id}/{conversation_id}/ws`. A stream rather than pub/sub: a reconnect with `since` loses nothing, and nothing lives in process memory, so it works with one bridge process, several, or across a restart. Frames: `task`, `run_started` (a wake-up, a queued send — then `from_queue: true` —, a scheduled fire; the client attaches through the run socket), `queue` (always `{"queued_message": null}` when the slot is cleared, by a send or a delete); each carries its `seq`. The first frame after `subscribe` is always the queue's current state, read from the database.
+**Conversation channel** — one Redis Stream per conversation, `conversation:{id}:channel` (`ASYNC_TASKS_CHANNEL_MAXLEN` entries, EXPIREd `ASYNC_TASKS_CHANNEL_TTL_SECONDS` after the last frame), tailed by `GET /v1/conversations/{user_id}/{conversation_id}/events` (SSE). A stream rather than pub/sub: a reconnect with `since` loses nothing, and nothing lives in process memory, so it works with one bridge process, several, or across a restart. Frames: `task`, `run_started` (a wake-up, a queued send — then `from_queue: true` —, a scheduled fire; the client attaches through the run stream), `queue` (`{"queued_messages": [...]}`, the whole list after every change — a queued send, a steering claim, a run-end send, a cancel — and `[]` when it is empty); each carries its `seq`. The first frame of every connect is always the queue's current list, read from the database.
 
-**Drill-down** — `WS /v1/tasks/{user_id}/{task_id}/ws`: `snapshot` (the task; `events` only when it carries the full stored log — a settled task with no `since` — then `terminal` at once; without `events` the UI keeps what it has already folded), then one `event` frame per entry of `task:{id}:events` (`seq` = the Redis entry id), then `terminal {status}` once the task has settled and the stream is drained.
+**Drill-down** — `GET /v1/tasks/{user_id}/{task_id}/events` (SSE): `snapshot` (the task; `events` only when it carries the full stored log — a settled task with no `since` — then `terminal` at once; without `events` the UI keeps what it has already folded), then one `event` frame per entry of `task:{id}:events` (`seq` = the Redis entry id), then `terminal {status}` once the task has settled and the stream is drained.
 
-Both sockets authenticate exactly like the run socket: session cookie bound to the path's `{user_id}`, the per-user connect rate limit, ownership checked before the handshake completes (`4404`), and a `subscribe` first frame within `INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS`.
+Both streams are Server-Sent Events (they replaced the WebSockets, SSE plan phase 3). Each frame is one event (`utils/sse.frames_to_sse`) — `event:` the frame's `type`, `id:` its `seq`, `data:` the frame unchanged — resumed with `?since=` or `Last-Event-ID`. The normal HTTP dependencies run before the stream opens: the session cookie bound to the path's `{user_id}` (`401`), `stream_connect_rate_limit` (`429`), ownership (`404`) and the cursor (`400`, `validate_stream_cursor`). A `: ping` every `INFERENCE_SSE_HEARTBEAT_SECONDS` keeps a quiet channel open; the drill-down checks for a settled task every `ASYNC_TASKS_TASK_STREAM_BLOCK_MS` (5000) while its event stream is quiet.
 
 | Route (bridge) | Purpose | Limits |
 | --- | --- | --- |
 | `GET /v1/conversations/{user_id}/{conversation_id}/tasks?limit=` | `[TaskOut]` from the mirror, parents before children | `task_read_rate_limit`; `limit` ≤ `ASYNC_TASKS_LIST_LIMIT_MAX` |
 | `POST /v1/tasks/{user_id}/{task_id}/cancel` | Stop: proxies `POST /tasks/{id}/cancel {"user_id", "reason": "user"}`; cascades; never wakes | CSRF, `task_mutate_rate_limit` |
 | `POST /v1/tasks/{user_id}/{task_id}/resume` | Approval for a `waiting` task: the run-resume body, `interruptId` required; proxied as `{"user_id", "decisions": {interruptId: item}}` | CSRF, `task_mutate_rate_limit` |
-| `DELETE /v1/conversations/{user_id}/{conversation_id}/queued-message` | Cancel the queued message | CSRF, `task_mutate_rate_limit` |
-| `POST /v1/inference/runs/{user_id}/start` + `queue_if_busy` | 202 queued instead of 409 | `inference_rate_limit` |
+| `DELETE /v1/conversations/{user_id}/{conversation_id}/queued-messages/{message_id}` | Cancel one queued message: 204, or 404 when it is gone (already sent, read or cancelled) | CSRF, `task_mutate_rate_limit` |
+| `GET /v1/conversations/{user_id}/{conversation_id}/events` | The conversation channel over SSE | `stream_connect_rate_limit` |
+| `GET /v1/tasks/{user_id}/{task_id}/events` | A task's drill-down over SSE; ends after `terminal` | `stream_connect_rate_limit` |
+| `POST /v1/inference/runs/{user_id}/start` + `queue_if_busy` | 202 `{queued, queued_messages}` instead of 409 (409 when the queue is full) | `inference_rate_limit` |
 
 A task not yet in the mirror (its `TASK_STARTED` not consumed yet) is authorised through the agents service (`GET /tasks/{id}?user_id=`, 404 for another user's) and must belong to a conversation the caller owns.
 
@@ -286,12 +292,14 @@ flowchart TD
 | Consumers and loops | [magenticx/dialogue_bridge/engine/inference/tasks/consumers.py](../../magenticx/dialogue_bridge/engine/inference/tasks/consumers.py) | `TaskConsumers`, `handle_status_entry()` |
 | Redis access to task streams | [magenticx/dialogue_bridge/engine/inference/tasks/streams.py](../../magenticx/dialogue_bridge/engine/inference/tasks/streams.py) | `STATUS_STREAM`, `OUTBOX_STREAM`, `CONSUMER_GROUP`, `TaskStreams` |
 | Conversation channel | [magenticx/dialogue_bridge/engine/inference/channel.py](../../magenticx/dialogue_bridge/engine/inference/channel.py) | `ConversationChannel`, `publish_*()`, `channel_frames()` |
-| Composer queue | [magenticx/dialogue_bridge/engine/inference/composer_queue.py](../../magenticx/dialogue_bridge/engine/inference/composer_queue.py) | `queue_if_busy()`, `send_queued_message()`, `cancel_queued_message()` |
-| Routes and sockets | [magenticx/dialogue_bridge/router/inference/tasks.py](../../magenticx/dialogue_bridge/router/inference/tasks.py) | `router`, `conversation_router`, `conversation_websocket()`, `task_websocket()` |
-| Socket handshake, ownership, pump | [magenticx/dialogue_bridge/engine/inference/tasks/sockets.py](../../magenticx/dialogue_bridge/engine/inference/tasks/sockets.py) | `authenticate_socket()`, `conversation_socket_queue()`, `task_socket_owned()`, `accept_subscribe()`, `pump_frames()` |
+| Steering (the run reads queued messages) | [magenticx/dialogue_bridge/engine/inference/steering.py](../../magenticx/dialogue_bridge/engine/inference/steering.py) | `ring_doorbell()`, `claim_interjection()` |
+| Composer queue | [magenticx/dialogue_bridge/engine/inference/composer_queue.py](../../magenticx/dialogue_bridge/engine/inference/composer_queue.py) | `queue_if_busy()`, `send_queued_messages()`, `next_batch()`, `cancel_queued_message()` |
+| Routes and streams | [magenticx/dialogue_bridge/router/inference/tasks.py](../../magenticx/dialogue_bridge/router/inference/tasks.py) | `router`, `conversation_router`, `conversation_events()`, `task_events()` |
+| Stream ownership, SSE framing | [engine/inference/tasks/tasks.py](../../magenticx/dialogue_bridge/engine/inference/tasks/tasks.py) + [utils/sse.py](../../magenticx/dialogue_bridge/utils/sse.py) | `owned_conversation()`, `get_owned_task()`; `frames_to_sse()` |
+| Queued messages, Send now (UI) | [magenticx/agentic_ui/src/features/chat/components/ComposerTaskNotices.tsx](../../magenticx/agentic_ui/src/features/chat/components/ComposerTaskNotices.tsx) | `ComposerTaskNotices` (one line or a numbered stack), `onSendNow`; state in `features/inference/useBackgroundTasks.ts` |
 | Notice in the agent's history | [magenticx/dialogue_bridge/engine/inference/history.py](../../magenticx/dialogue_bridge/engine/inference/history.py) | `serialise_message_with_images_for_agent()` |
 | Run-finished hooks, shared coalescing | [magenticx/dialogue_bridge/engine/inference/runs/](../../magenticx/dialogue_bridge/engine/inference/runs/) | `register_run_finished_hook()`, `append_coalesced()` |
-| Schema | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) + migration `0046_async_tasks` | `ConversationTaskTable`, `MessageTable.kind` / `.task_notice`, `ConversationTable.queued_message` |
+| Schema | [magenticx/dialogue_bridge/core/database/models.py](../../magenticx/dialogue_bridge/core/database/models.py) + migrations `0046_async_tasks`, `0053_queued_messages_list` | `ConversationTaskTable`, `MessageTable.kind` / `.task_notice`, `ConversationTable.queued_messages` |
 | Settings | [magenticx/dialogue_bridge/core/settings.py](../../magenticx/dialogue_bridge/core/settings.py) | `AsyncTaskSettings` (`ASYNC_TASKS_*`), `TASK_READ_*` / `TASK_MUTATE_*` rate limits |
 | Agent Protocol router (agents) | [magenticx/agents/router/agent_protocol.py](../../magenticx/agents/router/agent_protocol.py) + [utils/async_tasks.py](../../magenticx/agents/utils/async_tasks.py) | the six `/ap` endpoints, `is_parent()`, `run_view()` (settle-only masking), `_delivered()` |
 | Internal task API (agents) | [magenticx/agents/router/tasks.py](../../magenticx/agents/router/tasks.py) | `/tasks/*` (§14.3) |

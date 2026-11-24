@@ -391,7 +391,7 @@ async def test_a_busy_conversation_does_not_queue_a_canvas_edit(
             await composer_queue.queue_if_busy(db, seeded_user, payload)
     assert refused.value.status_code == 409
     async with session_factory() as db:
-        assert (await db.get(ConversationTable, conversation_id)).queued_message is None
+        assert (await db.get(ConversationTable, conversation_id)).queued_messages is None
 
 
 # -- stored, shown, forked ------------------------------------------------------------

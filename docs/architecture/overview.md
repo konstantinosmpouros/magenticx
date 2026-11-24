@@ -44,7 +44,7 @@ flowchart TB
     mcp["mcp_gateway<br/>:8005 (optional sibling)"]
     sandbox["sandbox_runner<br/>:8090 (optional sibling)"]
 
-    Browser -->|"HTTPS + WebSocket"| nginx
+    Browser -->|"HTTPS (REST + SSE)"| nginx
     nginx -->|"rewrite /api/ → /v1/"| bridge
     bridge -->|"SSE stream"| agents
     bridge -->|"chat_db"| pg
@@ -71,7 +71,7 @@ The browser application is a React 18 SPA built with Vite and served in producti
 
 - Renders the chat interface, sidebar, voice controls, and settings panels
 - Manages client-side session state (localStorage `mx_auth_session` + IndexedDB `mx_ui_state`)
-- Opens a WebSocket per active inference run to observe streaming events, with automatic reconnect + cursor-based replay on transient failures
+- Opens a Server-Sent-Events stream per active inference run to observe streaming events, with automatic reconnect + cursor-based replay on transient failures
 - Initiates WebRTC signalling for realtime voice mode
 
 ### State architecture & routing
@@ -95,7 +95,7 @@ Key nginx settings:
 
 - `client_max_body_size 50M` — supports attachment uploads
 - `proxy_buffering off` — required for SSE and large file streaming
-- WebSocket upgrade — a dedicated `^~ /api/v1/inference/runs/` location forwards `Upgrade`/`Connection: $connection_upgrade` and bumps `proxy_read_timeout`/`proxy_send_timeout` to 3600s for long-lived run observers
+- Live streams — a dedicated `^~ /api/v1/inference/runs/` location and a regex location for `^/api/v1/(conversations|tasks)/[^/]+/[^/]+/events$` set `Connection ""`, `proxy_buffering off`, `gzip off`, pass the bridge's `X-Accel-Buffering` on, and bump `proxy_read_timeout`/`proxy_send_timeout` to 3600s for long-lived SSE observers
 - `resolver 127.0.0.11` — deferred DNS resolution for Docker service names
 - `proxy_set_header` chain — overwrites client IP headers with nginx `$remote_addr` before forwarding to the bridge
 
@@ -120,7 +120,7 @@ Key nginx settings:
 
 - Authenticates users (Microsoft Entra OIDC → KMS-signed JWT access + refresh cookies)
 - Manages conversations, messages, and attachments in PostgreSQL
-- Persists the per-run AG-UI event log in Redis Streams (`inference:run:{id}:events`) and serves WebSocket observers with cursor-based replay
+- Persists the per-run AG-UI event log in Redis Streams (`inference:run:{id}:events`) and serves its observers (SSE at `GET /v1/inference/runs/{user}/{run}/events`) with cursor-based replay
 - Consumes the agents-service SSE stream from inside the detached `InferenceRunManager` task, accumulates the runtime state in memory, and appends each parsed event to Redis
 - Handles voice signalling (WebRTC SDP exchange with OpenAI Realtime API)
 - Serves TTS audio and dictation transcription
@@ -256,7 +256,7 @@ The `agent_runtime` DB is created automatically on a fresh volume (dev: `chat_po
 
 ### redis (Inference Event Log)
 
-Redis 7.4 (alpine) backs the durable per-run AG-UI event log used by the WebSocket observer. `dialogue_bridge` writes each parsed AG-UI event into a per-run stream (`inference:run:{message_id}:events`) via `XADD … MAXLEN ~ 5000`; the WebSocket handler reads from that stream with `XREAD BLOCK`, replaying from the client's `since=<seq>` cursor on reconnect. On terminal status the stream key gets an `EXPIRE` (default 3600 s), so late reconnects can still replay missed events. The Redis service is reachable only via the `backend` Docker network; AUTH is enforced via the `magenticx_redis_password` Swarm secret (or `REDIS_PASSWORD` env var in local dev). Persistence is disabled — the authoritative final state lives in Postgres. Workflow runs use the same mechanism under `workflow:run:{run_id}:events`, but their events are persisted to `workflow_run_events` **before** they are published, so Redis is only the live fan-out.
+Redis 7.4 (alpine) backs the durable per-run AG-UI event log used by the SSE observers. `dialogue_bridge` writes each parsed AG-UI event into a per-run stream (`inference:run:{message_id}:events`) via `XADD … MAXLEN ~ 5000`; the SSE handler reads from that stream with `XREAD BLOCK`, replaying from the client's `since=<seq>` cursor on reconnect. On terminal status the stream key gets an `EXPIRE` (default 3600 s), so late reconnects can still replay missed events. The Redis service is reachable only via the `backend` Docker network; AUTH is enforced via the `magenticx_redis_password` Swarm secret (or `REDIS_PASSWORD` env var in local dev). Persistence is disabled — the authoritative final state lives in Postgres. Workflow runs use the same mechanism under `workflow:run:{run_id}:events`, but their events are persisted to `workflow_run_events` **before** they are published, so Redis is only the live fan-out.
 
 ### mcp_gateway (Optional)
 
@@ -290,9 +290,9 @@ sequenceDiagram
     N->>D: POST /v1/inference/runs/{user}/start
     D->>D: INSERT AI placeholder (streaming_status='queued')
     D-->>B: {detail, summary, run, message}
-    B->>N: WS /api/v1/inference/runs/{user}/{run}/ws
-    N->>D: WS upgrade (with $connection_upgrade)
-    B-->>D: {"type":"subscribe","since":null}
+    B->>N: GET /api/v1/inference/runs/{user}/{run}/events (SSE)
+    N->>D: GET /v1/inference/runs/{user}/{run}/events (unbuffered)
+    D-->>B: event: snapshot
     D->>A: POST /agents/{slug}/stream (SSE, background task)
     opt MCP on (MCP_GATEWAY_URL set) and gateway reachable
         A->>M: SSE connect → load live MCP tools
@@ -302,17 +302,17 @@ sequenceDiagram
     A-->>D: AG-UI events (SSE)
     D->>Rd: XADD inference:run:{id}:events <payload>
     Rd-->>D: XREAD BLOCK → (seq, payload)
-    D-->>B: {"type":"event","seq":"...","payload":...}
+    D-->>B: event: event (id = seq)
     Note over A,R: agent may call RAG tool
     A->>R: POST /retrieve/{collection}
     R->>C: vector search
     C-->>R: top-k chunks
     R-->>A: chunks
-    A-->>D: TOOL_CALL_* events → Redis → WS
+    A-->>D: TOOL_CALL_* events → Redis → SSE
     A-->>D: RUN_FINISHED
     D->>D: terminal UPDATE on AI message + conversation (one tx)
     D->>Rd: XADD terminal + EXPIRE 3600s
-    D-->>B: {"type":"terminal","payload":<final state>} → close
+    D-->>B: event: terminal (final state), end of response
 ```
 
 ### Request: Voice realtime session
@@ -411,7 +411,7 @@ Only `agentic_ui` (port 8050) is bound to the host. All other services are inter
 | `REDIS_STREAM_MAXLEN` | dialogue_bridge | Approximate cap on the per-run event stream (default 5000) |
 | `REDIS_STREAM_TERMINAL_TTL_SECONDS` | dialogue_bridge | Replay window after a run ends (default 3600) |
 | `REDIS_STREAM_READ_BLOCK_MS` | dialogue_bridge | `XREAD BLOCK` timeout in ms (default 30000) |
-| `INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS` | dialogue_bridge | Wait for the WS subscribe frame before closing (default 10) |
+| `INFERENCE_SSE_HEARTBEAT_SECONDS` | dialogue_bridge | `: ping` interval on a quiet run SSE stream (default 15) |
 | `ATTACHMENT_MAX_SIZE_BYTES` / `ATTACHMENT_MAX_TOTAL_BYTES` / `ATTACHMENT_MAX_PER_MESSAGE` | dialogue_bridge | Per-file, per-message-total, and count limits for attachments (defaults 25 MB / 25 MB / 10) |
 | `ATTACHMENT_DOCX_PREVIEW_TOKEN_TTL_SECONDS` | dialogue_bridge | Lifetime of the Office-viewer preview token (default 60) |
 | `ATTACHMENT_INLINE_CACHE_MAX_AGE_SECONDS` | dialogue_bridge | `Cache-Control: max-age` for inline blob previews (default 300) |

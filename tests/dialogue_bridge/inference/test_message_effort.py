@@ -36,7 +36,7 @@ import engine.inference.runs.stream as run_stream
 import engine.inference.runs.records as run_records
 import engine.inference.start as inference_start_module
 from core.database import AgentTable, ConversationTable, MessageTable, UserTable
-from schema import InferenceStartPayload, MessageIn, MessageOut, queued_message_from_column
+from schema import InferenceStartPayload, MessageIn, MessageOut, queued_message_from_item
 from engine.conversations.conversations import clone_branch_to_conversation
 from engine.inference.effort import EFFORT_LEVELS, effort_context
 from engine.inference.runs.manager import inference_run_manager
@@ -233,11 +233,11 @@ async def test_the_run_config_carries_effort_only_when_set(
 
 
 def test_the_queue_slot_keeps_a_valid_effort_and_refuses_an_unknown_one():
-    base = {"content": "q", "command": None, "agent_id": "a1", "queued_at": "2026-11-11T10:00:00"}
-    assert queued_message_from_column({**base, "effort": "medium"}).effort == "medium"
-    assert queued_message_from_column(base).effort is None
-    # Fail closed: an unreadable slot is dropped, never sent with a forged level.
-    assert queued_message_from_column({**base, "effort": "ultra"}) is None
+    base = {"id": "q1", "content": "q", "command": None, "agent_id": "a1", "queued_at": "2026-11-11T10:00:00"}
+    assert queued_message_from_item({**base, "effort": "medium"}).effort == "medium"
+    assert queued_message_from_item(base).effort is None
+    # Fail closed: an unreadable item is dropped, never sent with a forged level.
+    assert queued_message_from_item({**base, "effort": "ultra"}) is None
 
 
 async def test_a_queued_message_is_sent_with_its_effort(monkeypatch, session_factory, seeded_user, seeded_agent):
@@ -247,8 +247,8 @@ async def test_a_queued_message_is_sent_with_its_effort(monkeypatch, session_fac
         db.add(conversation)
         await db.flush()
         db.add(MessageTable(conversation_id=conversation.id, sender="user", content="first"))
-        conversation.queued_message = {"content": "next", "command": None, "effort": "minimal",
-                                       "agent_id": seeded_agent.id, "queued_at": "2026-11-11T10:00:00"}
+        conversation.queued_messages = [{"id": "q1", "content": "next", "command": None, "effort": "minimal",
+                                         "agent_id": seeded_agent.id, "queued_at": "2026-11-11T10:00:00"}]
         await db.commit()
         conversation_id = conversation.id
 
@@ -260,7 +260,7 @@ async def test_a_queued_message_is_sent_with_its_effort(monkeypatch, session_fac
         raise HTTPException(status_code=400, detail="stop here")
 
     monkeypatch.setattr(composer_queue, "start_inference_flow", fake_start)
-    assert await composer_queue.send_queued_message(conversation_id, session_factory=session_factory) is False
+    assert await composer_queue.send_queued_messages(conversation_id, session_factory=session_factory) is False
     assert len(sent) == 1
     assert sent[0].message.effort == "minimal"
     assert sent[0].message.content == "next"

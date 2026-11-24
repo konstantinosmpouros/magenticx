@@ -68,6 +68,9 @@ from schema.inference.runs import (
 from schema.internal.conversations import (
     InputFileOut,
     InputFilesOut,
+    InterjectionClaimIn,
+    InterjectionOut,
+    InterjectionsOut,
 )
 from schema.internal.memory import (
     MemoryMessageMatch,
@@ -143,7 +146,9 @@ from schema.inference.tasks import (
     TaskStatusEntry,
     TaskStatusEvent,
     TaskUsage,
-    queued_message_from_column,
+    queued_items_from_column,
+    queued_message_from_item,
+    queued_messages_from_column,
 )
 from schema.conversations.search import (
     WorkspaceSearchResult,
@@ -271,7 +276,9 @@ __all__ = [
     "TaskStatusEntry",
     "TaskStatusEvent",
     "TaskUsage",
-    "queued_message_from_column",
+    "queued_items_from_column",
+    "queued_message_from_item",
+    "queued_messages_from_column",
     "SCHEDULE_TRIGGER_KIND",
     "CanvasEditIn",
     "CanvasEditOut",
@@ -403,6 +410,9 @@ __all__ = [
     "WorkspaceSearchResult",
     "InputFileOut",
     "InputFilesOut",
+    "InterjectionClaimIn",
+    "InterjectionOut",
+    "InterjectionsOut",
     "WorkflowOut",
     "WorkflowRunDetail",
     "WorkflowRunEventOut",

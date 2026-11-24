@@ -21,7 +21,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelAsyncTask,
   connectConversationChannel,
-  connectTaskSocket,
+  connectTaskStream,
   deleteQueuedMessage,
   listConversationTasks,
   resumeAsyncTask,
@@ -80,11 +80,12 @@ export type BackgroundTasks = {
   resumeTask: (taskId: string, body: ResumeInferenceRunBody) => Promise<void>;
   /** The bridge accepted a decision for this interrupt; its marker may not have landed yet. */
   isDecisionSent: (interruptId: string) => boolean;
-  queuedMessage: QueuedMessage | null;
-  /** The send was queued (a 202): show the chip. */
-  holdQueuedMessage: (message: QueuedMessage | null) => void;
-  /** Cancel the queued message (the chip's ×); resolves to what was cancelled. */
-  cancelQueuedMessage: () => Promise<QueuedMessage | null>;
+  /** The conversation's queued messages, oldest first. */
+  queuedMessages: QueuedMessage[];
+  /** The send was queued (a 202): show the queue the bridge answered with. */
+  holdQueuedMessages: (messages: QueuedMessage[]) => void;
+  /** Cancel one queued message (its line's ×); resolves to what was cancelled. */
+  cancelQueuedMessage: (messageId: string) => Promise<QueuedMessage | null>;
 };
 
 // Re-read the tree after a reconnect at most this often: a flapping socket must
@@ -104,8 +105,8 @@ export function useBackgroundTasks({
   const treeRef = useRef(tree);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [viewedTaskId, setViewedTaskId] = useState<string | null>(null);
-  const [queuedMessage, setQueuedMessage] = useState<QueuedMessage | null>(null);
-  const queuedRef = useRef<QueuedMessage | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
+  const queuedRef = useRef<QueuedMessage[]>([]);
   const [sentDecisions, setSentDecisions] = useState<ReadonlySet<string>>(() => new Set());
   const onRunStartedRef = useRef(onRunStarted);
   const lastHydrateRef = useRef(0);
@@ -123,9 +124,9 @@ export function useBackgroundTasks({
     setTree(next);
   }, []);
 
-  const setQueued = useCallback((message: QueuedMessage | null) => {
-    queuedRef.current = message;
-    setQueuedMessage(message);
+  const setQueued = useCallback((messages: QueuedMessage[]) => {
+    queuedRef.current = messages;
+    setQueuedMessages(messages);
   }, []);
 
   // ---- The tree and the conversation channel, per conversation ----
@@ -134,7 +135,7 @@ export function useBackgroundTasks({
     treeRef.current = fresh;
     setTree(fresh);
     setOpenTaskId(null);
-    setQueued(null);
+    setQueued([]);
     setSentDecisions(new Set());
     lastHydrateRef.current = 0;
     if (!userId || !conversationId) return undefined;
@@ -165,13 +166,12 @@ export function useBackgroundTasks({
         return;
       }
       if (frame.type === "queue") {
-        setQueued(frame.queuedMessage);
+        setQueued(frame.queuedMessages);
         return;
       }
-      // run_started: a run of the queued message clears the chip (the `queue`
-      // frame says so too; whichever lands first wins).
+      // run_started from the queue: the `queue` frame published just before it
+      // already says what is left — a batch went out, later messages may wait.
       const fromQueue = frame.fromQueue;
-      if (fromQueue) setQueued(null);
       onRunStartedRef.current(frame.run, { fromQueue });
     };
 
@@ -244,7 +244,7 @@ export function useBackgroundTasks({
       if (controllers.has(taskId)) continue;
       const controller = new AbortController();
       controllers.set(taskId, controller);
-      void connectTaskSocket(
+      void connectTaskStream(
         userId,
         taskId,
         (frame) => update((state) => applyTaskSocketFrame(state, taskId, frame, Date.now())),
@@ -314,27 +314,31 @@ export function useBackgroundTasks({
     [sentDecisions],
   );
 
-  const holdQueuedMessage = useCallback(
-    (message: QueuedMessage | null) => setQueued(message),
+  const holdQueuedMessages = useCallback(
+    (messages: QueuedMessage[]) => setQueued(messages),
     [setQueued],
   );
 
-  const cancelQueuedMessage = useCallback(async () => {
-    const held = queuedRef.current;
-    if (!userId || !conversationId || !held) return null;
-    // Optimistic: the chip goes at once; it comes back if the bridge refuses.
-    setQueued(null);
-    try {
-      await deleteQueuedMessage(userId, conversationId);
-      return held;
-    } catch (error) {
-      // 404: it already went out (or was cancelled elsewhere) — nothing to undo.
-      if ((error as { status?: number })?.status === 404) return null;
-      setQueued(held);
-      toastError(toast, "Could not cancel the queued message", error);
-      return null;
-    }
-  }, [conversationId, setQueued, toast, userId]);
+  const cancelQueuedMessage = useCallback(
+    async (messageId: string) => {
+      const before = queuedRef.current;
+      const held = before.find((message) => message.id === messageId);
+      if (!userId || !conversationId || !held) return null;
+      // Optimistic: the line goes at once; it comes back if the bridge refuses.
+      setQueued(before.filter((message) => message.id !== messageId));
+      try {
+        await deleteQueuedMessage(userId, conversationId, messageId);
+        return held;
+      } catch (error) {
+        // 404: it already went out (or was read, or cancelled elsewhere) — nothing to undo.
+        if ((error as { status?: number })?.status === 404) return null;
+        setQueued(queuedRef.current.some((m) => m.id === messageId) ? queuedRef.current : before);
+        toastError(toast, "Could not cancel the queued message", error);
+        return null;
+      }
+    },
+    [conversationId, setQueued, toast, userId],
+  );
 
   return {
     tree,
@@ -344,8 +348,8 @@ export function useBackgroundTasks({
     stopTask,
     resumeTask,
     isDecisionSent,
-    queuedMessage,
-    holdQueuedMessage,
+    queuedMessages,
+    holdQueuedMessages,
     cancelQueuedMessage,
   };
 }

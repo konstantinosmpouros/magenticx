@@ -102,11 +102,17 @@ describe("TaskOut wire contract", () => {
   it("tells a queued send from a started one", () => {
     const queued = InferenceStartOrQueueSchema.parse({
       queued: true,
-      queued_message: { content: "and also check X", attachments: [{}, {}] },
+      queued_messages: [
+        { id: "q1", content: "first" },
+        { id: "q2", content: "and also check X", attachments: [{}, {}] },
+      ],
     });
     expect(queued).toMatchObject({
       queued: true,
-      queuedMessage: { content: "and also check X", attachmentCount: 2 },
+      queuedMessages: [
+        { id: "q1", content: "first" },
+        { id: "q2", content: "and also check X", attachmentCount: 2 },
+      ],
     });
     expect(InferenceStartOrQueueSchema.parse({ run: { id: "r" } })).toMatchObject({
       queued: false,
@@ -120,9 +126,9 @@ describe("TaskOut wire contract", () => {
     expect(
       toConversationChannelFrame({ type: "run_started", run: { id: "r2" }, from_queue: true }),
     ).toMatchObject({ type: "run_started", fromQueue: true });
-    expect(toConversationChannelFrame({ type: "queue", queued_message: null })).toEqual({
+    expect(toConversationChannelFrame({ type: "queue", queued_messages: [] })).toEqual({
       type: "queue",
-      queuedMessage: null,
+      queuedMessages: [],
     });
     expect(toConversationChannelFrame({ type: "run_started", run: {} })).toBeNull();
     expect(toConversationChannelFrame({ type: "task", task: {} })).toBeNull();

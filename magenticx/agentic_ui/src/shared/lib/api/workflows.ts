@@ -25,6 +25,7 @@ import type {
   WorkflowVersionPage,
 } from "../types";
 import { requestJson, requestRaw, requestVoid } from "../http";
+import { readSseStream } from "./sse";
 import {
   WorkflowCatalogSchema,
   WorkflowListSchema,
@@ -319,16 +320,7 @@ export async function streamWorkflowRunEvents(
     },
   );
   if (!res.body) return;
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const dispatch = (block: string) => {
-    const data = block
-      .split("\n")
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).replace(/^ /, ""))
-      .join("\n");
-    if (!data) return;
+  await readSseStream(res.body, ({ data }) => {
     let parsed: unknown;
     try {
       parsed = JSON.parse(data);
@@ -337,22 +329,5 @@ export async function streamWorkflowRunEvents(
     }
     const frame = toWorkflowRunStreamFrame(parsed);
     if (frame) onFrame(frame);
-  };
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, "\n");
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        dispatch(buffer.slice(0, boundary));
-        buffer = buffer.slice(boundary + 2);
-        boundary = buffer.indexOf("\n\n");
-      }
-    }
-    buffer += decoder.decode();
-    if (buffer.trim()) dispatch(buffer);
-  } finally {
-    reader.releaseLock();
-  }
+  });
 }

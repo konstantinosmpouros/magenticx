@@ -27,7 +27,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException, status
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import ConversationTable, MessageTable, MessageUsageTable
@@ -69,8 +69,17 @@ async def _find_answer(db: AsyncSession, conversation: ConversationTable, messag
 
 
 async def _has_children(db: AsyncSession, message_id: str) -> bool:
-    """Whether anything was sent after the answer (on any branch)."""
-    child = await db.scalar(select(MessageTable.id).where(MessageTable.parent_message_id == message_id).limit(1))
+    """Whether anything was sent after the answer (on any branch). A message the
+    user sent while it ran (``interjection``) hangs under it too, but is part of
+    that answer, not a turn after it."""
+    child = await db.scalar(
+        select(MessageTable.id)
+        .where(
+            MessageTable.parent_message_id == message_id,
+            or_(MessageTable.kind.is_(None), MessageTable.kind != "interjection"),
+        )
+        .limit(1)
+    )
     return child is not None
 
 

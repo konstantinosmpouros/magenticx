@@ -10,7 +10,7 @@ import {
 import { createFrameScheduler } from "@/features/inference/frameScheduler";
 
 /**
- * Plan 45, Phase 3: the run engine folds every WebSocket frame as it arrives
+ * Plan 45, Phase 3: the run engine folds every stream frame as it arrives
  * but hands the result to React once per animation frame. These tests pin the
  * two halves of that promise: a burst of token frames costs one render, and
  * nothing in the burst is lost or reordered — the published timeline is the
@@ -23,7 +23,7 @@ const api = vi.hoisted(() => ({
   resumeInferenceRun: vi.fn(),
   cancelInferenceRun: vi.fn(),
   getActiveInferenceRuns: vi.fn(() => new Promise(() => {})),
-  connectInferenceWebSocket: vi.fn(),
+  connectInferenceStream: vi.fn(),
 }));
 vi.mock("@/shared/lib/api", () => api);
 
@@ -100,7 +100,7 @@ describe("useInferenceRuns: one publish per frame, nothing lost", () => {
 
   beforeEach(() => {
     renders = 0;
-    api.connectInferenceWebSocket.mockImplementation(
+    api.connectInferenceStream.mockImplementation(
       (_user: string, _run: string, onEvent: (frame: Frame) => void) => {
         push = onEvent;
         return new Promise(() => {});

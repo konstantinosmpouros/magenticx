@@ -100,7 +100,7 @@ const api = vi.hoisted(() => ({
   cancelInferenceRun: vi.fn(),
   // Hydration stays out of the way: the run under test comes from beginRun.
   getActiveInferenceRuns: vi.fn(() => new Promise(() => {})),
-  connectInferenceWebSocket: vi.fn(),
+  connectInferenceStream: vi.fn(),
 }));
 vi.mock("@/shared/lib/api", () => api);
 
@@ -140,7 +140,7 @@ describe("useInferenceRuns: approvals stay actionable until the bridge applies t
   const toast = vi.fn();
 
   beforeEach(() => {
-    api.connectInferenceWebSocket.mockImplementation(
+    api.connectInferenceStream.mockImplementation(
       (_user: string, _run: string, onEvent: (frame: Frame) => void) => {
         push = onEvent;
         return new Promise(() => {});

@@ -1,8 +1,8 @@
 /**
  * Async sub-agent tasks API (plan 41 §14.4): the conversation's task tree, the
  * Stop button, a waiting task's approval, the composer's queued message, and
- * the two subscription sockets — the conversation channel and one task's own
- * event stream.
+ * the two subscription streams — the conversation channel and one task's own
+ * event stream — over SSE (`reconnecting-stream.ts`).
  *
  * Paths carry the user id like every other bridge route. §14.4 writes the
  * REST paths without it (`/conversations/{id}/tasks`), but under
@@ -22,7 +22,7 @@ import {
 import { transformInferenceRun } from "../consts";
 import { toResumeWireBody, type ResumeInferenceRunBody } from "./inference";
 import { CONVERSATIONS_BASE_PATH, TASKS_BASE_PATH } from "./paths";
-import { bridgeSocketUrl, runReconnectingSocket } from "./reconnecting-socket";
+import { runReconnectingStream } from "./reconnecting-stream";
 
 const segment = encodeURIComponent;
 
@@ -80,10 +80,14 @@ export async function resumeAsyncTask(
   });
 }
 
-/** Cancel the conversation's queued composer message before it is sent. */
-export async function deleteQueuedMessage(userId: string, conversationId: string): Promise<void> {
+/** Cancel one of the conversation's queued composer messages before it is sent. */
+export async function deleteQueuedMessage(
+  userId: string,
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
   await requestVoid(
-    `${CONVERSATIONS_BASE_PATH}/${segment(userId)}/${segment(conversationId)}/queued-message`,
+    `${CONVERSATIONS_BASE_PATH}/${segment(userId)}/${segment(conversationId)}/queued-messages/${segment(messageId)}`,
     {
       method: "DELETE",
       csrf: true,
@@ -104,13 +108,9 @@ export function connectConversationChannel(
   onFrame: (frame: ConversationChannelFrame) => void,
   options: { signal?: AbortSignal; onOpen?: () => void } = {},
 ): Promise<void> {
-  const url = bridgeSocketUrl(
-    `${CONVERSATIONS_BASE_PATH}/${segment(userId)}/${segment(conversationId)}/ws`,
-  );
-  return runReconnectingSocket(
-    url,
+  return runReconnectingStream(
+    `${CONVERSATIONS_BASE_PATH}/${segment(userId)}/${segment(conversationId)}`,
     {
-      subscribe: () => ({ type: "subscribe" }),
       onOpen: options.onOpen,
       onFrame: (raw) => {
         const frame = toConversationChannelFrame(raw);
@@ -135,17 +135,16 @@ export function connectConversationChannel(
  * `signal` aborts. `since` is read on every (re)connect, so a reconnect resumes
  * after the last event the caller applied.
  */
-export function connectTaskSocket(
+export function connectTaskStream(
   userId: string,
   taskId: string,
   onFrame: (frame: TaskSocketFrame) => void,
   options: { signal?: AbortSignal; since?: () => string | null } = {},
 ): Promise<void> {
-  const url = bridgeSocketUrl(`${TASKS_BASE_PATH}/${segment(userId)}/${segment(taskId)}/ws`);
-  return runReconnectingSocket(
-    url,
+  return runReconnectingStream(
+    `${TASKS_BASE_PATH}/${segment(userId)}/${segment(taskId)}`,
     {
-      subscribe: () => ({ type: "subscribe", since: options.since?.() ?? null }),
+      since: () => options.since?.() ?? null,
       onFrame: (raw) => {
         const frame = toTaskSocketFrame(raw);
         if (!frame) return;

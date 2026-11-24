@@ -1,7 +1,7 @@
 """The agent builder's "Try it" chat (plan 40): start, Reset, and the sweeper.
 
 A trial is an ordinary run on a conversation flagged ``is_trial`` (always also
-``is_private``), so it reuses the whole pipeline — event log, WebSocket frames,
+``is_private``), so it reuses the whole pipeline — event log, stream frames,
 approvals, cancel, usage — with the draft sent inline instead of loaded from
 the agents service's database:
 

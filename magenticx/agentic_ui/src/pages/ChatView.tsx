@@ -99,7 +99,7 @@ export default function ChatView() {
     activeConversationRun,
     pendingRunInterrupts,
     resumeInferenceRunHandler,
-    queuedMessage,
+    queuedMessages,
     canQueueSend,
     handleCancelQueuedMessage,
     canShowStarterSuggestions,
@@ -358,8 +358,9 @@ export default function ChatView() {
             canQueueWhileStreaming={canQueueSend}
             composerNotices={
               <ComposerTaskNotices
-                queuedMessage={queuedMessage}
-                onCancelQueued={() => void handleCancelQueuedMessage()}
+                queuedMessages={queuedMessages}
+                onCancelQueued={(messageId) => void handleCancelQueuedMessage(messageId)}
+                onSendNow={isCurrentConversationBusy ? handleStopStreaming : undefined}
               />
             }
             isImageFile={composer.isImageFile}

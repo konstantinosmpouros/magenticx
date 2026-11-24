@@ -58,6 +58,10 @@ class PromptContext:
     #: shown in its task panel (the drill-down) and its last message is the
     #: result handed back to its parent, so it gets the sub-agent wording.
     narrate_as_subagent: bool = False
+    #: The user can send messages while this run works and the run reads them
+    #: at its next step (``harness.middlewares.steering``), so how to treat
+    #: one is worth explaining (``steering_prompt``).
+    reads_interjections: bool = False
     #: Wall-clock for the run, injected rather than read inside a prompt so the
     #: composed text is deterministic under test.
     now: Optional[datetime] = None

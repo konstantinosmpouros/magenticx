@@ -46,12 +46,15 @@ from harness.middlewares import (
     FirstTokenCallback,
     RetryOnRateLimitMiddleware,
     SourcesMiddleware,
+    SteeringMiddleware,
     ToolErrorMiddleware,
     ToolMetricsMiddleware,
     UsageMetricsMiddleware,
+    build_steering_middleware,
     build_summarization_middleware,
     exclude_stock_summarization,
     find_summarizer,
+    steering_available,
 )
 from harness.conversation_files import ConversationFiles, ConversationFileStore, DocumentVersionStore
 from harness.filesystem import (
@@ -658,6 +661,10 @@ class DeepAgent(BaseAgent, ABC):
                 for name in (getattr(tool, "name", None) for tool in run_tools or ())
             ),
             sandbox_enabled=settings.filesystem.sandbox_execution_active,
+            # The steering middleware's own gate; a task node never steers.
+            reads_interjections=(
+                self.async_task_id is None and steering_available(ctx, interactive=self.interactive)
+            ),
             now=datetime.now(timezone.utc),
             personalization=build_personalization_prompt(self.personalization),
         )
@@ -752,6 +759,12 @@ class DeepAgent(BaseAgent, ABC):
         delegates = self._has_task_identity()
         stack = middleware if middleware is not None else self.default_middleware(model, backend)
         stack = self._run_middleware(stack)  # guarantee on the main agent
+        # Steering (SSE plan, phase 5): a message the user sends while this run
+        # works is read at its next step. The main agent only — a background
+        # task never reads the user's composer — and only an interactive run.
+        steering = build_steering_middleware(self.context, interactive=self.interactive)
+        if steering is not None and not any(isinstance(m, SteeringMiddleware) for m in stack):
+            stack.append(steering)
         self.summarizer = find_summarizer(stack)
         exclude_stock_summarization(model if isinstance(model, str) else "")
 

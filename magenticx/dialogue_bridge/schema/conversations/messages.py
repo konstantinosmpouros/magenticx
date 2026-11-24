@@ -111,7 +111,10 @@ class MessageOut(BaseModel):
     # "task_notification" (sender stays "user" — it is the orchestrator's
     # input), rendered as a compact notice, never as the user's words. Both
     # null on every ordinary message. snake_case: the §14.4 contract.
-    kind: Optional[Literal["task_notification"]] = None
+    # "interjection" (steering): a message the user sent while a run worked,
+    # under the answer that read it. Not in a conversation's message list (the
+    # branch tree leaves it out); typed so a row loaded on its own still reads.
+    kind: Optional[Literal["task_notification", "interjection"]] = None
     task_notice: Optional[TaskNoticeOut] = None
 
     @field_validator("task_notice", mode="before")

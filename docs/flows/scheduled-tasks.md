@@ -87,7 +87,7 @@ The detached run streams, accumulates tokens, and writes its terminal state to P
 The management page shows two layers, both built on the durable tag:
 
 1. **Status (durable, always correct).** `GET /v1/scheduled-tasks/{user_id}` returns each task with a derived `liveStatus` + `lastRunConversationId`, computed by `hydrate_live_status` (one batched lookup of each task's `last_run_message_id` → that message's `streaming_status` + conversation). Correct across bridge restarts and after Redis has expired the stream. `useAutomations` polls this fast while the `/automations` route is active, slow off it (no push channel exists for unsubscribed work).
-2. **Token-by-token (reuse, free).** Because a fire is a real run with a Redis stream + the same WebSocket endpoint, "open result" jumps into the run's conversation where the existing `observeRun` attaches and streams the live timeline — identical to a chat run.
+2. **Token-by-token (reuse, free).** Because a fire is a real run with a Redis stream + the same SSE stream endpoint, "open result" jumps into the run's conversation where the existing `observeRun` attaches and streams the live timeline — identical to a chat run.
 
 `InferenceRunOut` now carries `scheduledTaskId`, so a scheduled fire's active run (recovered on mount by `getActiveInferenceRuns`) is recognized as task-originated and lights the sidebar **Automations** badge in real time.
 

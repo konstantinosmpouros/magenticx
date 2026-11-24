@@ -1,7 +1,7 @@
 /**
  * Runs a callback at most once per animation frame (plan 45, Phase 3).
  *
- * The bridge sends about one WebSocket frame per streamed token, often far more
+ * The bridge sends about one stream frame per streamed token, often far more
  * than the screen can show. The run engine still folds every frame as it
  * arrives — nothing is dropped or merged — and uses this to hand the result to
  * React once per frame instead of once per token.

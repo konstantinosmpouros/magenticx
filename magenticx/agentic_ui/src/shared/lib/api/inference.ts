@@ -4,7 +4,7 @@
  *
  * Also owns `transformInferenceRunEvent`, the wire→app coercion for a run event
  * frame. It lives here (not in the socket module) so the dependency edge runs
- * one way only: `inference-socket.ts` imports from this module, never the
+ * one way only: `inference-stream.ts` imports from this module, never the
  * reverse.
  */
 import type {
@@ -24,7 +24,7 @@ import {
 } from "../consts";
 import { INFERENCE_BASE_PATH } from "./paths";
 
-// Folder-internal: exported for `inference-socket.ts`, deliberately NOT
+// Folder-internal: exported for `inference-stream.ts`, deliberately NOT
 // re-exported from the barrel — it is not part of the app-facing surface.
 export const transformInferenceRunEvent = (event: Record<string, any>): InferenceRunEvent => ({
   type: event.type,
@@ -72,8 +72,8 @@ export async function startInference(
 /**
  * Send in a conversation that may have a run going (plan 41 §3.6). With
  * `queue_if_busy` the bridge does not answer 409 when the conversation is
- * busy: it keeps the message as the conversation's one queued message (a
- * second send replaces it) and answers 202 `{queued, queued_message}`. When
+ * busy: it adds the message to the conversation's queue (up to five) and
+ * answers 202 `{queued, queued_messages}`. When
  * the conversation is free it starts the run as usual.
  */
 export async function startInferenceOrQueue(
@@ -89,7 +89,7 @@ export async function startInferenceOrQueue(
     fallbackMessage: "Failed to send the message",
   });
   return data.queued
-    ? { queued: true, queuedMessage: data.queuedMessage }
+    ? { queued: true, queuedMessages: data.queuedMessages }
     : { queued: false, response: toInferenceStartResponse(data.body) };
 }
 

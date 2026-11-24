@@ -9,7 +9,6 @@ remain importable directly for the less common symbols. Microsoft Entra ID
 from core.auth.session import (
     AuthContext,
     AuthUser,
-    authenticate_websocket_user,
     require_bound_user_id,
     require_csrf_protection,
     require_current_user,

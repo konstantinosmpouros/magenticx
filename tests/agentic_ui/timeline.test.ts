@@ -9,7 +9,7 @@ import {
 
 /**
  * The run timeline is the one reducer every message on screen is rendered from,
- * and it is folded by three different callers (live WebSocket frames, REST
+ * and it is folded by three different callers (live stream frames, REST
  * snapshot hydration, persisted-message replay). These tests pin the invariants
  * that make that safe to do — ordering, idempotence, and tolerance of junk — so
  * the Phase 5 restructure has something to fail against.

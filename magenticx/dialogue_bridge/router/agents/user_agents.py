@@ -163,7 +163,7 @@ async def try_my_agent(
     """"Try it" (plan 40): run the builder's draft as it is now, uncommitted.
 
     Answers like the chat's run start, so the builder observes the run with
-    the same WebSocket, resume and cancel endpoints.
+    the same stream, resume and cancel endpoints.
     """
     set_context(user_id=user_id, conversation_id=payload.conversationId)
     response = await start_agent_trial(db, current_user, payload)

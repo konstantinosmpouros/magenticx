@@ -22,6 +22,8 @@ TASK_LAUNCHED_EVENT_TYPE = "TASK_LAUNCHED"
 TASK_SETTLED_INLINE_EVENT_TYPE = "TASK_SETTLED_INLINE"
 #: A follow-up instruction a background task received (its own event stream only).
 TASK_INPUT_EVENT_TYPE = "TASK_INPUT"
+#: A message the user sent while the run worked, read at its next model call.
+USER_INTERJECTION_EVENT_TYPE = "USER_INTERJECTION"
 
 
 # ------------------------------------------------------------------
@@ -83,6 +85,21 @@ class TaskSettledInlineEvent(BaseModel):
     task_id: str
     name: str
     status: Literal["success", "error", "cancelled"]
+
+
+# ------------------------------------------------------------------
+# Steering (SSE plan, phase 5)
+# ------------------------------------------------------------------
+class UserInterjectionEvent(BaseModel):
+    """The user's message entered this run between two steps.
+
+    ``harness.middlewares.steering`` adds it to the agent's state before a
+    model call; this event is how the run's timeline shows the message at the
+    point the agent read it, and — kept in the run's events — after a reload.
+    """
+    text: str
+    #: When the user sent it (ISO 8601), so the timeline can tell how late it was read.
+    queued_at: Optional[str] = None
 
 
 # ------------------------------------------------------------------

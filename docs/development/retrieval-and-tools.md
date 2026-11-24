@@ -42,7 +42,7 @@ sequenceDiagram
 
     Browser->>Bridge: POST /v1/inference/runs/{user_id}/start {mode}
     Bridge-->>Browser: detail + summary + run + assistant placeholder
-    Browser->>Bridge: WS /v1/inference/runs/{user_id}/{run_id}/ws (subscribe)
+    Browser->>Bridge: GET /v1/inference/runs/{user_id}/{run_id}/events (SSE)
     Bridge->>Bridge: serialize message history with images
     Bridge->>Agents: POST /agents/{slug}/stream {messages, config}
 
@@ -65,7 +65,7 @@ sequenceDiagram
 
     Agents-->>Bridge: ToolCallResultEvent (SSE)
     Agents-->>Bridge: ToolCallEndEvent (SSE)
-    Bridge-->>Browser: WS frames (XADD → XREAD → {"type":"event",...})
+    Bridge-->>Browser: SSE frames (XADD → XREAD → event: event)
 ```
 
 ---
@@ -342,7 +342,7 @@ This is the only point in the pipeline where blob storage is accessed for infere
 
 - **OpenAI embeddings are called by the RAG service, not the agents service.** If `OPENAI_API_KEY` is missing from the RAG service's environment, the Chroma retriever will fail on the first call. The RAG service does not validate the key at startup.
 
-- **The bridge parses agent SSE into detached run state.** `InferenceRunManager` consumes upstream AG-UI frames, updates an in-memory accumulator, and appends each parsed event to the per-run Redis stream (`inference:run:{message_id}:events`). Browser observers connect via WebSocket and replay from that stream. Encoding or framing errors now fail the run instead of being forwarded as opaque bytes.
+- **The bridge parses agent SSE into detached run state.** `InferenceRunManager` consumes upstream AG-UI frames, updates an in-memory accumulator, and appends each parsed event to the per-run Redis stream (`inference:run:{message_id}:events`). Browser observers connect over Server-Sent Events and replay from that stream. Encoding or framing errors now fail the run instead of being forwarded as opaque bytes.
 
 ---
 
@@ -371,6 +371,6 @@ This is the only point in the pipeline where blob storage is accessed for infere
 | HITL, plan, sub-agent event models | [magenticx/agents/harness/agui/events.py](../../magenticx/agents/harness/agui/events.py) | `HITLInterruptEvent`, `PlanSnapshot`, `TaskSubAgentEvent`, `SubAgentEvent` |
 | Agent stream endpoint | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `POST /agents/{agent_slug}/stream` |
 | Agent catalog endpoints | [magenticx/agents/main.py](../../magenticx/agents/main.py) | `GET /agents`, `GET /tools` |
-| Inference runs (bridge) | [magenticx/dialogue_bridge/router/inference/runs.py](../../magenticx/dialogue_bridge/router/inference/runs.py) | `startInferenceFlow()`, `inference_run_websocket()`, `cancelInferenceRun()` |
+| Inference runs (bridge) | [magenticx/dialogue_bridge/router/inference/runs.py](../../magenticx/dialogue_bridge/router/inference/runs.py) | `startInferenceFlow()`, `stream_inference_run_events()`, `cancelInferenceRun()` |
 | Message history serialization | [magenticx/dialogue_bridge/engine/inference/history.py](../../magenticx/dialogue_bridge/engine/inference/history.py) | `prepare_inference_history()`, `serialise_message_with_images_for_agent()` |
 | Internal caller auth | [magenticx/agents/core/security/internal_trust.py](../../magenticx/agents/core/security/internal_trust.py) | `require_internal_caller()` |

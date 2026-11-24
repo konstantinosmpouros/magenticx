@@ -1,12 +1,3 @@
-# Connection-upgrade map: forwards `Upgrade: websocket` on WS handshakes and
-# closes the upstream connection on regular HTTP. Required by the inference
-# WebSocket endpoint. The map directive lives at http{} scope; conf.d files
-# are included inside http{} so placing it here is valid.
-map $http_upgrade $connection_upgrade {
-  default upgrade;
-  ''      close;
-}
-
 # Correlation id for end-to-end tracing: forward the browser's X-Request-ID when
 # present, otherwise mint one at the edge ($request_id) so every request carries
 # one. The bridge re-validates it, so a forged/oversized client value is harmless.
@@ -128,10 +119,11 @@ server {
     proxy_send_timeout 60s;
   }
 
-  # Inference run routes: REST (start, cancel, list, legacy SSE stream) and the
-  # WebSocket endpoint share this prefix. Same upstream as /api/ but with the
-  # Upgrade headers forwarded so the WS handshake succeeds, and long timeouts
-  # so live-tailing streams aren't dropped by an idle-connection cap.
+  # Inference run routes: REST (start, cancel, list) and the SSE event stream
+  # (…/events) share this prefix. Same upstream as /api/ but with no buffering
+  # or compression, so every SSE event leaves the moment the bridge writes it,
+  # and long timeouts so live-tailing streams aren't dropped by an
+  # idle-connection cap.
   location ^~ /api/v1/inference/runs/ {
     rewrite ^/api/(.*) /$1 break;
     proxy_pass $bff;
@@ -144,25 +136,30 @@ server {
     proxy_set_header X-Internal-Proxy-Secret ${TRUSTED_PROXY_SECRET};
     proxy_set_header X-Request-ID $req_id;
 
-    # WebSocket upgrade plumbing — harmless on regular HTTP requests because
-    # $http_upgrade is empty there and $connection_upgrade maps to "close".
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
+    # HTTP/1.1 to the bridge without a hop-by-hop `Connection: close`.
+    proxy_set_header Connection "";
 
     proxy_request_buffering off;
     proxy_buffering off;
     gzip off;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
+
+    # nginx hides every X-Accel-* response header by default. Pass the bridge's
+    # `X-Accel-Buffering: no` on, so Nginx Proxy Manager (in front of us on
+    # Dennis, buffering by default) streams the SSE events instead of holding
+    # them — buffering there would bring back the bursty streaming.
+    proxy_pass_header X-Accel-Buffering;
   }
 
-  # Background-task sockets (plan 41): the conversation channel
-  # (/v1/conversations/{user}/{conv}/ws) and one task's drill-down
-  # (/v1/tasks/{user}/{task}/ws). Only the exact `/ws` paths match, so the REST
-  # routes under the same prefixes stay on the generic /api/ block. Without the
-  # Upgrade headers the handshake reaches the bridge as a plain GET and 404s.
+  # Background-task streams (plan 41), over SSE: the conversation channel
+  # (/v1/conversations/{user}/{conv}/events) and one task's drill-down
+  # (/v1/tasks/{user}/{task}/events). Only the exact `/events` paths match, so
+  # the REST routes under the same prefixes stay on the generic /api/ block.
+  # They need the long timeouts (the channel stays open as long as the
+  # conversation is) and the X-Accel-Buffering pass-through below.
   # A regex location wins over the plain /api/ prefix below.
-  location ~ ^/api/v1/(conversations|tasks)/[^/]+/[^/]+/ws$ {
+  location ~ ^/api/v1/(conversations|tasks)/[^/]+/[^/]+/events$ {
     rewrite ^/api/(.*) /$1 break;
     proxy_pass $bff;
     proxy_http_version 1.1;
@@ -174,13 +171,16 @@ server {
     proxy_set_header X-Internal-Proxy-Secret ${TRUSTED_PROXY_SECRET};
     proxy_set_header X-Request-ID $req_id;
 
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Connection "";
 
     proxy_buffering off;
     gzip off;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
+
+    # Same as the run location: let the bridge's `X-Accel-Buffering: no` reach
+    # Nginx Proxy Manager so it streams the SSE events instead of holding them.
+    proxy_pass_header X-Accel-Buffering;
   }
 
   # The bridge's API docs and OpenAPI schema never leave the server: they map

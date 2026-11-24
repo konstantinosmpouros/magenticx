@@ -1,45 +1,41 @@
-"""Background sub-agent tasks (plan 41 §5, §14.4): REST and WebSockets.
+"""Background sub-agent tasks (plan 41 §5, §14.4): REST and SSE streams.
 
 Thin: every route checks the session, the user binding and ownership, and
-hands the work to ``engine/inference/tasks/tasks.py`` / ``engine/inference/composer_queue.py``;
-the sockets' handshake, ownership and pump live in ``engine/inference/tasks/sockets.py``. Two
-routers, because half the surface hangs off a conversation:
+hands the work to ``engine/inference/tasks/tasks.py`` / ``engine/inference/composer_queue.py``.
+Two routers, because half the surface hangs off a conversation:
 
 * ``router`` (``/v1/tasks``) — one task: stop it, answer its approval, watch
-  its live events (the drill-down socket);
+  its live events (the drill-down stream);
 * ``conversation_router`` (``/v1/conversations``) — a conversation's task
-  tree, its queued composer message, and the conversation channel socket.
+  tree, its queued composer message, and the conversation channel stream.
 
-Both sockets authenticate exactly like the run socket (router/inference/runs.py):
-session cookie bound to the path's ``{user_id}``, a per-user connect-rate
-limit, ownership checked before the handshake completes, then a ``subscribe``
-first frame within ``INFERENCE_WS_SUBSCRIBE_TIMEOUT_SECONDS``.
+The watched streams are Server-Sent Events (``GET …/events``, SSE plan): the
+normal HTTP dependencies do auth, ownership (``404``), the cursor (``400``)
+and the per-user connect limit before the stream opens.
 """
-from fastapi import APIRouter, Depends, Query, Response, WebSocket, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.auth.session import AuthUser, require_csrf_protection
 from core.database import get_db
 from core.logging import get_logger, set_context
-from core.security.rate_limit import task_mutate_rate_limit, task_read_rate_limit
-from schema import ActiveConversationsOut, TaskOut, TaskResumeIn
-from utils.validators import validate_userId
+from core.security.rate_limit import stream_connect_rate_limit, task_mutate_rate_limit, task_read_rate_limit
+from core.settings import settings
+from schema import ActiveConversationsOut, TaskOut, TaskResumeIn, queued_messages_from_column
+from utils.sse import SSE_RESPONSE_HEADERS, frames_to_sse
+from utils.validators import validate_stream_cursor, validate_userId
 from engine.inference.tasks.tasks import (
     active_conversation_ids,
     cancel_task_for_user,
+    get_owned_task,
     list_conversation_tasks,
+    owned_conversation,
     resume_task_for_user,
     stream_task_events,
 )
 from engine.inference.composer_queue import cancel_queued_message
 from engine.inference.channel import channel_frames
-from engine.inference.tasks.sockets import (
-    accept_subscribe,
-    authenticate_socket,
-    conversation_socket_queue,
-    pump_frames,
-    task_socket_owned,
-)
 
 logger = get_logger(__name__)
 
@@ -63,18 +59,21 @@ async def listConversationTasks(
     return await list_conversation_tasks(db, current_user.id, conversation_id, limit)
 
 
-@conversation_router.delete("/{user_id}/{conversation_id}/queued-message", status_code=status.HTTP_204_NO_CONTENT)
+@conversation_router.delete(
+    "/{user_id}/{conversation_id}/queued-messages/{message_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def deleteQueuedMessage(
     user_id: str,
     conversation_id: str,
+    message_id: str = Path(min_length=1, max_length=64),
     current_user: AuthUser = Depends(validate_userId),
     _: None = Depends(require_csrf_protection),
     _rate_limited: None = Depends(task_mutate_rate_limit),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Cancel the conversation's queued composer message before it is sent."""
+    """Cancel one of the conversation's queued composer messages before it is sent (404 when it is gone)."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    await cancel_queued_message(db, current_user.id, conversation_id)
+    await cancel_queued_message(db, current_user.id, conversation_id, message_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -120,37 +119,57 @@ async def resumeTask(
 
 
 # ---------------------------------------------------------------------------
-# WebSockets
+# Server-Sent Events
 # ---------------------------------------------------------------------------
-@conversation_router.websocket("/{user_id}/{conversation_id}/ws")
-async def conversation_websocket(websocket: WebSocket, user_id: str, conversation_id: str):
-    """The conversation channel (§14.4): ``task``, ``run_started`` and
-    ``queue`` frames, each with its ``seq`` (send it back as ``since`` to
-    resume after a reconnect). The first frame is always the queue's state."""
-    if not await authenticate_socket(websocket, user_id):
-        return
-    owned, queued = await conversation_socket_queue(websocket, user_id, conversation_id)
-    if not owned:
-        return
-    ok, since = await accept_subscribe(websocket)
-    if not ok:
-        return
+@conversation_router.get("/{user_id}/{conversation_id}/events")
+async def conversation_events(
+    user_id: str,
+    conversation_id: str,
+    cursor: str | None = Depends(validate_stream_cursor),
+    current_user: AuthUser = Depends(validate_userId),
+    _rate_limited: None = Depends(stream_connect_rate_limit),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """The conversation channel over SSE — the frames of the socket below, one
+    event each (``event:`` = the frame's ``type``, ``id:`` = its ``seq``): the
+    queue's state first, then ``task``, ``run_started`` and ``queue`` frames.
+    Resume with ``?since=`` or ``Last-Event-ID``; the stream never ends on its
+    own, and a ``: ping`` keeps it open while quiet."""
+    conversation = await owned_conversation(db, current_user.id, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found.")
+    queued = queued_messages_from_column(conversation.queued_messages)
+    # Nothing else is read on this session: give its connection back before a
+    # stream that stays open as long as the conversation is.
+    await db.close()
     set_context(user_id=user_id, conversation_id=conversation_id)
-    logger.info("conversation_ws_subscribe", "Conversation channel subscriber attached", replay=bool(since))
-    await pump_frames(websocket, channel_frames(conversation_id, since, queued), conversation_id=conversation_id)
+    logger.info("conversation_sse_subscribe", "Conversation channel SSE subscriber attached", replay=bool(cursor))
+    return StreamingResponse(
+        frames_to_sse(channel_frames(conversation_id, cursor, queued), settings.inference.sse_heartbeat_seconds),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )
 
 
-@router.websocket("/{user_id}/{task_id}/ws")
-async def task_websocket(websocket: WebSocket, user_id: str, task_id: str):
-    """One task's live events, for its drill-down (§14.4): ``snapshot``, then
-    ``event`` frames, then ``terminal`` once it settles."""
-    if not await authenticate_socket(websocket, user_id):
-        return
-    if not await task_socket_owned(websocket, user_id, task_id):
-        return
-    ok, since = await accept_subscribe(websocket)
-    if not ok:
-        return
+@router.get("/{user_id}/{task_id}/events")
+async def task_events(
+    user_id: str,
+    task_id: str,
+    cursor: str | None = Depends(validate_stream_cursor),
+    current_user: AuthUser = Depends(validate_userId),
+    _rate_limited: None = Depends(stream_connect_rate_limit),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """One task's live events over SSE, for its drill-down: ``snapshot``, then
+    ``event`` frames (``id:`` = ``seq``), then ``terminal`` once it settles,
+    after which the stream ends."""
+    if await get_owned_task(db, current_user.id, task_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found.")
+    await db.close()
     set_context(user_id=user_id)
-    logger.info("task_ws_subscribe", "Task socket subscriber attached", task_id=task_id, replay=bool(since))
-    await pump_frames(websocket, stream_task_events(user_id, task_id, since), task_id=task_id)
+    logger.info("task_sse_subscribe", "Task SSE subscriber attached", task_id=task_id, replay=bool(cursor))
+    return StreamingResponse(
+        frames_to_sse(stream_task_events(user_id, task_id, cursor), settings.inference.sse_heartbeat_seconds),
+        media_type="text/event-stream",
+        headers=SSE_RESPONSE_HEADERS,
+    )

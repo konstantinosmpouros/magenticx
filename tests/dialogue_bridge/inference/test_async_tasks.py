@@ -32,11 +32,9 @@ from typing import Any
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
-import engine.inference.tasks.sockets as task_sockets
 import engine.account.deletion as account_deletion
 import engine.inference.tasks.tasks as async_tasks
 import engine.inference.composer_queue as composer_queue
@@ -90,7 +88,7 @@ def _wire(monkeypatch, session_factory, seeded_agent):
         monkeypatch.setattr(module, "get_agent_by_id", get_agent)
     monkeypatch.setattr(settings.async_tasks, "wake_retry_base_seconds", 0.0)
     monkeypatch.setattr(settings.async_tasks, "read_block_ms", 100)
-    monkeypatch.setattr(settings.async_tasks, "task_ws_block_ms", 100)
+    monkeypatch.setattr(settings.async_tasks, "task_stream_block_ms", 100)
 
 
 @pytest.fixture
@@ -457,8 +455,9 @@ async def test_a_run_end_sends_the_queued_message_before_any_wake_up(
     ids = await _branchy_conversation(session_factory, seeded_user, seeded_agent)
     async with session_factory() as s:
         conv = await s.get(ConversationTable, ids["conversation_id"])
-        conv.queued_message = {"content": "and also this", "command": None, "agent_id": seeded_agent.id,
-                               "queued_at": _now().isoformat(), "after_run_id": ids["a2b"]}
+        conv.queued_messages = [{"id": "q1", "content": "and also this", "command": None,
+                                 "agent_id": seeded_agent.id, "queued_at": _now().isoformat(),
+                                 "after_run_id": ids["a2b"]}]
         s.add(ConversationTaskTable(task_id="task-1", conversation_id=conv.id, user_id=seeded_user.id,
                                     name="r", status="success", depth=1))
         await s.commit()
@@ -470,11 +469,11 @@ async def test_a_run_end_sends_the_queued_message_before_any_wake_up(
         run = await s.get(MessageTable, launched[0])
         user_msg = await s.get(MessageTable, run.parent_message_id)
         assert (user_msg.content, user_msg.parent_message_id, user_msg.kind) == ("and also this", ids["a2b"], None)
-        assert (await s.get(ConversationTable, ids["conversation_id"])).queued_message is None
+        assert (await s.get(ConversationTable, ids["conversation_id"])).queued_messages is None
     # The queue went first: the agents service was not even asked.
     assert agents_service.calls == []
     frames = await _channel(ids["conversation_id"])
-    assert frames[-2] == {"type": "queue", "queued_message": None}
+    assert frames[-2] == {"type": "queue", "queued_messages": []}
     assert frames[-1]["type"] == "run_started" and frames[-1]["from_queue"] is True
 
 
@@ -538,8 +537,9 @@ async def test_reconcile_sends_left_behind_queues_and_unnotified_settles(
     ids = await _branchy_conversation(session_factory, seeded_user, seeded_agent)
     async with session_factory() as s:
         conv = await s.get(ConversationTable, ids["conversation_id"])
-        conv.queued_message = {"content": "hi", "command": None, "agent_id": seeded_agent.id,
-                               "queued_at": (_now() - timedelta(minutes=5)).isoformat(), "after_run_id": ids["a2b"]}
+        conv.queued_messages = [{"id": "q1", "content": "hi", "command": None, "agent_id": seeded_agent.id,
+                                 "queued_at": (_now() - timedelta(minutes=5)).isoformat(),
+                                 "after_run_id": ids["a2b"]}]
         await s.commit()
     agents_service.on("GET", "/tasks/unnotified", httpx.Response(200, json=[
         _outbox(ids["conversation_id"], seeded_user.id).model_dump(mode="json")]))
@@ -585,46 +585,54 @@ async def test_a_send_to_a_busy_conversation_is_queued_with_the_flag(
                                                     queue_if_busy=True))
     assert queued.status_code == 202
     assert queued.json()["queued"] is True
-    assert queued.json()["queued_message"]["content"] == "next question"
-    replaced = await client.post(url, json=_send_body(ids["conversation_id"], ids["a2b"], seeded_agent.id,
-                                                      queue_if_busy=True, message={"sender": "user", "content": "v2"}))
-    assert replaced.status_code == 202
+    assert [m["content"] for m in queued.json()["queued_messages"]] == ["next question"]
+    second = await client.post(url, json=_send_body(ids["conversation_id"], ids["a2b"], seeded_agent.id,
+                                                    queue_if_busy=True, message={"sender": "user", "content": "v2"}))
+    assert second.status_code == 202
+    # A second send joins the queue behind the first; it never replaces it.
+    listed = second.json()["queued_messages"]
+    assert [m["content"] for m in listed] == ["next question", "v2"]
+    assert len({m["id"] for m in listed}) == 2
     async with session_factory() as s:
-        stored = (await s.get(ConversationTable, ids["conversation_id"])).queued_message
-        assert (stored["content"], stored["after_run_id"]) == ("v2", running)
+        stored = (await s.get(ConversationTable, ids["conversation_id"])).queued_messages
+        assert [(m["content"], m["after_run_id"]) for m in stored] == [("next question", running), ("v2", running)]
     assert launched == []
-    assert (await _channel(ids["conversation_id"]))[-1] == {
-        "type": "queue", "queued_message": queued.json()["queued_message"] | {"content": "v2",
-                                                                             "queued_at": stored["queued_at"]}}
+    assert (await _channel(ids["conversation_id"]))[-1] == {"type": "queue", "queued_messages": listed}
 
     files = _send_body(ids["conversation_id"], ids["a2b"], seeded_agent.id, queue_if_busy=True, message={
         "sender": "user", "content": "x",
         "attachments": [{"name": "a.txt", "mime": "text/plain", "size": 1, "dataB64": "YQ=="}]})
     assert (await client.post(url, json=files)).status_code == 409
 
-    cancel = await client.delete(f"/v1/conversations/{seeded_user.id}/{ids['conversation_id']}/queued-message")
-    assert cancel.status_code == 204
+    base = f"/v1/conversations/{seeded_user.id}/{ids['conversation_id']}/queued-messages"
+    first_cancel = await client.delete(f"{base}/{listed[0]['id']}")
+    assert first_cancel.status_code == 204
     async with session_factory() as s:
-        assert (await s.get(ConversationTable, ids["conversation_id"])).queued_message is None
-    assert (await _channel(ids["conversation_id"]))[-1] == {"type": "queue", "queued_message": None}
+        stored = (await s.get(ConversationTable, ids["conversation_id"])).queued_messages
+        assert [m["content"] for m in stored] == ["v2"]
+    assert (await client.delete(f"{base}/{listed[0]['id']}")).status_code == 404  # already gone
+    assert (await client.delete(f"{base}/{listed[1]['id']}")).status_code == 204
+    async with session_factory() as s:
+        assert (await s.get(ConversationTable, ids["conversation_id"])).queued_messages is None
+    assert (await _channel(ids["conversation_id"]))[-1] == {"type": "queue", "queued_messages": []}
 
 
 async def test_a_queued_send_refused_for_a_transient_reason_is_put_back(
     session_factory, seeded_user, seeded_agent, launched
 ):
     ids = await _branchy_conversation(session_factory, seeded_user, seeded_agent)
-    value = {"content": "q", "command": None, "agent_id": seeded_agent.id, "queued_at": _now().isoformat(),
-             "after_run_id": ids["a2"]}
+    value = [{"id": "q1", "content": "q", "command": None, "agent_id": seeded_agent.id,
+              "queued_at": _now().isoformat(), "after_run_id": ids["a2"]}]
     async with session_factory() as s:
-        (await s.get(ConversationTable, ids["conversation_id"])).queued_message = value
+        (await s.get(ConversationTable, ids["conversation_id"])).queued_messages = value
         await s.commit()
     await _make_busy(session_factory, ids["conversation_id"], ids["a2b"])
 
-    sent = await composer_queue.send_queued_message(ids["conversation_id"], session_factory=session_factory)
+    sent = await composer_queue.send_queued_messages(ids["conversation_id"], session_factory=session_factory)
 
     assert sent is False and launched == []
     async with session_factory() as s:
-        assert (await s.get(ConversationTable, ids["conversation_id"])).queued_message == value
+        assert (await s.get(ConversationTable, ids["conversation_id"])).queued_messages == value
 
 
 # ---------------------------------------------------------------------------
@@ -763,11 +771,11 @@ async def test_the_task_socket_tails_a_live_node_until_it_settles(session_factor
 
 
 async def test_the_conversation_socket_starts_with_the_queue_then_tails_frames(seeded_user):
-    await conversation_channel.publish("conv-1", {"type": "queue", "queued_message": None, "marker": 0})
-    frames = channel_frames("conv-1", None, None)
-    assert await anext(frames) == {"type": "queue", "queued_message": None}
+    await conversation_channel.publish("conv-1", {"type": "queue", "queued_messages": [], "marker": 0})
+    frames = channel_frames("conv-1", None, [])
+    assert await anext(frames) == {"type": "queue", "queued_messages": []}
     # Published after the subscribe: tailed. The one before it is history.
-    await conversation_channel.publish("conv-1", {"type": "queue", "queued_message": None, "marker": 1})
+    await conversation_channel.publish("conv-1", {"type": "queue", "queued_messages": [], "marker": 1})
     tailed = await asyncio.wait_for(anext(frames), timeout=5)
     assert tailed["marker"] == 1 and tailed["seq"]
     await frames.aclose()
@@ -834,49 +842,3 @@ async def test_the_export_lists_tasks_and_the_notice_columns(session_factory, se
     assert "raw_events" not in rows[0]
     messages = [row async for row in data_export._all_messages(seeded_user.id)]
     assert {"kind", "task_notice"} <= set(messages[0])
-
-
-
-# ---------------------------------------------------------------------------
-# The socket handshakes
-# ---------------------------------------------------------------------------
-@pytest.mark.parametrize("path", ["/v1/tasks/{user}/task-1/ws", "/v1/conversations/{user}/conv-1/ws"])
-def test_the_task_sockets_refuse_without_a_session(app, seeded_user, path):
-    # No `with`: the app's lifespan (migrations, loops) must not run here.
-    client = TestClient(app)
-    with pytest.raises(WebSocketDisconnect) as refused:
-        with client.websocket_connect(path.format(user=seeded_user.id)):
-            pass
-    assert refused.value.code == 4401
-
-
-@pytest.mark.parametrize("path", ["/v1/tasks/{user}/nope/ws", "/v1/conversations/{user}/nope/ws"])
-def test_the_task_sockets_refuse_what_the_user_does_not_own(app, seeded_user, monkeypatch, path):
-    async def signed_in(_cookies, user_id):
-        return seeded_user
-
-    async def allowed(_websocket, _user_id):
-        return True
-
-    class _NoRows:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def execute(self, *_a, **_k):
-            return _Result()
-
-    class _Result:
-        def scalar_one_or_none(self):
-            return None
-
-    monkeypatch.setattr(task_sockets, "authenticate_websocket_user", signed_in)
-    monkeypatch.setattr(task_sockets, "allow_ws_connect", allowed)
-    monkeypatch.setattr(task_sockets, "SessionLocal", _NoRows)
-    client = TestClient(app)
-    with pytest.raises(WebSocketDisconnect) as refused:
-        with client.websocket_connect(path.format(user=seeded_user.id)):
-            pass
-    assert refused.value.code == 4404

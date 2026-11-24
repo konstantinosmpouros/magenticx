@@ -26,6 +26,8 @@ import {
   TaskSubAgentPayloadSchema,
   TOKEN_USAGE_EVENT_TYPE,
   TokenUsagePayloadSchema,
+  USER_INTERJECTION_EVENT_TYPE,
+  UserInterjectionPayloadSchema,
 } from "./agui";
 import { askUserAnswers, askUserQuestions, isAskUserInterrupt, parseHitlInterrupt } from "./hitl";
 import { advancePlanTimings, planSnapshotTime } from "./planTiming";
@@ -43,6 +45,7 @@ import type {
   TaskRefBlock,
   TaskSettledBlock,
   ThinkingBlock,
+  UserInterjectionBlock,
   TimelineBlock,
   TimelineFoldIndexes,
   AskUserAnswer,
@@ -301,6 +304,31 @@ function ensureThinking(session: Session, ts?: number): ThinkingBlock {
   return block;
 }
 
+/**
+ * A piece of thinking text. Inside a streaming thought (START seen, END not
+ * yet) it grows that thought's one item, so the step fills in live as the
+ * model writes it; otherwise — a thought sent whole — it is a step of its own.
+ */
+function appendThought(session: Session, event: RawEvent): void {
+  const fold = session.state.fold;
+  const thinking = ensureThinking(session, eventTimestamp(event));
+  const blockIndex = fold.openThinkingIndex;
+  const delta = String(event.delta ?? "");
+  const open = fold.openThought;
+  if (open && open.item !== null && open.block === blockIndex) {
+    const current = thinking.items[open.item];
+    if (current?.kind === "thought") {
+      thinking.items[open.item] = { ...current, text: current.text + delta };
+      return;
+    }
+  }
+  const thought: TimelineThought = { kind: "thought", id: nextItemId(session), text: delta };
+  thinking.items.push(thought);
+  if (open && blockIndex !== null) {
+    fold.openThought = { block: blockIndex, item: thinking.items.length - 1 };
+  }
+}
+
 function ensureContent(session: Session, ts?: number): ContentBlock {
   const fold = session.state.fold;
   closeThinking(session, ts);
@@ -452,6 +480,24 @@ function pushTaskInputBlock(session: Session, event: RawEvent): void {
   session.state.fold.openContentIndex = null;
   const block: TaskInputBlock = {
     kind: "task_input",
+    id: nextBlockId(session),
+    text: parsed.data.text,
+  };
+  session.state.blocks.push(block);
+  session.clonedBlocks.add(session.state.blocks.length - 1);
+}
+
+/**
+ * USER_INTERJECTION (steering): the user's message, where the run read it. It
+ * ends whatever the run was doing before it, as a task result pulled in does.
+ */
+function pushUserInterjectionBlock(session: Session, event: RawEvent): void {
+  const parsed = UserInterjectionPayloadSchema.safeParse(taskEventPayload(event));
+  if (!parsed.success) return;
+  closeThinking(session, eventTimestamp(event));
+  session.state.fold.openContentIndex = null;
+  const block: UserInterjectionBlock = {
+    kind: "user_interjection",
     id: nextBlockId(session),
     text: parsed.data.text,
   };
@@ -1132,6 +1178,8 @@ function applyNestedTask(block: SubagentBlock, fold: TimelineFoldIndexes, key: s
  *   - `TASK_LAUNCHED` / `TASK_SETTLED_INLINE` (plan 41) are top-level only: an
  *     async task's events never arrive wrapped — each task streams on its own
  *     socket and is folded there as a top-level run of its own.
+ *   - `USER_INTERJECTION` (steering) is top-level only too: only the run the
+ *     user talks to reads their messages.
  * Add a new event type to BOTH unless it falls into one of those groups.
  */
 function applySubagentInnerEvent(session: Session, key: string, inner: RawEvent): void {
@@ -1338,6 +1386,10 @@ function applyEvent(session: Session, event: RawEvent): void {
     pushTaskInputBlock(session, event);
     return;
   }
+  if (type === USER_INTERJECTION_EVENT_TYPE) {
+    pushUserInterjectionBlock(session, event);
+    return;
+  }
 
   if (type === "CUSTOM") {
     const name = event.name;
@@ -1353,6 +1405,10 @@ function applyEvent(session: Session, event: RawEvent): void {
     }
     if (name === TASK_INPUT_EVENT_TYPE) {
       pushTaskInputBlock(session, event);
+      return;
+    }
+    if (name === USER_INTERJECTION_EVENT_TYPE) {
+      pushUserInterjectionBlock(session, event);
       return;
     }
 
@@ -1544,14 +1600,18 @@ function applyEvent(session: Session, event: RawEvent): void {
     return;
   }
 
+  if (type === "THINKING_TEXT_MESSAGE_START") {
+    session.state.fold.openThought = { block: -1, item: null };
+    return;
+  }
+
   if (type === "THINKING_TEXT_MESSAGE_CONTENT") {
-    const thinking = ensureThinking(session, eventTimestamp(event));
-    const thought: TimelineThought = {
-      kind: "thought",
-      id: nextItemId(session),
-      text: String(event.delta ?? ""),
-    };
-    thinking.items.push(thought);
+    appendThought(session, event);
+    return;
+  }
+
+  if (type === "THINKING_TEXT_MESSAGE_END") {
+    session.state.fold.openThought = null;
     return;
   }
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   cancelInferenceRun,
-  connectInferenceWebSocket,
+  connectInferenceStream,
   downloadAttachment,
   fetchAttachmentBlob,
   resetAgentTrial,
@@ -71,7 +71,7 @@ export type AgentTrial = {
  * The builder's "Try it" chat (plan 40): a small, local run loop over the
  * low-level inference API. A message goes to `POST …/custom/try` with the
  * draft as it is now; the run it starts is followed over the ordinary run
- * WebSocket and folded with the main chat's own pure functions
+ * stream and folded with the main chat's own pure functions
  * (`mergeRunEvent`, the timeline reducer), so it renders exactly as a chat
  * does. Approvals and questions resume it, Stop cancels it, Reset deletes the
  * trial conversation.
@@ -159,7 +159,7 @@ export function useAgentTrial({ userId }: { userId: string | null }): AgentTrial
           REOBSERVE_DELAY_MS,
         );
       };
-      void connectInferenceWebSocket(
+      void connectInferenceStream(
         owner,
         runId,
         (event) => applyEvent(event, generation),

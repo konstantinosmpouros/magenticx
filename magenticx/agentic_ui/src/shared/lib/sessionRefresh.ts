@@ -184,18 +184,14 @@ let inFlight: Promise<EnsureFreshResult> | null = null;
  * `unavailable` (no usable answer — keep the user signed in and retry later), or
  * `failed` (the bridge refused the refresh token → the session has ended). Never
  * throws.
- *
- * @param opts.force refresh even if the local marker still looks fresh — used by
- *   the WebSocket 4401 path, where a connection already proved the access token
- *   is stale.
  */
-export function ensureFreshSession(opts: { force?: boolean } = {}): Promise<EnsureFreshResult> {
+export function ensureFreshSession(): Promise<EnsureFreshResult> {
   if (inFlight) return inFlight;
   const run = async (): Promise<EnsureFreshResult> => {
     try {
       return await withCrossTabLock(async () => {
         const current = loadSession();
-        if (!opts.force && current && current.expiresAt - Date.now() > SESSION_FRESH_THRESHOLD_MS) {
+        if (current && current.expiresAt - Date.now() > SESSION_FRESH_THRESHOLD_MS) {
           return { status: "already-fresh" } as const;
         }
         try {

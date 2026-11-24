@@ -23,16 +23,13 @@ the logout denylist); the SDK logs and counts degraded decisions separately.
 """
 from __future__ import annotations
 
-from fastapi import Request, WebSocket
+from fastapi import Request
 from redis_fastapi import rate_limit
-from redis_fastapi.deps import get_rate_limit_backend
 
 from core.auth.tokens import ACCESS_TYPE, verify
 from core.security.internal_trust import resolve_client_ip
 from core.settings import settings
-from core.logging import get_logger
 
-logger = get_logger(__name__)
 
 # The global per-identity budget, consumed by the SDK middleware installer.
 USER_BUDGET_RATE: tuple[int, int] = (
@@ -377,29 +374,12 @@ refresh_rate_limit = rate_limit(
 )
 
 
-async def allow_ws_connect(websocket: WebSocket, user_id: str) -> bool:
-    """Connect-rate guard for the run-stream WebSocket handshake.
+# Opening a live stream (a run, a conversation channel, a task drill-down —
+# SSE): a per-user connect budget, so a reconnect storm is capped.
+stream_connect_rate_limit = rate_limit(
+    (settings.rate_limit.stream_connect_max_attempts, settings.rate_limit.stream_connect_window_seconds),
+    scope="stream-connect",
+    identifier=user_path_identity,
+    emit_headers=True,
+)
 
-    The SDK's middleware and ``rate_limit`` dependencies are HTTP-only, so the
-    socket route enforces its own fixed window against the same Redis-backed
-    engine (shared pool + capability cache; ``get_rate_limit_backend`` only
-    reads ``.app``, which WebSocket carries too). Keyed by the *verified* user
-    id — the caller runs this after WebSocket authentication succeeds, so the
-    bucket cannot be pinned on someone else. Fails OPEN like every limiter.
-    """
-    try:
-        backend = await get_rate_limit_backend(websocket)  # type: ignore[arg-type]
-        result = await backend.hit(
-            f"user:{user_id}",
-            limit=settings.rate_limit.ws_connect_max_attempts,
-            window=settings.rate_limit.ws_connect_window_seconds,
-            scope="ws-connect",
-        )
-        return result.allowed
-    except Exception:
-        logger.warning(
-            "ws_connect_rate_limit_degraded",
-            "WebSocket connect rate limit unavailable; failing open",
-            exc_info=True,
-        )
-        return True

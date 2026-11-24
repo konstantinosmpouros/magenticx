@@ -251,7 +251,7 @@ export async function updateMyAgent(
 // "Try it" (plan 40): chat with the builder's uncommitted draft. A message
 // starts a run on a private, ephemeral trial conversation; the answer is the
 // same as an inference start's, so the run is followed with the ordinary run
-// WebSocket, resume and cancel. A 422 carries `{message, errors, issues}` (the
+// stream, resume and cancel. A 422 carries `{message, errors, issues}` (the
 // draft does not validate) on the thrown ApiError's `detailObject`, as a
 // create or update does.
 // ---------------------------------------------------------------------------

@@ -30,6 +30,9 @@ export const TASK_LAUNCHED_EVENT_TYPE = "TASK_LAUNCHED" as const;
 export const TASK_SETTLED_INLINE_EVENT_TYPE = "TASK_SETTLED_INLINE" as const;
 // In a task's own stream: a follow-up instruction it received (update_async_task).
 export const TASK_INPUT_EVENT_TYPE = "TASK_INPUT" as const;
+// Steering (SSE plan, phase 5): a message the user sent while the run worked,
+// read by the run at its next step.
+export const USER_INTERJECTION_EVENT_TYPE = "USER_INTERJECTION" as const;
 // Inline citations (plan 42): the sources one search-tool call returned.
 export const SOURCES_EVENT_TYPE = "SOURCES" as const;
 export const SOURCES_EVENT_NAMES = [SOURCES_EVENT_TYPE, "sources"] as const;
@@ -134,6 +137,11 @@ export const TaskLaunchedPayloadSchema = z.object({
 
 export const TaskInputPayloadSchema = z.object({
   text: z.string().min(1),
+});
+
+export const UserInterjectionPayloadSchema = z.object({
+  text: z.string().min(1),
+  queued_at: z.string().nullish(),
 });
 
 export const TaskSettledInlinePayloadSchema = z.object({

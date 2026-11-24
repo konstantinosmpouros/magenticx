@@ -1,7 +1,7 @@
 /**
  * The pure run-state fold shared by every live view of a run: the main chat
  * (`useInferenceRuns`) and the agent builder's "Try it" panel
- * (`useAgentTrial`). A WebSocket frame, a start answer or a cancel/resume
+ * (`useAgentTrial`). A stream frame, a start answer or a cancel/resume
  * answer goes in; the run with its timeline folded comes out. Kept apart from
  * either hook so both read a frame exactly the same way.
  */

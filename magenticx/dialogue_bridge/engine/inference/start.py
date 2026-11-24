@@ -25,6 +25,7 @@ from engine.conversations.conversations import _preview, init_conv, init_message
 from engine.inference.history import resolve_inference_message_path
 from engine.inference.runs.payloads import build_run_out_from_message
 from engine.inference.runs.records import create_inference_run_record
+from engine.inference.steering import carry_interjections
 from engine.conversations.sharing import (
     create_conversation_from_share_record,
     load_active_share,
@@ -121,6 +122,14 @@ async def start_inference_flow(
     message_path = payload.messagePath if mode == "retry" else None
     # Read before create_run_and_respond expires every loaded row.
     conversation_id = conversation.id
+    retried_answer_id = payload.targetMessageId if mode == "retry" else None
+
+    async def carry_into_retry(new_answer: MessageTable) -> None:
+        # A retry answers everything the user said, including what they sent
+        # while the retried answer ran (steering); an edit rewrites the turn,
+        # so it starts clean.
+        await carry_interjections(db, from_answer_id=retried_answer_id, to_answer_id=new_answer.id)
+
     started = await create_run_and_respond(
         db=db,
         user_id=user_id,
@@ -130,6 +139,7 @@ async def start_inference_flow(
         agent=agent,
         mode=mode,
         scheduled_task_id=scheduled_task_id,
+        before_commit=carry_into_retry if retried_answer_id else None,
     )
     if shared_sources:
         # After the commit, so a start that failed leaves no sources behind;

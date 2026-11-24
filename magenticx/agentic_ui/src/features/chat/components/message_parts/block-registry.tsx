@@ -14,6 +14,7 @@ import type {
   ThinkingBlock,
   TimelineBlock,
   TimelineTerminalStatus,
+  UserInterjectionBlock,
 } from "@/shared/lib/types";
 import { ArtifactCard } from "./ArtifactCard";
 import { CompactionMarker } from "./ConversationMarkers";
@@ -23,6 +24,7 @@ import { SubagentTreeCard } from "./SubagentTreeCard";
 import { TaskInputBlockView } from "./TaskInputBlockView";
 import { TaskRefBlockView } from "./TaskRefBlockView";
 import { TaskSettledMarker } from "./TaskSettledMarker";
+import { UserInterjectionBlockView } from "./UserInterjectionBlockView";
 import { LazyChartCard } from "./LazyChartCard";
 
 // Cross-block state the sequencer computes and threads to each object. The
@@ -110,6 +112,8 @@ export const BLOCK_REGISTRY: Record<
   task_ref: (block) => <TaskRefBlockView block={block as TaskRefBlock} />,
   task_settled: (block) => <TaskSettledMarker block={block as TaskSettledBlock} />,
   task_input: (block) => <TaskInputBlockView block={block as TaskInputBlock} />,
+  // Steering: a message the user sent while the run worked, where it was read.
+  user_interjection: (block) => <UserInterjectionBlockView block={block as UserInterjectionBlock} />,
   thinking: (block, ctx) => (
     <CoTBlock
       block={block as ThinkingBlock}

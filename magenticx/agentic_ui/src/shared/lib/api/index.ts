@@ -131,7 +131,7 @@ export {
 } from "./inference";
 export type { ResumeInferenceRunBody } from "./inference";
 
-export { connectInferenceWebSocket } from "./inference-socket";
+export { connectInferenceStream } from "./inference-stream";
 
 export {
   listConversationTasks,
@@ -140,7 +140,7 @@ export {
   resumeAsyncTask,
   deleteQueuedMessage,
   connectConversationChannel,
-  connectTaskSocket,
+  connectTaskStream,
 } from "./asyncTasks";
 
 export {

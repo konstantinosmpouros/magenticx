@@ -45,6 +45,7 @@ from harness.agui.events import (
     TASK_SETTLED_INLINE_EVENT_TYPE,
     TOKEN_USAGE_EVENT_TYPE,
     TOOL_USAGE_EVENT_TYPE,
+    USER_INTERJECTION_EVENT_TYPE,
     CheckpointCommittedEvent,
     ContextCompactionEvent,
     HITLInterruptEvent,
@@ -57,6 +58,7 @@ from harness.agui.events import (
     TaskSettledInlineEvent,
     TokenUsageEvent,
     ToolUsageEvent,
+    UserInterjectionEvent,
 )
 from harness.agui.previews import shrink_image_blocks
 
@@ -156,6 +158,18 @@ class AGUIEmitter:
             self.event(ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END), namespace),
         ]
 
+    def thought_start(self, namespace: str | None = None) -> Event:
+        """A thought begins; its text follows as :meth:`thought_delta` pieces."""
+        return self.event(ThinkingTextMessageStartEvent(type=EventType.THINKING_TEXT_MESSAGE_START), namespace)
+
+    def thought_delta(self, delta: str, namespace: str | None = None) -> Event:
+        """One streamed piece of the open thought's text."""
+        return self.event(ThinkingTextMessageContentEvent(type=EventType.THINKING_TEXT_MESSAGE_CONTENT, delta=delta), namespace)
+
+    def thought_end(self, namespace: str | None = None) -> Event:
+        """The open thought is complete."""
+        return self.event(ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END), namespace)
+
     def response_start(self, message_id: str, namespace: str | None = None) -> Event:
         return self.event(TextMessageStartEvent(type=EventType.TEXT_MESSAGE_START, message_id=message_id), namespace)
 
@@ -219,6 +233,13 @@ class AGUIEmitter:
     def task_settled_inline(self, *, task_id: str, name: str, status: str, namespace: str | None = None) -> Event:
         """A task's result was pulled into this busy run."""
         return self.custom(TASK_SETTLED_INLINE_EVENT_TYPE, TaskSettledInlineEvent(task_id=task_id, name=name, status=status), namespace)
+
+    def user_interjection(self, *, text: str, queued_at: str | None = None, namespace: str | None = None) -> Event:
+        """The user's message was read by this run at a step boundary (steering)."""
+        return self.custom(
+            USER_INTERJECTION_EVENT_TYPE, UserInterjectionEvent(text=text, queued_at=queued_at), namespace,
+            exclude_none=True,
+        )
 
     def token_usage(self, usage_metadata: dict[str, Any], *, message_id: str | None = None, metrics: dict[str, Any] | None = None,
                     purpose: str | None = None, namespace: str | None = None) -> Event:

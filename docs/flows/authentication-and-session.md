@@ -371,7 +371,7 @@ Silent refresh has **two triggers**, both routed through the single `ensureFresh
        end
    ```
 
-2. **Reactive (401 interceptor).** Every API call goes through `requestRaw` ([shared/lib/http.ts](../../magenticx/agentic_ui/src/shared/lib/http.ts)); a `401` triggers **one** silent refresh and **one** retry of the original request (rebuilt so it picks up the rotated CSRF cookie) before the app gives up. The inference **WebSocket** mirrors this: a `4401` close refreshes once and reconnects with the fresh cookie. This is what stops a stale access token — after device sleep, or a request racing the expiry — from bouncing an otherwise-valid session to the login screen. Only when the bridge **refuses** the refresh (idle > 12 d, absolute > 20 d, the `sid` was revoked, or the CSRF check failed) does the app emit `mx:unauthorized` and return to login.
+2. **Reactive (401 interceptor).** Every API call goes through `requestRaw` ([shared/lib/http.ts](../../magenticx/agentic_ui/src/shared/lib/http.ts)); a `401` triggers **one** silent refresh and **one** retry of the original request (rebuilt so it picks up the rotated CSRF cookie) before the app gives up. The live SSE streams (run stream, conversation channel, task drill-down) go through `requestRaw` too, so they get the same repair. This is what stops a stale access token — after device sleep, or a request racing the expiry — from bouncing an otherwise-valid session to the login screen. Only when the bridge **refuses** the refresh (idle > 12 d, absolute > 20 d, the `sid` was revoked, or the CSRF check failed) does the app emit `mx:unauthorized` and return to login.
 
    ```mermaid
    sequenceDiagram
@@ -402,26 +402,7 @@ Silent refresh has **two triggers**, both routed through the single `ensureFresh
        end
    ```
 
-   The inference WebSocket applies the same repair to a `4401` close — refresh once, then reconnect:
-
-   ```mermaid
-   sequenceDiagram
-       participant W as Inference WS loop
-       participant B as Bridge
-       participant R as ensureFreshSession
-
-       W->>B: connect (access cookie stale)
-       B-->>W: close 4401
-       alt first 4401 → try refresh
-           W->>R: ensureFreshSession(force)
-           R-->>W: refreshed
-           W->>B: reconnect with fresh cookie
-       else refresh unavailable
-           W->>W: back off like a dropped socket; the refresh attempt is kept for later
-       else refresh refused, or a 2nd 4401
-           W->>W: emitUnauthorized() → logout
-       end
-   ```
+   The live SSE streams open through `requestRaw`, so a `401` on connect takes the same path: one silent refresh, one retry. A `401` that survives it is final for the stream (no reconnect loop); a refresh that is `unavailable` fails the connect like a dropped stream, and the stream's own backoff retries it.
 
 `ensureFreshSession()` calls `POST /v1/auth/session/refresh` (on success the server rotates all three cookies and returns a fresh `tokenTtl`, re-arming the proactive timer). It is **single-flight** on two levels: an in-process promise singleton dedupes a burst of concurrent `401`s within a tab, and the **cross-tab Web Locks** lock (`mx-session-refresh`) ensures only one tab across the origin performs the network refresh while the rest pick up the rotated token from the shared session marker — so tabs never rotate the refresh token concurrently (which would otherwise trip server-side reuse detection). The auth endpoints themselves (`login`, `session/refresh`, `GET /session`) opt out of the interceptor via `skipAuthRetry` so a failed refresh can never recurse.
 
@@ -735,6 +716,5 @@ While an account has an open `account_deletions` row, every session minted for i
 | `require_current_user`, `require_bound_user_id`, `validate_userId` | **403** *"Your account is scheduled for deletion."* |
 | `require_current_user_even_if_pending`, `require_bound_user_id_even_if_pending`, `validate_userId_even_if_pending` | allowed — used only by the deletion's status and cancel, and the data export |
 | `require_session` (`/session`, sign-out, account switching) | allowed — `/session` returns `pendingDeletion` so the SPA shows the pending screen |
-| `authenticate_websocket_user` | refused |
 
 Cancelling the deletion does not re-mint the session; the SPA calls `/session/refresh`, which re-reads the row and mints tokens without `pdl`.

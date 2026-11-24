@@ -80,7 +80,7 @@ type InferenceCtx = {
    */
   isConversationStreaming?: boolean;
   queueInferenceSend?: (request: InferenceStartRequest) => Promise<InferenceStartOutcome>;
-  onMessageQueued?: (message: QueuedMessage | null) => void;
+  onMessageQueued?: (messages: QueuedMessage[]) => void;
 };
 
 // Edit flow dependencies for turning a user message edit into a fresh branch.
@@ -265,17 +265,8 @@ export function createInferenceHandlers(ctx: InferenceCtx) {
           }),
         });
         if (outcome.queued) {
-          // The bridge may describe the held message; when it does not, the
-          // chip still shows what was typed.
-          onMessageQueued?.(
-            outcome.queuedMessage ?? {
-              id: null,
-              content: promptText,
-              attachmentCount: apiAttachments.length,
-              commandName: command?.name ?? null,
-              queuedAt: Date.now(),
-            },
-          );
+          // The bridge answers with the whole queue, the new message last.
+          onMessageQueued?.(outcome.queuedMessages);
         } else if (setShowAiTransition) {
           setShowAiTransition(true);
         }
@@ -321,7 +312,7 @@ export function createInferenceHandlers(ctx: InferenceCtx) {
     };
     setMessages((prev) => [...prev, tempMessage]);
     // Show the transition dot until the agent's FIRST real signal arrives over
-    // the run WebSocket (thinking/tool/content) — not merely until /start returns.
+    // the run stream (thinking/tool/content) — not merely until /start returns.
     if (setShowAiTransition) setShowAiTransition(true);
 
     try {
