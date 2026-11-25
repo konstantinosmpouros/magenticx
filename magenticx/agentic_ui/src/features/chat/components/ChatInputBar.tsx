@@ -246,8 +246,17 @@ export function ChatInputBar(props: ChatInputBarProps) {
   // A draft typed while the run streams is queued, not refused (plan 41).
   const queueOnSend = Boolean(isStreaming && canQueueWhileStreaming && hasDraft);
   // A draft whose command is an action (`/rename …`) runs it instead of sending.
+  // The send button turns into Stop the moment a send clears the draft (a
+  // message queued while the answer runs, or a fresh run starting). A second
+  // tap or a repeated key meant for the send then lands on Stop and ends the
+  // answer the user just added to. Stop is ignored for a short moment after a
+  // send, and a send by click hands focus back to the textarea, so Enter or
+  // Space afterwards never presses the now-Stop button.
+  const submittedAtRef = React.useRef(0);
+  const STOP_GRACE_MS = 800;
   const submitDraft = () => {
     if (slash?.submitAction()) return;
+    submittedAtRef.current = Date.now();
     handleSendMessage();
   };
 
@@ -1089,12 +1098,15 @@ export function ChatInputBar(props: ChatInputBarProps) {
                                   onClick={() => {
                                     if (queueOnSend) {
                                       submitDraft();
+                                      textareaRef.current?.focus();
                                     } else if (isStreaming) {
+                                      if (Date.now() - submittedAtRef.current < STOP_GRACE_MS) return;
                                       handleStopStreaming?.();
                                     } else if (!hasDraft) {
                                       onVoiceMode?.();
                                     } else {
                                       submitDraft();
+                                      textareaRef.current?.focus();
                                     }
                                   }}
                                   disabled={

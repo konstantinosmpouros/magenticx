@@ -377,7 +377,9 @@ export const AIActionBar = ({
 
                   <DropdownMenu.Item
                     className={moreMenuItemClass}
-                    disabled={!onForkMessage || isStreaming}
+                    // An answer stopped before it wrote anything has nothing to
+                    // fork from; the bridge refuses it (400), so don't offer it.
+                    disabled={!onForkMessage || isStreaming || !(message.content?.trim() || message.attachments?.length)}
                     onSelect={() => onForkMessage?.(message)}
                   >
                     <BiGitRepoForked className="h-4 w-4" />

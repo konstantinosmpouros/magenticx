@@ -318,7 +318,11 @@ describe("composer notices", () => {
       />,
     );
     const stack = screen.getByRole("status", { name: "3 queued messages" });
-    expect(within(stack).getByText("Queued · 3")).toBeInTheDocument();
+    expect(within(stack).getByText("Queued")).toBeInTheDocument();
+    // The stack folds to its header and opens again.
+    fireEvent.click(within(stack).getByRole("button", { name: "Hide the queued messages" }));
+    expect(within(stack).queryAllByRole("listitem")).toHaveLength(0);
+    fireEvent.click(within(stack).getByRole("button", { name: "Show the queued messages" }));
     expect(within(stack).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
       "1only 2025",
       "2and in euros",

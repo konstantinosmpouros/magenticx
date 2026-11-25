@@ -241,7 +241,9 @@ flowchart TD
     G --> H["Frontend: fetch full detail<br/>Open forked conversation"]
 ```
 
-`build_message_lineage()` walks the `parent_message_id` chain from the target message back to the root, collecting the branch. It validates that the target is an AI message and that the chain contains no cycles.
+`build_message_lineage()` walks the `parent_message_id` chain from the target message back to the root, collecting the branch. It validates that the target is an AI message with content (an answer stopped before it wrote anything is refused with 400, and the UI greys out its **Fork** item) and that the chain contains no cycles.
+
+The messages the user sent while an answer ran (`kind='interjection'`, steering) hang off that answer outside the tree the lineage walks, so `clone_branch_to_conversation()` fetches them separately (`interjections_by_answer`) and copies each onto its copied answer; without that the fork would lose them and its history would no longer match the answers.
 
 `clone_branch_to_conversation()` deep-copies every message in the lineage with fresh UUIDs. Attachment and blob rows are also deep-copied (`workspace_name` included, so the fork's history still names its uploads). After the commit the bridge asks the agents service to copy the source's **agent files** (`POST /users/{uid}/conversations/{src}/files/copy`): only path rows are copied — they name the same encrypted blobs — so a fork costs no bytes, and deleting either conversation leaves the other's files intact. A failed copy is logged; the fork still works, without the files. Alongside it (concurrently) the bridge copies the source's **citation sources** (plan 42, `POST /users/{uid}/conversations/{src}/sources/copy`, `copy_conversation_sources`), so the `[src:ID]` markers in the copied answers keep resolving in the fork; best-effort the same way — without them the fork's citations just don't render.
 

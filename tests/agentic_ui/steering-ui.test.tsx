@@ -10,6 +10,7 @@ vi.mock("@/shared/ui/ai-elements/response", () => ({
 import { ComposerTaskNotices } from "@/features/chat/components/ComposerTaskNotices";
 import { TimelineSequence } from "@/features/chat/components/message_parts/TimelineSequence";
 import { foldTimeline } from "@/features/inference";
+import { runHasAgentSignal } from "@/features/inference/runState";
 
 /**
  * Steering in the UI (SSE plan, phase 5). Pinned: a USER_INTERJECTION event —
@@ -89,5 +90,24 @@ describe("the queued chip", () => {
   it("has no Send now when nothing runs", () => {
     render(<ComposerTaskNotices queuedMessages={[{ ...queued, commandName: null }]} onCancelQueued={() => {}} />);
     expect(screen.queryByRole("button", { name: /Send now/ })).toBeNull();
+  });
+});
+
+describe("the working dot while the agent starts", () => {
+  it("stays on when the only blocks are the user's own queued words", () => {
+    // The agent can read queued messages before it writes anything; the dot
+    // must not go out then, or the answer looks stopped.
+    const run = (events: Parameters<typeof foldTimeline>[0]) => ({ timeline: foldTimeline(events), pendingInterrupts: 0 }) as never;
+    expect(runHasAgentSignal(run([interjection("nice"), interjection("ok")]), [])).toBe(false);
+    expect(
+      runHasAgentSignal(
+        run([
+          interjection("nice"),
+          { type: "TEXT_MESSAGE_START", messageId: "m" },
+          { type: "TEXT_MESSAGE_CONTENT", messageId: "m", delta: "Glad" },
+        ]),
+        [],
+      ),
+    ).toBe(true);
   });
 });

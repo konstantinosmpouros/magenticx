@@ -23,6 +23,7 @@ from core.database import (
 from core.settings import settings
 from schema import AttachmentIn, MessageIn
 from engine.conversations.workspace_names import WorkspaceNames
+from engine.inference.steering import interjections_by_answer
 
 
 async def init_conv(
@@ -345,6 +346,11 @@ async def clone_branch_to_conversation(
     db.add(forked_conv)
     await db.flush()
 
+    # What the user sent while an answer ran hangs off that answer, outside the
+    # tree the branch walks (`ConversationTable.messages` leaves it out), so it
+    # is fetched here and cloned right after its answer — or the fork would
+    # lose those messages and its history would no longer match the answers.
+    interjections = await interjections_by_answer(db, [m.id for m in branch if m.sender == "ai"])
     message_id_map: dict[str, str] = {}
     for source_message in branch:
         # NOTE: deliberately does NOT copy checkpoint_thread_id / checkpoint_id.
@@ -405,6 +411,17 @@ async def clone_branch_to_conversation(
                 updated_at=source_attachment.updated_at,
             )
             db.add(cloned_attachment)
+
+        for interjection in interjections.get(source_message.id, []):
+            db.add(MessageTable(
+                conversation_id=forked_conv.id,
+                parent_message_id=cloned_message.id,
+                sender=interjection.sender,
+                kind=interjection.kind,
+                content=interjection.content,
+                created_at=interjection.created_at,
+                updated_at=interjection.updated_at,
+            ))
 
     return forked_conv
 

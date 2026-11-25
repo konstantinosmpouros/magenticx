@@ -528,6 +528,48 @@ async def test_fork_conversation_clones_selected_branch(
     assert by_sender["ai"].agent_name == seeded_agent.name
 
 
+async def test_fork_keeps_what_the_user_sent_while_an_answer_ran(
+    client,
+    seeded_user,
+    seeded_agent,
+    db_session_factory,
+    monkeypatch,
+):
+    """An interjection hangs off its answer, outside the tree the fork walks;
+    the fork still copies it onto the copied answer, or it would be lost."""
+    branch = await _seed_branch(db_session_factory, seeded_user, seeded_agent)
+    async with db_session_factory() as session:
+        session.add(MessageTable(
+            conversation_id=branch["conversation_id"],
+            parent_message_id=branch["ai_message_id"],
+            sender="user",
+            kind="interjection",
+            content="only the 2025 numbers",
+        ))
+        await session.commit()
+
+    async def _noop(*_args):
+        return None
+
+    monkeypatch.setattr(conversation_router, "copy_conversation_files", _noop)
+    monkeypatch.setattr(conversation_router, "copy_conversation_sources", _noop)
+
+    response = await client.post(
+        f"/v1/conversations/{seeded_user.id}/{branch['conversation_id']}/fork",
+        json={"messageId": branch["ai_message_id"]},
+    )
+
+    assert response.status_code == 201
+    async with db_session_factory() as session:
+        rows = (
+            await session.execute(select(MessageTable).where(MessageTable.conversation_id == response.json()["id"]))
+        ).scalars().all()
+    answer = next(r for r in rows if r.sender == "ai")
+    [copied] = [r for r in rows if r.kind == "interjection"]
+    assert copied.content == "only the 2025 numbers"
+    assert copied.parent_message_id == answer.id
+
+
 async def test_fork_conversation_rejects_unfinished_ai_message(
     client,
     seeded_user,

@@ -95,9 +95,16 @@ export const isActiveRun = (run: InferenceRun | null | undefined) =>
  * the pulsing bridge dot under the user's message and no thinking block yet.
  * Shared by the event fold and the optimistic paint below so the two can never
  * disagree about what counts as "started".
+ *
+ * A `user_interjection` block is not a signal: it is the user's own queued
+ * words, which the agent can read before it has written anything (steering at
+ * its first step). Counting it put the dot out while the agent was still
+ * starting, so the answer looked stopped with the messages just sent.
  */
 export const runHasAgentSignal = (run: InferenceRun, thoughts: string[]) =>
-  thoughts.length > 0 || (run.timeline?.blocks.length ?? 0) > 0 || (run.pendingInterrupts ?? 0) > 0;
+  thoughts.length > 0 ||
+  (run.timeline?.blocks.some((block) => block.kind !== "user_interjection") ?? false) ||
+  (run.pendingInterrupts ?? 0) > 0;
 
 /** The thoughts a run currently carries, preferring its folded timeline. */
 export const runThoughts = (run: InferenceRun): string[] =>
