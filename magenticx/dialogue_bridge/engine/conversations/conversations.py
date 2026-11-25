@@ -119,6 +119,53 @@ async def init_attachments(
         db.add(attach)
 
 
+async def load_kept_uploads(
+    db: AsyncSession, source_message_id: str, attachment_ids: List[str]
+) -> List[AttachmentTable]:
+    """The uploads of ``source_message_id`` an edit keeps, with their bytes.
+
+    Every id must be an upload of that very message: an id from another
+    message (or another user's) is refused, never quietly dropped, so an edit
+    cannot pull in a file its message never had.
+    """
+    if not attachment_ids:
+        return []
+    result = await db.execute(
+        select(AttachmentTable)
+        .options(selectinload(AttachmentTable.blob))
+        .where(
+            AttachmentTable.id.in_(attachment_ids),
+            AttachmentTable.message_id == source_message_id,
+            AttachmentTable.origin == "upload",
+        )
+    )
+    by_id = {row.id: row for row in result.scalars().all()}
+    if len(by_id) != len(attachment_ids) or any(row.blob is None for row in by_id.values()):
+        raise HTTPException(status_code=400, detail="A kept attachment does not belong to the edited message.")
+    # In the order the client listed them, which is the order it shows them.
+    return [by_id[attachment_id] for attachment_id in attachment_ids]
+
+
+def copy_uploads(db: AsyncSession, message_id: str, sources: List[AttachmentTable]) -> None:
+    """Give ``message_id`` its own copy of each upload in ``sources``.
+
+    A copy, not a shared row: a blob belongs to one attachment and goes with
+    it (migration 0030), so deleting the old branch must not take the new
+    one's file. The hash and the ``/conversation/input/`` name go along —
+    same bytes under the same name is the same file to the agent.
+    """
+    for source in sources:
+        db.add(AttachmentTable(
+            message_id=message_id,
+            file_name=source.file_name,
+            mime_type=source.mime_type,
+            size_bytes=source.size_bytes,
+            content_sha256=source.content_sha256,
+            workspace_name=source.workspace_name,
+            blob=BlobTable(data=source.blob.data),
+        ))
+
+
 async def set_conversation_archive_state(
     db: AsyncSession,
     conv: ConversationTable,

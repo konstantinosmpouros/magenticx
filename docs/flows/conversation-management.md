@@ -125,11 +125,15 @@ Every message in a conversation is connected to its predecessor via `parent_mess
 
 ### Editing a User Message
 
+A click (or Enter) on the user's own bubble opens it for editing, as does the pencil in its action bar; a click that ends a text selection, or lands on a link, does not. The bubble glides to full width (a Framer Motion `layout` animation measured only when the edit state flips, with the content moving by position so it never stretches; off under reduced motion) and becomes a small editor: the text box grows with its text, Enter sends, Shift+Enter adds a line, Esc cancels, and an empty draft cannot be sent (`ChatMessage.tsx`, `message_parts/Content.tsx`). Read-only views (a shared conversation) have no click-to-edit.
+
+The editor holds the message's files too (`message_parts/EditAttachmentStrip.tsx`): it opens with every upload the message carried, each with a remove button, and its **+** button adds new files (the same size checks as a send). The agent's own files are not offered — they are not the user's to resend.
+
 When a user edits a message, the UI does not `PATCH` the existing row. Instead it calls the backend-owned inference start endpoint with `mode: "edit"`:
 
-1. The payload includes `conversationId`, `targetMessageId`, and the edited user `message`.
-2. The bridge validates that `targetMessageId` is a user message in the conversation.
-3. The bridge creates a sibling user message under the original parent.
+1. The payload includes `conversationId`, `targetMessageId`, the edited user `message` (new files in `message.attachments`, as on a send), and `keepAttachmentIds` — the edited message's uploads to carry over. The field is accepted on an edit only; an empty list keeps none.
+2. The bridge validates that `targetMessageId` is a user message in the conversation, and that every kept id is an upload of that very message (anything else is a 400). Kept and new files together stay within one message's count and size limits.
+3. The bridge creates a sibling user message under the original parent, and gives it its own copy of each kept upload (`copy_uploads`: a new attachment row and blob, the same hash and `/conversation/input/` name). A copy, because a blob goes with its attachment: deleting the old branch must not take the new one's file. A file the user removed stays on the old branch only. Known gap: the agent's `/conversation/input/` folder still lists every upload in the conversation, from every branch, so the agent on the new branch can still open a removed file; scoping it to the branch is in the TODO.
 4. The same transaction creates the AI placeholder and queued run under that new user message.
 5. The UI hydrates from the returned `detail`, `summary`, `run`, and `message`.
 

@@ -1,6 +1,7 @@
 """Inference-run DTOs: start payload/response, run view, HITL resume."""
 from typing import Any, List, Literal, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from core.settings import settings
 from schema.base import UTCDateTime
 from schema.conversations.conversations import ConversationDetail, ConversationSummary
 from schema.conversations.messages import MessageIn, MessageOut
@@ -22,6 +23,28 @@ class InferenceStartPayload(BaseModel):
     # already has an active run, hold this message as the conversation's one
     # queued message (202) instead of refusing it (409). Sent when the run ends.
     queue_if_busy: bool = False
+    # Edit only: the uploads of the edited message to carry onto the new one.
+    # An edit is a new message, so a file the user did not keep is left behind
+    # on the old branch; new files ride `message.attachments` as on a send.
+    keepAttachmentIds: list[str] = Field(default_factory=list)
+
+    @field_validator("keepAttachmentIds")
+    @classmethod
+    def _bound_kept_attachments(cls, value: list[str]) -> list[str]:
+        """At most a message's worth of ids, each once."""
+        if len(value) > settings.attachments.max_per_message:
+            raise ValueError(
+                f"No more than {settings.attachments.max_per_message} attachments are allowed per message."
+            )
+        if len(set(value)) != len(value):
+            raise ValueError("keepAttachmentIds must not repeat an id.")
+        return value
+
+    @model_validator(mode="after")
+    def _keep_only_on_edit(self):
+        if self.keepAttachmentIds and self.mode != "edit":
+            raise ValueError("keepAttachmentIds is only accepted on an edit.")
+        return self
 
 
 class InferenceRunOut(BaseModel):

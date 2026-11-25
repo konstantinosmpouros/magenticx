@@ -3,7 +3,13 @@ import { useReducedMotion } from "framer-motion";
 import { ScrollArea } from "@/shared/ui/scroll-area";
 import { ArrowDown } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { Agent, MessageOut, RunTimeline, ThinkingState } from "@/shared/lib/types";
+import type {
+  Agent,
+  EditAttachments,
+  MessageOut,
+  RunTimeline,
+  ThinkingState,
+} from "@/shared/lib/types";
 import { cn } from "@/shared/lib/utils";
 import type { AttachmentLike } from "./message_parts/MessageAttachments";
 import { ChatMessage } from "./ChatMessage";
@@ -115,9 +121,12 @@ type ChatBody = {
   activeBranchPath?: string[];
   editingMessageId?: string | null;
   editingDraft?: string;
+  /** The files the open edit keeps and adds (only the edited row reads it). */
+  editingAttachments?: EditAttachments;
   editingBusy?: boolean;
   onRequestEdit?: (message: MessageOut) => void;
   onChangeEditDraft?: (value: string) => void;
+  onChangeEditAttachments?: (value: EditAttachments) => void;
   onCancelEdit?: () => void;
   onSubmitEdit?: () => void;
   onRetryMessage?: (message: MessageOut) => void;
@@ -170,9 +179,11 @@ export default function ChatBody({
   activeBranchPath,
   editingMessageId,
   editingDraft,
+  editingAttachments,
   editingBusy,
   onRequestEdit,
   onChangeEditDraft,
+  onChangeEditAttachments,
   onCancelEdit,
   onSubmitEdit,
   onRetryMessage,
@@ -709,6 +720,7 @@ export default function ChatBody({
   // isImageFile) are passed as they are, so what a row shows is never stale.
   const rowHandlers = useStableHandlers({
     onChangeEditDraft,
+    onChangeEditAttachments,
     onCancelEdit,
     onSubmitEdit,
     onCopy,
@@ -906,8 +918,10 @@ export default function ChatBody({
                     showMessageTokenUsage={showMessageTokenUsage}
                     isEditing={isEditingMessage}
                     editingDraft={isEditingMessage ? editingDraft : undefined}
+                    editingAttachments={isEditingMessage ? editingAttachments : undefined}
                     editingBusy={editingBusy}
                     onChangeEditDraft={rowHandlers.onChangeEditDraft}
+                    onChangeEditAttachments={rowHandlers.onChangeEditAttachments}
                     onCancelEdit={rowHandlers.onCancelEdit}
                     onSubmitEdit={rowHandlers.onSubmitEdit}
                     AgentIcon={AgentIcon}

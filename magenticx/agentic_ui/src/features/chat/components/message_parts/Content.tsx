@@ -1,4 +1,5 @@
 import { memo, useMemo } from "react";
+import { motion } from "framer-motion";
 import { Response } from "@/shared/ui/ai-elements/response";
 import { Textarea } from "@/shared/ui/textarea";
 import type { ContentBlock, MessageOut } from "@/shared/lib/types";
@@ -58,25 +59,40 @@ export function MessageContent({
 
   if (isEditing) {
     return (
-      <Textarea
-        value={editingDraft ?? ""}
-        onChange={(event) => onChangeEditDraft?.(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Escape") {
-            event.preventDefault();
-            onCancelEdit?.();
-            return;
-          }
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.2, delay: 0.08, ease: "easeOut" }}
+      >
+        <Textarea
+          value={editingDraft ?? ""}
+          onChange={(event) => onChangeEditDraft?.(event.target.value)}
+          onKeyDown={(event) => {
+            // A key that confirms an IME composition is not a send.
+            if (event.nativeEvent.isComposing) return;
+            if (event.key === "Escape") {
+              event.preventDefault();
+              onCancelEdit?.();
+              return;
+            }
 
-          if (event.key === "Enter" && !event.shiftKey) {
-            event.preventDefault();
-            onSubmitEdit?.();
-          }
-        }}
-        disabled={editingBusy}
-        autoFocus
-        className="w-full min-h-[6rem] resize-none bg-transparent text-inherit border-none p-0 shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-none focus-visible:outline-none"
-      />
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmitEdit?.();
+            }
+          }}
+          // The caret goes to the end of the text, where an edit usually starts.
+          onFocus={(event) => {
+            const end = event.currentTarget.value.length;
+            event.currentTarget.setSelectionRange(end, end);
+          }}
+          disabled={editingBusy}
+          autoFocus
+          aria-label="Edit your message"
+          // field-sizing grows the box with its text, up to half the screen.
+          className="w-full min-h-[2.5rem] max-h-[50vh] resize-none overflow-y-auto bg-transparent px-1 py-0.5 text-base leading-relaxed text-inherit [field-sizing:content] border-none shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 focus-visible:border-none focus-visible:outline-none"
+        />
+      </motion.div>
     );
   }
 

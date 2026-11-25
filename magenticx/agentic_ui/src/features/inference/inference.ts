@@ -8,6 +8,7 @@ import type {
   CanvasEditRef,
   CommandRef,
   ConversationDetail,
+  EditAttachments,
   MessageIn,
   MessageOut,
   InferenceStartOutcome,
@@ -522,9 +523,12 @@ export function createMessageEditHandlers(ctx: MessageEditHandlersCtx) {
   const handleSubmitMessageEdit = async ({
     targetMessageId,
     newContent,
+    attachments = { keptIds: [], files: [] },
   }: {
     targetMessageId: string;
     newContent: string;
+    /** The edited message's uploads to keep, and the new files to add. */
+    attachments?: EditAttachments;
   }) => {
     // Edits must become real persisted user messages so branch history stays recoverable across refreshes.
     if (!userId) {
@@ -566,6 +570,15 @@ export function createMessageEditHandlers(ctx: MessageEditHandlersCtx) {
       throw new Error("Invalid target message");
     }
 
+    // New files pass the same size checks as on a send, before any upload.
+    if (attachments.files.length) {
+      const sizeErr = validateAttachmentsForUpload(attachments.files);
+      if (sizeErr) {
+        toast({ title: "Attachment too large", description: sizeErr, variant: "destructive" });
+        throw new Error("Attachment too large");
+      }
+    }
+
     const parentId = target.parentMessageId ?? null;
     const parentKey = parentId ?? rootBranchKey;
     // The new edit becomes the newest sibling under the original parent.
@@ -573,9 +586,11 @@ export function createMessageEditHandlers(ctx: MessageEditHandlersCtx) {
 
     try {
       setIsSendingMessage?.(true);
+      const newFiles = await convertFileAttachments(attachments.files);
       const payload: MessageIn = buildUserMessage({
         parentMessageId: parentId,
         content: trimmed,
+        attachments: newFiles,
         // An edit keeps the command the message ran; only its text changes.
         command: target.command ?? undefined,
         effort: effortForEdit(ctx.effort, target, allMessages, currentConversation.agent?.id),
@@ -587,6 +602,8 @@ export function createMessageEditHandlers(ctx: MessageEditHandlersCtx) {
         conversationId: currentConversation.id,
         targetMessageId,
         message: payload,
+        // Always sent: an empty list means the user took every file out.
+        keepAttachmentIds: attachments.keptIds,
       });
 
       // Switch the visible branch selection to the newly created edited sibling.
@@ -614,32 +631,40 @@ export function createMessageEditHandlers(ctx: MessageEditHandlersCtx) {
   const handleConfirmEditMessage = async ({
     editingMessageId,
     editingDraft,
+    editingAttachments,
     setEditingMessageId,
     setEditingDraft,
+    setEditingAttachments,
     setEditingBusy,
   }: {
     editingMessageId: string | null;
     editingDraft: string;
+    editingAttachments: EditAttachments;
     setEditingMessageId: Dispatch<SetStateAction<string | null>>;
     setEditingDraft: Dispatch<SetStateAction<string>>;
+    setEditingAttachments: Dispatch<SetStateAction<EditAttachments>>;
     setEditingBusy: Dispatch<SetStateAction<boolean>>;
   }) => {
     if (!editingMessageId) return;
     // Snapshot local edit state up front so we can restore it if persistence or streaming fails.
     const targetId = editingMessageId;
     const draftSnapshot = editingDraft;
+    const attachmentsSnapshot = editingAttachments;
     setEditingBusy(true);
     setEditingMessageId(null);
     setEditingDraft("");
+    setEditingAttachments({ keptIds: [], files: [] });
     try {
       await handleSubmitMessageEdit({
         targetMessageId: targetId,
         newContent: draftSnapshot,
+        attachments: attachmentsSnapshot,
       });
     } catch (error) {
-      // Restore the draft so the user can immediately retry or adjust the edit.
+      // Restore the draft and its files so the user can retry or adjust the edit.
       setEditingMessageId(targetId);
       setEditingDraft(draftSnapshot);
+      setEditingAttachments(attachmentsSnapshot);
       throw error;
     } finally {
       setEditingBusy(false);

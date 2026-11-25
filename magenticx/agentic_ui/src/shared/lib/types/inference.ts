@@ -71,6 +71,8 @@ export type InferenceStartRequest = {
   targetMessageId?: string;
   messagePath?: string[];
   message?: MessageIn;
+  /** Edit only: the edited message's uploads to carry onto the new one. */
+  keepAttachmentIds?: string[];
 };
 
 export type InferenceStartResponse = {

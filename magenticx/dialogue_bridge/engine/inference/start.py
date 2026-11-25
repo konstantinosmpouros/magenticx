@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from core.database import AgentTable, AttachmentTable, ConversationTable, MessageTable, UserTable
+from core.settings import settings
 from schema import (
     ConversationDetail,
     ConversationSource,
@@ -21,7 +22,13 @@ from engine.agents.catalog import get_agent_by_id
 from engine.conversations.sources import insert_conversation_sources
 from engine.documents.canvas_edit import check_canvas_edit, refuse_without_conversation
 from engine.agents.commands import check_invocation
-from engine.conversations.conversations import _preview, init_conv, init_message
+from engine.conversations.conversations import (
+    _preview,
+    copy_uploads,
+    init_conv,
+    init_message,
+    load_kept_uploads,
+)
 from engine.inference.history import resolve_inference_message_path
 from engine.inference.runs.payloads import build_run_out_from_message
 from engine.inference.runs.records import create_inference_run_record
@@ -280,7 +287,23 @@ async def _create_edit_branch_start(
         getattr(original_reply, "agent_id", None),
         fallback_id=conversation.agent_id,
     )
+    # The files the user kept from the edited message, checked before anything
+    # is written; together with the new ones they are still one message's worth.
+    kept = await load_kept_uploads(db, target.id, payload.keepAttachmentIds)
+    if len(kept) + len(message.attachments) > settings.attachments.max_per_message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No more than {settings.attachments.max_per_message} attachments are allowed per message.",
+        )
+    kept_bytes = sum(len(row.blob.data) for row in kept)
+    new_bytes = sum(item.size or 0 for item in message.attachments)
+    if kept_bytes + new_bytes > settings.attachments.max_total_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Total attachment payload exceeds the {settings.attachments.max_total_bytes // (1024 * 1024)} MB limit.",
+        )
     created = await init_message(db, conversation, message, parent_message_id=target.parent_message_id)
+    copy_uploads(db, created.id, kept)
     _touch_conversation_from_user_message(conversation, message)
     await db.flush()
     db.expire(conversation, ["messages"])

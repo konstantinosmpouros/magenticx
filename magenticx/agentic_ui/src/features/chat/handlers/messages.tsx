@@ -1,6 +1,11 @@
 import { useMemo, useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { MessageOut, ConversationDetail, ThinkingState } from "@/shared/lib/types";
+import type {
+  MessageOut,
+  ConversationDetail,
+  EditAttachments,
+  ThinkingState,
+} from "@/shared/lib/types";
 import {
   likeMessage as apiLikeMessage,
   dislikeMessage as apiDislikeMessage,
@@ -17,16 +22,20 @@ import { toastError } from "@/shared/lib/toast";
 type ConfirmEditMessageArgs = {
   editingMessageId: string | null;
   editingDraft: string;
+  editingAttachments: EditAttachments;
   setEditingMessageId: Dispatch<SetStateAction<string | null>>;
   setEditingDraft: Dispatch<SetStateAction<string>>;
+  setEditingAttachments: Dispatch<SetStateAction<EditAttachments>>;
   setEditingBusy: Dispatch<SetStateAction<boolean>>;
 };
 
 type MessageEditUiHandlersCtx = {
   editingMessageId: string | null;
   editingDraft: string;
+  editingAttachments: EditAttachments;
   setEditingMessageId: Dispatch<SetStateAction<string | null>>;
   setEditingDraft: Dispatch<SetStateAction<string>>;
+  setEditingAttachments: Dispatch<SetStateAction<EditAttachments>>;
   setEditingBusy: Dispatch<SetStateAction<boolean>>;
   setStickyUserBarId: Dispatch<SetStateAction<string | null>>;
   handleConfirmEditMessage: (args: ConfirmEditMessageArgs) => Promise<void> | void;
@@ -36,8 +45,10 @@ export function createMessageEditUiHandlers(ctx: MessageEditUiHandlersCtx) {
   const {
     editingMessageId,
     editingDraft,
+    editingAttachments,
     setEditingMessageId,
     setEditingDraft,
+    setEditingAttachments,
     setEditingBusy,
     setStickyUserBarId,
     handleConfirmEditMessage,
@@ -47,10 +58,23 @@ export function createMessageEditUiHandlers(ctx: MessageEditUiHandlersCtx) {
     setEditingDraft(value);
   };
 
+  const handleEditAttachmentsChange = (value: EditAttachments) => {
+    setEditingAttachments(value);
+  };
+
   const handleRequestEditMessage = (message: MessageOut) => {
     if (message.sender !== "user") return;
     setEditingMessageId(message.id);
     setEditingDraft(message.content ?? "");
+    // The editor opens with every file the user sent; they take out what the
+    // new version should not carry. Only uploads: the agent's files are not
+    // the user's to resend.
+    setEditingAttachments({
+      keptIds: (message.attachments ?? [])
+        .filter((attachment) => (attachment.origin ?? "upload") === "upload")
+        .map((attachment) => attachment.id),
+      files: [],
+    });
     setEditingBusy(false);
     setStickyUserBarId(message.id);
   };
@@ -58,6 +82,7 @@ export function createMessageEditUiHandlers(ctx: MessageEditUiHandlersCtx) {
   const handleCancelEditMessage = () => {
     setEditingMessageId(null);
     setEditingDraft("");
+    setEditingAttachments({ keptIds: [], files: [] });
     setEditingBusy(false);
     setStickyUserBarId(null);
   };
@@ -66,13 +91,16 @@ export function createMessageEditUiHandlers(ctx: MessageEditUiHandlersCtx) {
     handleConfirmEditMessage({
       editingMessageId,
       editingDraft,
+      editingAttachments,
       setEditingMessageId,
       setEditingDraft,
+      setEditingAttachments,
       setEditingBusy,
     });
 
   return {
     handleEditDraftChange,
+    handleEditAttachmentsChange,
     handleRequestEditMessage,
     handleCancelEditMessage,
     submitEditFromState,

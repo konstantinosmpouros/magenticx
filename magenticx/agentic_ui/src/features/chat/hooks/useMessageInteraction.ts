@@ -2,13 +2,16 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useBranchingHandlers } from "@/features/chat/handlers/messages";
 import { useStickyUserBarEffect } from "@/features/chat/hooks/useChatEffects";
-import type { ConversationDetail, ThinkingState } from "@/shared/lib/types";
+import type { ConversationDetail, EditAttachments, ThinkingState } from "@/shared/lib/types";
 
 /**
  * Branch key for messages with no parent. Shared with `useInferenceRuns`, which
  * hardcodes the same literal when it derives a run's branch — keep them in step.
  */
 export const ROOT_BRANCH_KEY = "__root__";
+
+/** No edit open: nothing kept, nothing added. One object, so the state starts stable. */
+export const NO_EDIT_ATTACHMENTS: EditAttachments = { keptIds: [], files: [] };
 
 type UseMessageInteractionOptions = {
   currentConversation: ConversationDetail | null;
@@ -49,6 +52,7 @@ export function useMessageInteraction({ currentConversation }: UseMessageInterac
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editingDraft, setEditingDraft] = useState("");
   const [editingBusy, setEditingBusy] = useState(false);
+  const [editingAttachments, setEditingAttachments] = useState<EditAttachments>(NO_EDIT_ATTACHMENTS);
 
   const { activeMessages, branchChildrenMap, handleBranchSelectionChange, activeBranchPath } =
     useBranchingHandlers({
@@ -118,5 +122,7 @@ export function useMessageInteraction({ currentConversation }: UseMessageInterac
     setEditingDraft,
     editingBusy,
     setEditingBusy,
+    editingAttachments,
+    setEditingAttachments,
   };
 }

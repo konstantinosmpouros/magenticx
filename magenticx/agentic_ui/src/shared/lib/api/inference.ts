@@ -52,6 +52,8 @@ const toStartBody = (payload: InferenceStartRequest): Record<string, unknown> =>
   if (payload.targetMessageId) body.targetMessageId = payload.targetMessageId;
   if (payload.messagePath?.length) body.messagePath = payload.messagePath;
   if (payload.message) body.message = payload.message;
+  // Sent even when empty on an edit: no ids means "keep none of its files".
+  if (payload.keepAttachmentIds) body.keepAttachmentIds = payload.keepAttachmentIds;
   return body;
 };
 

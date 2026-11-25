@@ -254,8 +254,10 @@ export function useChatWorkspace({
     activeBranchPath,
     editingMessageId,
     editingDraft,
+    editingAttachments,
     setEditingMessageId,
     setEditingDraft,
+    setEditingAttachments,
     setEditingBusy,
   } = messageInteraction;
 
@@ -897,14 +899,17 @@ export function useChatWorkspace({
 
   const {
     handleEditDraftChange,
+    handleEditAttachmentsChange,
     handleRequestEditMessage,
     handleCancelEditMessage,
     submitEditFromState,
   } = createMessageEditUiHandlers({
     editingMessageId,
     editingDraft,
+    editingAttachments,
     setEditingMessageId,
     setEditingDraft,
+    setEditingAttachments,
     setEditingBusy,
     setStickyUserBarId,
     handleConfirmEditMessage,
@@ -1555,9 +1560,11 @@ export function useChatWorkspace({
         activeBranchPath={activeBranchPath}
         editingMessageId={editingMessageId}
         editingDraft={editingDraft}
+        editingAttachments={editingAttachments}
         editingBusy={messageInteraction.editingBusy}
         onRequestEdit={handleRequestEditMessage}
         onChangeEditDraft={handleEditDraftChange}
+        onChangeEditAttachments={handleEditAttachmentsChange}
         onCancelEdit={handleCancelEditMessage}
         onSubmitEdit={submitEditFromState}
         onRetryMessage={handleRetryAiMessage}

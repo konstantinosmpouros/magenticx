@@ -28,6 +28,16 @@ export type AttachmentOut = {
   sourcePath?: string;
 };
 
+/**
+ * The files an edited message will carry: the ids of the edited message's
+ * uploads the user kept, and the new files they added. An edit is a new
+ * message, so anything not kept here stays on the old branch only.
+ */
+export type EditAttachments = {
+  keptIds: string[];
+  files: File[];
+};
+
 // Attachment input for API requests (base64 format)
 export type AttachmentIn = {
   name: string;

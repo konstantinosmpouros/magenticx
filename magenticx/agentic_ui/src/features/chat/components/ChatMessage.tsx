@@ -1,15 +1,25 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { Card } from "@/shared/ui/card";
 import { Button } from "@/shared/ui/button";
-import type { Agent, MessageOut, RunTimeline, ThinkingState } from "@/shared/lib/types";
+import type {
+  Agent,
+  EditAttachments,
+  MessageOut,
+  RunTimeline,
+  ThinkingState,
+} from "@/shared/lib/types";
 import type { LucideIcon } from "lucide-react";
-import { Check, X as CloseIcon } from "lucide-react";
+import { Plus } from "lucide-react";
+import { HiArrowUp } from "react-icons/hi";
+import StarBorder from "@/shared/ui/react_bits/star_border";
 import { AIActionBar, UserActionBar } from "./message_parts/ActionBars";
 import { answerGroupText, type AnswerGroupPlace } from "@/features/chat/lib/answerGroups";
 import { citationsToPlainText } from "@/features/chat/lib/citationText";
 import { useCitationSources } from "@/shared/lib/citations-context";
 import { MessageAttachments } from "./message_parts/MessageAttachments";
 import { MessageContent } from "./message_parts/Content";
+import { EditAttachmentStrip } from "./message_parts/EditAttachmentStrip";
 import { CanvasEditChip } from "./message_parts/CanvasEditChip";
 import { PlanSidePanel, SubagentsSidePanel } from "./message_parts/RunSidePanels";
 import { AnswerSourcesPanel } from "./message_parts/AnswerSourcesPanel";
@@ -19,13 +29,24 @@ import { AgentRunTimeline } from "./AgentRunTimeline";
 import { useRunTimeline } from "@/features/inference";
 import { ShimmeringText } from "@/shared/ui/shadcn-io/shimmering-text";
 
+/** The bubble, animatable: a user message opening into its editor glides to full width. */
+const MotionCard = motion.create(Card);
+
+// The bubble's open/close: 300ms (a layout shift), ease-out; transform only (FLIP).
+const EDIT_LAYOUT = { layout: { duration: 0.3, ease: [0.22, 1, 0.36, 1] } } as const;
+// The editor's footer arrives once the bubble has mostly opened.
+const EDIT_FOOTER = { duration: 0.2, delay: 0.12, ease: "easeOut" } as const;
+
 type ChatMessageProps = {
   message: MessageOut;
   showMessageTokenUsage?: boolean;
   isEditing: boolean;
   editingDraft?: string;
+  /** The files the open edit keeps and adds; set on the edited message only. */
+  editingAttachments?: EditAttachments;
   editingBusy?: boolean;
   onChangeEditDraft?: (value: string) => void;
+  onChangeEditAttachments?: (value: EditAttachments) => void;
   onCancelEdit?: () => void;
   onSubmitEdit?: () => void;
   AgentIcon: LucideIcon;
@@ -82,8 +103,10 @@ function ChatMessageView({
   showMessageTokenUsage = false,
   isEditing,
   editingDraft,
+  editingAttachments,
   editingBusy,
   onChangeEditDraft,
+  onChangeEditAttachments,
   onCancelEdit,
   onSubmitEdit,
   AgentIcon,
@@ -123,6 +146,8 @@ function ChatMessageView({
   const isUser = message.sender === "user";
   const isAi = message.sender === "ai";
   const isTempUserMessage = isUser && String(message.id ?? "").startsWith("temp-");
+  const reduceMotion = useReducedMotion();
+  const editFileInputRef = useRef<HTMLInputElement>(null);
   const [openRunPanel, setOpenRunPanel] = useState<"plan" | "subagents" | "sources" | null>(null);
   // Per-message agent for the AI action bar. With a resolver (main chat) we get
   // catalog name + icon; without one (e.g. shared view) we fall back to the
@@ -130,11 +155,42 @@ function ChatMessageView({
   const aiAgent = resolveMessageAgent
     ? resolveMessageAgent(message)
     : { name: message.agentName ?? currentAgent?.name ?? "Unknown agent", Icon: AgentIcon };
+  // A click anywhere on the user's bubble opens it for editing (as in Cursor);
+  // the bar's pencil stays for people who look for it.
+  const canClickToEdit =
+    isUser && !readOnly && !isTempUserMessage && !isEditing && Boolean(onRequestEdit);
+  // While editing, the bubble becomes a small composer: the card surface and a
+  // primary ring, instead of the dark user-bubble fill.
   const bubbleClass = isUser
-    ? `chat-user-bubble p-5 bg-chat-user text-chat-user-foreground ml-auto shadow-card border-border ${
-        isEditing ? "w-full max-w-full" : "max-w-[85%] md:max-w-[75%]"
-      }`
+    ? isEditing
+      ? "chat-user-bubble ml-auto w-full max-w-full overflow-hidden border-primary/40 bg-card px-3 pb-2.5 pt-3 text-card-foreground shadow-elegant ring-4 ring-primary/10 transition-colors duration-200"
+      : `chat-user-bubble overflow-hidden p-5 bg-chat-user text-chat-user-foreground ml-auto shadow-card border-border max-w-[85%] md:max-w-[75%] transition-[box-shadow,background-color] duration-200 ${
+          canClickToEdit
+            ? "cursor-pointer hover:ring-2 hover:ring-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            : ""
+        }`
     : "bg-gradient-card text-card-foreground bg-transparent shadow-none border-transparent w-full max-w-full";
+
+  /**
+   * Open the editor on a click in the bubble, unless the click was really
+   * something else: following a link, or the end of selecting text to copy.
+   */
+  const handleBubbleClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!canClickToEdit) return;
+    if ((event.target as HTMLElement).closest("a, button")) return;
+    if (window.getSelection()?.toString()) return;
+    onRequestEdit?.(message);
+  };
+  const handleBubbleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!canClickToEdit || event.target !== event.currentTarget) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onRequestEdit?.(message);
+    }
+  };
+  // Only a user bubble animates its layout: an answer's card changes size on
+  // every streamed token, and measuring it each frame would cost for nothing.
+  const animateLayout = isUser && !reduceMotion;
 
   const branchPathActive = useMemo(() => {
     if (!thinkingState?.branchPath || !activeBranchPath) return false;
@@ -215,7 +271,8 @@ function ChatMessageView({
     <div
       className={`space-y-2 md:space-y-2 ${isUser ? "flex flex-col items-end" : ""} group/message`}
     >
-      {showAttachments && (
+      {/* While editing, the files sit inside the editor, where they can be removed. */}
+      {showAttachments && !isEditing && (
         <MessageAttachments
           message={message}
           isImageFile={isImageFile}
@@ -231,10 +288,42 @@ function ChatMessageView({
         <CanvasEditChip edit={message.canvasEdit} />
       ) : null}
 
-      <Card className={bubbleClass}>
-        <div className="space-y-3 min-w-0">
+      <MotionCard
+        // Measured only when the edit state flips (layoutDependency): without
+        // it every user bubble re-animated, stretched, on any reflow of the
+        // list (a scrollbar, the composer growing, a streamed answer).
+        layout={animateLayout}
+        layoutDependency={isEditing}
+        transition={EDIT_LAYOUT}
+        // The radius goes through style so Framer corrects it while the card
+        // is scaled; set in a class, the corners would stretch with it.
+        style={isUser ? { borderRadius: isEditing ? 24 : 8 } : undefined}
+        className={bubbleClass}
+        onClick={canClickToEdit ? handleBubbleClick : undefined}
+        onKeyDown={canClickToEdit ? handleBubbleKeyDown : undefined}
+        role={canClickToEdit ? "button" : undefined}
+        tabIndex={canClickToEdit ? 0 : undefined}
+        aria-label={canClickToEdit ? "Edit message" : undefined}
+      >
+        {/* "position": the content takes its new size at once and only slides,
+            counter-scaled against the card, so the text never stretches; the
+            card's overflow-hidden reveals it as the card opens. */}
+        <motion.div
+          layout={animateLayout ? "position" : false}
+          layoutDependency={isEditing}
+          transition={EDIT_LAYOUT}
+          className={`${isEditing ? "space-y-1.5" : "space-y-3"} min-w-0`}
+        >
           {isUser ? (
             <>
+              {isEditing && editingAttachments && onChangeEditAttachments ? (
+                <EditAttachmentStrip
+                  message={message}
+                  value={editingAttachments}
+                  onChange={onChangeEditAttachments}
+                  disabled={editingBusy}
+                />
+              ) : null}
               <MessageContent
                 message={message}
                 isEditing={isEditing}
@@ -270,42 +359,80 @@ function ChatMessageView({
 
           <div className="text-sm">
             {isUser ? (
-              <div className="flex items-center justify-between">
+              isEditing ? (
+                <motion.div
+                  initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={EDIT_FOOTER}
+                  className="flex items-center gap-2"
+                >
+                  {/* Add files to the new version, as in the composer. */}
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-8 w-8 rounded-full text-muted-foreground [&_svg]:size-5 hover:bg-[hsl(var(--hover-surface))] hover:text-foreground active:bg-[hsl(var(--hover-surface-strong))] focus-visible:bg-[hsl(var(--hover-surface-strong))]"
+                    disabled={editingBusy || !onChangeEditAttachments}
+                    onClick={() => editFileInputRef.current?.click()}
+                    aria-label="Attach files"
+                    title="Attach files & photos"
+                  >
+                    <Plus className="h-5 w-5" aria-hidden="true" />
+                  </Button>
+                  <input
+                    ref={editFileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    aria-hidden="true"
+                    tabIndex={-1}
+                    onChange={(event) => {
+                      const picked = Array.from(event.currentTarget.files ?? []);
+                      event.currentTarget.value = "";
+                      if (!picked.length || !editingAttachments || !onChangeEditAttachments) return;
+                      onChangeEditAttachments({
+                        ...editingAttachments,
+                        files: [...editingAttachments.files, ...picked],
+                      });
+                    }}
+                  />
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      // The same hover surface as the message action bars.
+                      className="h-8 rounded-lg px-2.5 text-muted-foreground transition-colors hover:bg-[hsl(var(--hover-surface))] hover:text-foreground active:bg-[hsl(var(--hover-surface-strong))] focus-visible:bg-[hsl(var(--hover-surface-strong))]"
+                      disabled={editingBusy}
+                      onClick={() => onCancelEdit?.()}
+                    >
+                      Cancel
+                    </Button>
+                    {/* The composer's own send button, so sending looks the same everywhere. */}
+                    <StarBorder
+                      as="button"
+                      type="button"
+                      innerClassName="w-9 h-9"
+                      className="shadow-elegant transition-smooth hover:opacity-90 active:scale-110 disabled:cursor-not-allowed disabled:opacity-40"
+                      color="hsl(var(--primary))"
+                      thickness={2}
+                      disabled={editingBusy || isStreaming || !editingDraft?.trim()}
+                      onClick={() => onSubmitEdit?.()}
+                      aria-label="Send the edited message"
+                      title="Send the edited message"
+                    >
+                      <HiArrowUp size={16} aria-hidden="true" />
+                    </StarBorder>
+                  </div>
+                </motion.div>
+              ) : (
                 <span className="opacity-70">
                   {message.created_at.toLocaleTimeString([], {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
                 </span>
-                {isEditing && (
-                  <div className="flex items-center gap-2">
-                    {/* `secondary`, not a hardcoded surface: this sat on a raw
-                        #262730, which reads as a dark chip in BOTH themes — so in
-                        light mode it was dark `text-foreground` on dark grey. */}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      className="gap-1"
-                      disabled={editingBusy}
-                      onClick={() => onCancelEdit?.()}
-                    >
-                      <CloseIcon className="h-4 w-4" />
-                      Cancel
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="gap-1 bg-primary text-primary-foreground hover:bg-primary/90"
-                      disabled={editingBusy || isStreaming}
-                      onClick={() => onSubmitEdit?.()}
-                    >
-                      <Check className="h-4 w-4" />
-                      Submit
-                    </Button>
-                  </div>
-                )}
-              </div>
+              )
             ) : (
               !isStreamingThisMessage &&
               showActionBar &&
@@ -343,8 +470,8 @@ function ChatMessageView({
               )
             )}
           </div>
-        </div>
-      </Card>
+        </motion.div>
+      </MotionCard>
 
       {planForPanel ? (
         <PlanSidePanel
