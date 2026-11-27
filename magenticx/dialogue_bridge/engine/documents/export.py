@@ -48,6 +48,7 @@ from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
 from utils.http import content_disposition
 from schema import DocumentExportIn
+from engine.conversations.file_branches import FileBranch
 from engine.agents.service_urls import (
     build_conversation_documents_url,
     build_conversation_office_preview_url,
@@ -168,12 +169,14 @@ def _bad_payload(operation: str, reason: str) -> JSONResponse:
 # ---------------------------------------------------------------------------
 # Export
 # ---------------------------------------------------------------------------
-async def export_document(user_id: str, conversation_id: str, payload: DocumentExportIn) -> Response:
-    """The document version as a download, or the error the UI acts on."""
+async def export_document(
+    user_id: str, conversation_id: str, payload: DocumentExportIn, *, branch: FileBranch
+) -> Response:
+    """The branch's document version as a download, or the error the UI acts on."""
     operation = "document_export"
     fmt = payload.format
     response = await _post(f"{build_conversation_documents_url(user_id, conversation_id)}/export",
-                           operation=operation, json=payload.model_dump())
+                           operation=operation, params=branch.params(), json=payload.model_dump())
     if response.status_code == status.HTTP_404_NOT_FOUND:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found.")
     if response.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT:

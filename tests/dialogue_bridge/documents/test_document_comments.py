@@ -25,6 +25,7 @@ from core.auth.session import require_csrf_protection
 from core.database import ConversationTable
 from core.security import rate_limit
 from core.settings import settings
+from engine.conversations.file_branches import FileBranch, document_branch
 
 BRIEF = "/conversation/output/brief.md"
 WHEN = "2026-11-19T10:00:00+00:00"
@@ -58,6 +59,16 @@ async def _conversation(session_factory, user_id: str, agent, *, is_trial: bool 
         await s.commit()
         return conv.id
 
+
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Document routes resolve the branch from a message of the conversation;
+    these tests are about the pass-through, so the branch is given: one of
+    its answers on thread b1."""
+    if "app" in request.fixturenames or "client" in request.fixturenames:
+        app = request.getfixturevalue("app")
+        app.dependency_overrides[document_branch] = lambda: FileBranch(thread_id="b1", message_id="m1")
 
 @pytest.fixture
 async def conv(session_factory, seeded_user, seeded_agent):

@@ -11,7 +11,7 @@ from __future__ import annotations
 from harness.conversation_files import DocumentCommentStore
 from harness.conversation_files.comments import CommentAnchor, CommentStatus, DocumentComment
 from harness.conversation_files.versions import document_path
-from harness.memory import get_memory_pool
+from utils.file_branch import FileBranch
 from schema import (
     CommentAnchorModel,
     CreateCommentRequest,
@@ -20,8 +20,8 @@ from schema import (
 )
 
 
-def _store() -> DocumentCommentStore:
-    return DocumentCommentStore(get_memory_pool())
+def _store(branch: FileBranch) -> DocumentCommentStore:
+    return branch.store(DocumentCommentStore)
 
 
 def _out(comment: DocumentComment) -> DocumentCommentOut:
@@ -43,25 +43,29 @@ def _out(comment: DocumentComment) -> DocumentCommentOut:
     )
 
 
-async def list_document_comments(user_id: str, conversation_id: str, path: str) -> DocumentCommentsResponse:
+async def list_document_comments(
+    user_id: str, conversation_id: str, path: str, *, branch: FileBranch
+) -> DocumentCommentsResponse:
     """A document's threads and replies, resolved ones included, oldest first."""
     canonical = document_path(path)
-    comments = await _store().list_comments(user_id, conversation_id, canonical)
+    comments = await _store(branch).list_comments(user_id, conversation_id, canonical)
     return DocumentCommentsResponse(comments=[_out(c) for c in comments])
 
 
-async def get_document_comment(user_id: str, conversation_id: str, comment_id: str) -> DocumentCommentOut:
+async def get_document_comment(
+    user_id: str, conversation_id: str, comment_id: str, *, branch: FileBranch
+) -> DocumentCommentOut:
     """One comment of this conversation — the bridge's check of a comment-started canvas edit (plan 44 v2)."""
-    return _out(await _store().get_comment(user_id, conversation_id, comment_id))
+    return _out(await _store(branch).get_comment(user_id, conversation_id, comment_id))
 
 
 async def add_document_comment(
-    user_id: str, conversation_id: str, payload: CreateCommentRequest
+    user_id: str, conversation_id: str, payload: CreateCommentRequest, *, branch: FileBranch
 ) -> DocumentCommentOut:
     """The user's new thread or reply."""
     canonical = document_path(payload.path)
     anchor = payload.anchor
-    comment = await _store().add_comment(
+    comment = await _store(branch).add_comment(
         user_id, conversation_id, canonical,
         version=payload.version,
         body=payload.body,
@@ -73,12 +77,13 @@ async def add_document_comment(
 
 
 async def update_document_comment(
-    user_id: str, conversation_id: str, comment_id: str, *, status: CommentStatus | None, body: str | None
+    user_id: str, conversation_id: str, comment_id: str, *, status: CommentStatus | None, body: str | None,
+    branch: FileBranch,
 ) -> DocumentCommentOut:
     """Resolve / reopen a thread, or edit the user's own comment."""
-    return _out(await _store().update_comment(user_id, conversation_id, comment_id, status=status, body=body))
+    return _out(await _store(branch).update_comment(user_id, conversation_id, comment_id, status=status, body=body))
 
 
-async def delete_document_comment(user_id: str, conversation_id: str, comment_id: str) -> None:
+async def delete_document_comment(user_id: str, conversation_id: str, comment_id: str, *, branch: FileBranch) -> None:
     """Delete the user's own comment (a thread with its replies)."""
-    await _store().delete_comment(user_id, conversation_id, comment_id)
+    await _store(branch).delete_comment(user_id, conversation_id, comment_id)

@@ -35,12 +35,12 @@ counts and outcomes only: a comment is the user's (or the agent's) words.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
 from core.logging import get_logger
+from harness.conversation_files import ConversationFiles
 from harness.conversation_files.comments import (
     CommentLimitReached,
     CommentNotFound,
@@ -50,7 +50,6 @@ from harness.conversation_files.comments import (
     ThreadNotOpen,
 )
 from harness.conversation_files.versions import DocumentNotFound, InvalidDocumentPath, document_path
-from harness.memory import get_memory_pool
 from harness.tools.text_args import undo_double_escaping
 
 logger = get_logger(__name__)
@@ -90,17 +89,10 @@ class CommentWriteBudget:
         return True
 
 
-@dataclass(frozen=True)
-class _RunScope:
-    """Whose comments a run's tools touch: from the run config, never from the model."""
-
-    user_id: str
-    conversation_id: str
-    run_id: str | None
-
-
-def _store() -> DocumentCommentStore:
-    return DocumentCommentStore(get_memory_pool())
+def _store(files: ConversationFiles) -> DocumentCommentStore:
+    """The comment store of the run's branch: whose comments the tools touch comes
+    from the run config, never from the model."""
+    return files.store.sibling(DocumentCommentStore)
 
 
 def _thread_id(value: str) -> str | None:
@@ -156,11 +148,9 @@ _BUDGET_NOTE = (f" Comment writes are limited to {MAX_COMMENT_WRITES_PER_RUN} pe
                 f"{REPLY_TOOL_NAME} and {ADD_TOOL_NAME}.")
 
 
-def build_reply_to_comment_tool(
-    *, user_id: str, conversation_id: str, budget: CommentWriteBudget
-) -> StructuredTool:
-    """``reply_to_comment`` bound to this run's conversation and write budget."""
-    scope = _RunScope(user_id=user_id, conversation_id=conversation_id, run_id=None)
+def build_reply_to_comment_tool(*, files: ConversationFiles, budget: CommentWriteBudget) -> StructuredTool:
+    """``reply_to_comment`` bound to this run's conversation branch and write budget."""
+    scope = files
 
     async def _reply(thread_id: str, body: str) -> str:
         thread = _thread_id(thread_id)
@@ -172,7 +162,7 @@ def build_reply_to_comment_tool(
         if not budget.take():
             return f"Could not reply: {_LIMIT_REACHED}"
         try:
-            await _store().agent_reply(scope.user_id, scope.conversation_id, thread, body=body.strip())
+            await _store(files).agent_reply(scope.user_id, scope.conversation_id, thread, body=body.strip())
         except (CommentNotFound, InvalidComment) as exc:
             logger.info("canvas_comment_tool_refused", "Refused an agent comment write",
                         tool=REPLY_TOOL_NAME, reason=type(exc).__name__)
@@ -194,11 +184,9 @@ def build_reply_to_comment_tool(
     )
 
 
-def build_add_comment_tool(
-    *, user_id: str, conversation_id: str, run_id: str | None, budget: CommentWriteBudget
-) -> StructuredTool:
-    """``add_comment`` bound to this run's conversation and write budget."""
-    scope = _RunScope(user_id=user_id, conversation_id=conversation_id, run_id=run_id)
+def build_add_comment_tool(*, files: ConversationFiles, budget: CommentWriteBudget) -> StructuredTool:
+    """``add_comment`` bound to this run's conversation branch and write budget."""
+    scope = files
 
     async def _add(path: str, quote: str, body: str) -> str:
         try:
@@ -211,7 +199,7 @@ def build_add_comment_tool(
                 return f"Could not comment: {problem}"
         if not budget.take():
             return f"Could not comment: {_LIMIT_REACHED}"
-        store = _store()
+        store = _store(files)
         try:
             # The latest version must hold what the agent wrote this run, or a
             # quote from its own draft would not be found: record the file as

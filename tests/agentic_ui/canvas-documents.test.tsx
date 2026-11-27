@@ -130,24 +130,24 @@ describe("documents API", () => {
   beforeEach(() => http.requestJson.mockReset());
 
   const urlOf = () => http.requestJson.mock.calls.at(-1)?.[0];
-  const pathQuery = "path=%2Fconversation%2Foutput%2Fbrief.md";
+  const pathQuery = "messageId=msg-1&path=%2Fconversation%2Foutput%2Fbrief.md";
 
-  it("reads the four routes, the path as a query parameter", async () => {
+  it("reads the four routes, the branch's message and the path as query parameters", async () => {
     http.requestJson.mockResolvedValueOnce([]);
-    await listConversationDocuments("user-1", "conv 1");
-    expect(urlOf()).toBe("/api/v1/conversations/user-1/conv%201/documents");
+    await listConversationDocuments("user-1", "conv 1", "msg-1");
+    expect(urlOf()).toBe("/api/v1/conversations/user-1/conv%201/documents?messageId=msg-1");
 
     http.requestJson.mockResolvedValueOnce(CanvasDocumentVersionSchema.parse(VERSION));
-    const latest = await getLatestDocument("user-1", "conv-1", VERSION.path);
+    const latest = await getLatestDocument("user-1", "conv-1", "msg-1", VERSION.path);
     expect(urlOf()).toBe(`/api/v1/conversations/user-1/conv-1/documents/latest?${pathQuery}`);
     expect(latest.content).toBe(VERSION.content);
 
     http.requestJson.mockResolvedValueOnce({ path: VERSION.path, versions: [] });
-    await listDocumentVersions("user-1", "conv-1", VERSION.path);
+    await listDocumentVersions("user-1", "conv-1", "msg-1", VERSION.path);
     expect(urlOf()).toBe(`/api/v1/conversations/user-1/conv-1/documents/versions?${pathQuery}`);
 
     http.requestJson.mockResolvedValueOnce(CanvasDocumentVersionSchema.parse(VERSION));
-    await getDocumentVersion("user-1", "conv-1", VERSION.path, 2);
+    await getDocumentVersion("user-1", "conv-1", "msg-1", VERSION.path, 2);
     expect(urlOf()).toBe(`/api/v1/conversations/user-1/conv-1/documents/versions/2?${pathQuery}`);
   });
 
@@ -155,7 +155,7 @@ describe("documents API", () => {
     // requestJson hands back the raw body when its schema fails in production.
     const { content: _content, ...raw } = VERSION;
     http.requestJson.mockResolvedValueOnce(raw);
-    await expect(getLatestDocument("user-1", "conv-1", VERSION.path)).rejects.toThrow();
+    await expect(getLatestDocument("user-1", "conv-1", "msg-1", VERSION.path)).rejects.toThrow();
   });
 });
 

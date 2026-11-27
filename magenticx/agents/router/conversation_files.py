@@ -6,6 +6,7 @@ to the conversation, whichever agents worked in it. Internal-caller only.
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from core.security.internal_trust import require_internal_caller
+from utils.file_branch import FileBranch, file_branch
 from schema import (
     CopyConversationFilesRequest,
     CopyConversationFilesResponse,
@@ -29,14 +30,15 @@ router = APIRouter(prefix="/users/{user_id}/conversations/{conversation_id}")
     dependencies=[Depends(require_internal_caller)],
 )
 async def read_conversation_files(
-    user_id: str, conversation_id: str, paths: list[str] = Query(default_factory=list)
+    user_id: str, conversation_id: str, paths: list[str] = Query(default_factory=list),
+    branch: FileBranch = Depends(file_branch),
 ) -> ReadOutputFilesResponse:
-    """The presented files, by exact path, for the run-end snapshot.
+    """The run's branch's presented files, by exact path, for the run-end snapshot.
 
     Absent, oversized or off-output paths come back in ``missing`` (not an
     error) so the bridge stores what it can. 422 only for too many paths."""
     try:
-        files, missing = await read_output_files(user_id, conversation_id, paths)
+        files, missing = await read_output_files(user_id, conversation_id, paths, branch=branch.thread_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
     return ReadOutputFilesResponse(files=[OutputFileOut(**f) for f in files], missing=missing)
@@ -50,8 +52,10 @@ async def read_conversation_files(
 async def copy_files_to_fork(
     user_id: str, conversation_id: str, payload: CopyConversationFilesRequest
 ) -> CopyConversationFilesResponse:
-    """Give a fork the source conversation's files — rows only, never bytes."""
-    copied = await copy_conversation_files(user_id, conversation_id, payload.target_conversation_id)
+    """Give a fork the forked branch's files at the fork point — rows only, never bytes."""
+    copied = await copy_conversation_files(user_id, conversation_id, payload.target_conversation_id,
+                                           source_branch=payload.source_branch_thread_id,
+                                           messages=payload.messages)
     return CopyConversationFilesResponse(copied=copied)
 
 

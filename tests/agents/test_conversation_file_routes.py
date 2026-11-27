@@ -31,10 +31,18 @@ class _Checkpointer:
         self.deleted.append(thread_id)
 
 
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
+
 @pytest.fixture
 def files(agents_service, memory_file_store, monkeypatch):
     module = agents_service.conversation_files_utils
-    monkeypatch.setattr(module, "_store", lambda: memory_file_store)
+    monkeypatch.setattr(module, "_store", lambda *_: memory_file_store)
     return memory_file_store
 
 
@@ -71,7 +79,7 @@ async def test_an_oversized_snapshot_is_skipped_and_too_many_paths_refused(clien
 async def test_a_fork_gets_the_files(client, internal_headers, files):
     await files.create("u1", "c1", "/conversation/output/report.md", b"# Q3", agent_slug="omni")
 
-    response = await client.post(f"{FILES}/copy", json={"target_conversation_id": "fork"}, headers=internal_headers)
+    response = await client.post(f"{FILES}/copy", json={"target_conversation_id": "fork", "source_branch_thread_id": "b1", "messages": ["a1"]}, headers=internal_headers)
 
     assert response.json() == {"copied": 1}
     assert await files.read("u1", "fork", "/conversation/output/report.md") == b"# Q3"

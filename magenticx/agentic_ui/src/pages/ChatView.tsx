@@ -113,6 +113,7 @@ export default function ChatView() {
     handleRenameConversation,
     exportConversationPdf,
     attachmentPreview,
+    canvasBranchMessageId,
   } = useChatWorkspaceContext();
 
   // Read straight from the store rather than through the workspace bundle.
@@ -217,10 +218,11 @@ export default function ChatView() {
     <CanvasOpenerContext.Provider value={canvasConversationId ? openCanvas : null}>
       <CanvasDock
         document={
-          userId && canvasConversationId && canvasPath
+          userId && canvasConversationId && canvasPath && canvasBranchMessageId
             ? {
                 userId,
                 conversationId: canvasConversationId,
+                messageId: canvasBranchMessageId,
                 path: canvasPath,
                 // A run that ends may have written a new version: re-read then.
                 revision: `${conversationMessages.length}:${isCurrentConversationBusy ? 1 : 0}`,

@@ -74,8 +74,8 @@ class ExportedFile:
     version: int
 
 
-def _store() -> DocumentVersionStore:
-    return DocumentVersionStore(get_memory_pool())
+def _store(branch: FileBranch) -> DocumentVersionStore:
+    return branch.store(DocumentVersionStore)
 
 
 @cache
@@ -139,16 +139,19 @@ def export_filename(markdown: str, document_name: str, fmt: str) -> str:
     return f"{title or _FALLBACK_TITLE}.{fmt}"
 
 
-async def _version(user_id: str, conversation_id: str, path: str, version: int | None) -> DocumentVersion:
+async def _version(
+    user_id: str, conversation_id: str, path: str, version: int | None, branch: FileBranch
+) -> DocumentVersion:
     canonical = document_path(path)  # 422 before any query
-    store = _store()
+    store = _store(branch)
     if version is None:
         return await store.latest(user_id, conversation_id, canonical)
     return await store.get_version(user_id, conversation_id, canonical, version)
 
 
 async def export_document(
-    user_id: str, conversation_id: str, path: str, version: int | None, fmt: ExportFormatName
+    user_id: str, conversation_id: str, path: str, version: int | None, fmt: ExportFormatName, *,
+    branch: FileBranch,
 ) -> ExportedFile:
     """One version of a canvas document as ``fmt``.
 
@@ -156,7 +159,7 @@ async def export_document(
     docx/pdf, :mod:`harness.conversions`' ``ConversionUnavailable`` /
     ``ConversionTimeout`` / ``ConversionFailed`` — the route maps them.
     """
-    found = await _version(user_id, conversation_id, path, version)
+    found = await _version(user_id, conversation_id, path, version, branch)
     text = found.content or ""
     filename = export_filename(text, found.name, fmt)
     if fmt == "md":

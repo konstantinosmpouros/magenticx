@@ -275,6 +275,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
         <DocumentCanvas
           userId="user-1"
           conversationId="conv-1"
+          messageId="msg-1"
           path={PATH}
           revision="0"
           compact={false}
@@ -323,7 +324,7 @@ describe("comments as instructions in the canvas", () => {
     api.listDocumentVersions.mockResolvedValue([]);
     api.getLatestDocument.mockResolvedValue(latest());
     api.listDocumentComments.mockResolvedValue([comment()]);
-    api.createDocumentComment.mockImplementation(async (_u, _c, draft) =>
+    api.createDocumentComment.mockImplementation(async (_u, _c, _m, draft) =>
       comment({
         id: draft.parentId ? "r1" : THREAD,
         parentId: draft.parentId ?? null,
@@ -358,7 +359,7 @@ describe("comments as instructions in the canvas", () => {
 
     await waitFor(() => expect(onAskAgent).toHaveBeenCalledTimes(1));
     // Saved first, then asked.
-    expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", {
+    expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", {
       path: PATH,
       version: 2,
       parentId: THREAD,

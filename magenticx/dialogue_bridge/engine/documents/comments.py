@@ -35,6 +35,7 @@ from schema import (
     DocumentCommentsOut,
 )
 from engine.agents.service_urls import build_conversation_documents_url
+from engine.conversations.file_branches import FileBranch
 
 logger = get_logger(__name__)
 
@@ -106,28 +107,34 @@ def _validated[Model: DocumentCommentOut | DocumentCommentsOut](
         )
 
 
-async def list_document_comments(user_id: str, conversation_id: str, path: str) -> DocumentCommentsOut:
-    """A document's threads and replies, oldest first."""
+async def list_document_comments(
+    user_id: str, conversation_id: str, path: str, *, branch: FileBranch
+) -> DocumentCommentsOut:
+    """A document's threads and replies on the branch, oldest first."""
     response = await _request("GET", _comments_url(user_id, conversation_id), operation="document_comments",
-                              params={"path": path})
+                              params={**branch.params(), "path": path})
     return _validated(response, DocumentCommentsOut, operation="document_comments")
 
 
-async def get_document_comment(user_id: str, conversation_id: str, comment_id: str) -> DocumentCommentOut:
-    """One comment of the conversation (a 404 when it has none with that id).
+async def get_document_comment(
+    user_id: str, conversation_id: str, comment_id: str, *, branch: FileBranch
+) -> DocumentCommentOut:
+    """One comment of the conversation's branch (a 404 when it has none with that id).
 
     Used by the canvas-edit check (plan 44 v2) to confirm the thread a
     comment-started edit names.
     """
     response = await _request("GET", f"{_comments_url(user_id, conversation_id)}/{comment_id}",
-                              operation="document_comment_get")
+                              operation="document_comment_get", params=branch.params())
     return _validated(response, DocumentCommentOut, operation="document_comment_get")
 
 
-async def add_document_comment(user_id: str, conversation_id: str, payload: DocumentCommentIn) -> DocumentCommentOut:
+async def add_document_comment(
+    user_id: str, conversation_id: str, payload: DocumentCommentIn, *, branch: FileBranch
+) -> DocumentCommentOut:
     """The user's new thread or reply."""
     response = await _request("POST", _comments_url(user_id, conversation_id), operation="document_comment_add",
-                              json_body=payload.upstream())
+                              params=branch.params(), json_body=payload.upstream())
     comment = _validated(response, DocumentCommentOut, operation="document_comment_add")
     logger.info("document_comment_added", "Added a comment to a canvas document",
                 conversation_id=conversation_id, reply=comment.parentId is not None)
@@ -135,18 +142,20 @@ async def add_document_comment(user_id: str, conversation_id: str, payload: Docu
 
 
 async def update_document_comment(
-    user_id: str, conversation_id: str, comment_id: str, payload: DocumentCommentPatchIn
+    user_id: str, conversation_id: str, comment_id: str, payload: DocumentCommentPatchIn, *, branch: FileBranch
 ) -> DocumentCommentOut:
     """Resolve / reopen a thread, or edit the user's own comment."""
     response = await _request("PATCH", f"{_comments_url(user_id, conversation_id)}/{comment_id}",
-                              operation="document_comment_update",
+                              operation="document_comment_update", params=branch.params(),
                               json_body=payload.model_dump(exclude_none=True))
     return _validated(response, DocumentCommentOut, operation="document_comment_update")
 
 
-async def delete_document_comment(user_id: str, conversation_id: str, comment_id: str) -> None:
+async def delete_document_comment(
+    user_id: str, conversation_id: str, comment_id: str, *, branch: FileBranch
+) -> None:
     """Delete the user's own comment; a thread goes with its replies."""
     await _request("DELETE", f"{_comments_url(user_id, conversation_id)}/{comment_id}",
-                   operation="document_comment_delete")
+                   operation="document_comment_delete", params=branch.params())
     logger.info("document_comment_deleted", "Deleted a comment from a canvas document",
                 conversation_id=conversation_id)

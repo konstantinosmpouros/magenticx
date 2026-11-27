@@ -10,6 +10,7 @@ import type {
 import { normalizeMarkdown } from "../lib/markdown";
 import { rebaseProposed } from "../lib/suggestions";
 import { useFetchCanvasVersionText } from "./useCanvasVersionText";
+import { useCanvasBranchMessage } from "../lib/branch";
 
 const NONE: CanvasSuggestionStart = { status: "ready", proposed: null, savedBase: null };
 
@@ -45,6 +46,7 @@ export function useCanvasSuggestions(
   start: CanvasSuggestionStart;
   refresh: () => Promise<CanvasDocumentSuggestion | null | undefined>;
 } {
+  const messageId = useCanvasBranchMessage();
   const fetchVersionText = useFetchCanvasVersionText(userId, conversationId, path);
   const [start, setStart] = useState<CanvasSuggestionStart>({ status: "loading" });
   const latestRef = useRef(latest);
@@ -58,7 +60,7 @@ export function useCanvasSuggestions(
     const resolve = async (): Promise<CanvasSuggestionStart> => {
       let set;
       try {
-        set = await getDocumentSuggestion(userId, conversationId, path);
+        set = await getDocumentSuggestion(userId, conversationId, messageId, path);
       } catch {
         return NONE;
       }
@@ -67,7 +69,7 @@ export function useCanvasSuggestions(
       const clear = () => {
         // Nothing left to suggest: dropped quietly (a failure only leaves it for next time).
         void Promise.resolve()
-          .then(() => deleteDocumentSuggestion(userId, conversationId, path))
+          .then(() => deleteDocumentSuggestion(userId, conversationId, messageId, path))
           .catch(() => undefined);
         return NONE;
       };
@@ -93,15 +95,15 @@ export function useCanvasSuggestions(
     return () => {
       cancelled = true;
     };
-  }, [known, userId, conversationId, path, fetchVersionText]);
+  }, [known, userId, conversationId, messageId, path, fetchVersionText]);
 
   const refresh = useCallback(async () => {
     try {
-      return await getDocumentSuggestion(userId, conversationId, path);
+      return await getDocumentSuggestion(userId, conversationId, messageId, path);
     } catch {
       return undefined;
     }
-  }, [userId, conversationId, path]);
+  }, [userId, conversationId, messageId, path]);
 
   return { start, refresh };
 }

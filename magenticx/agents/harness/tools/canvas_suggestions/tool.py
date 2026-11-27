@@ -54,7 +54,6 @@ from harness.conversation_files.versions import (
     InvalidDocumentPath,
     document_path,
 )
-from harness.memory import get_memory_pool
 
 logger = get_logger(__name__)
 
@@ -67,8 +66,9 @@ _NO_DOCUMENT = "there is no canvas document at that path in this conversation."
 _ASK_THE_USER = "Do not merge them yourself: ask the user to review them in the canvas."
 
 
-def _store() -> DocumentSuggestionStore:
-    return DocumentSuggestionStore(get_memory_pool())
+def _store(files: ConversationFiles) -> DocumentSuggestionStore:
+    """The suggestion store of the run's branch."""
+    return files.store.sibling(DocumentSuggestionStore)
 
 
 def _text(data: bytes) -> str:
@@ -87,14 +87,14 @@ def build_review_suggestions_tool(*, files: ConversationFiles) -> StructuredTool
     user_id, conversation_id = files.user_id, files.conversation_id
 
     async def _reject(canonical: str, name: str) -> str:
-        if not await _store().delete(user_id, conversation_id, canonical):
+        if not await _store(files).delete(user_id, conversation_id, canonical):
             return f"Could not reject the suggestions: {_NONE_PENDING}"
         logger.info("canvas_suggestions_reviewed", "The agent rejected the user's pending suggestions",
                     tool=REVIEW_TOOL_NAME, decision="reject")
         return f"Rejected the user's suggestions on {name}; the document is unchanged."
 
     async def _accept(canonical: str, name: str) -> str:
-        store = _store()
+        store = _store(files)
         pending = await store.get(user_id, conversation_id, canonical)
         if pending is None:
             return f"Could not apply the suggestions: {_NONE_PENDING}"

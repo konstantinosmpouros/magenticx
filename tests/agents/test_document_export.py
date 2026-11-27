@@ -114,10 +114,18 @@ class _FakeStore:
         return self._row(version)
 
 
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
+
 @pytest.fixture
 def store(agents_service, monkeypatch):
     fake = _FakeStore({1: "# Old title\n\nv1", 2: "# Αναφορά: Q3/Q4 «σχέδιο»\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"})
-    monkeypatch.setattr(_export(), "_store", lambda: fake)
+    monkeypatch.setattr(_export(), "_store", lambda *_: fake)
     return fake
 
 
@@ -194,7 +202,8 @@ async def test_user_text_reaches_the_box_only_as_file_content(agents_service, st
     store._versions[3] = HOSTILE
     runner = runner_via(_Runner(_ok("output/document.pdf")))
 
-    exported = await _export().export_document("u1", "c1", BRIEF, None, "pdf")
+    branch = importlib.import_module("utils.file_branch").FileBranch(thread_id="b1")
+    exported = await _export().export_document("u1", "c1", BRIEF, None, "pdf", branch=branch)
 
     [body] = runner.bodies()
     assert body["command"] == _commands().export_job("pdf").command

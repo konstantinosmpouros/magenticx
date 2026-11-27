@@ -35,6 +35,7 @@ from schema import (
     DocumentVersionsOut,
 )
 from engine.agents.service_urls import build_conversation_documents_url
+from engine.conversations.file_branches import FileBranch
 
 logger = get_logger(__name__)
 
@@ -110,35 +111,42 @@ async def _call[Model: BaseModel](
         )
 
 
-async def list_documents(user_id: str, conversation_id: str, limit: int) -> DocumentListOut:
-    """The conversation's documents at their latest version, newest first."""
+async def list_documents(user_id: str, conversation_id: str, limit: int, *, branch: FileBranch) -> DocumentListOut:
+    """The branch's documents at their latest version, newest first."""
     return await _call("GET", build_conversation_documents_url(user_id, conversation_id), DocumentListOut,
-                       operation="document_list", params={"limit": limit})
+                       operation="document_list", params={**branch.params(), "limit": limit})
 
 
-async def latest_document(user_id: str, conversation_id: str, path: str) -> DocumentVersionOut:
-    """A document's latest version with its text."""
+async def latest_document(user_id: str, conversation_id: str, path: str, *, branch: FileBranch) -> DocumentVersionOut:
+    """A document's latest version on the branch, with its text."""
     return await _call("GET", f"{build_conversation_documents_url(user_id, conversation_id)}/latest",
-                       DocumentVersionOut, operation="document_latest", params={"path": path})
+                       DocumentVersionOut, operation="document_latest", params={**branch.params(), "path": path})
 
 
-async def list_document_versions(user_id: str, conversation_id: str, path: str, limit: int) -> DocumentVersionsOut:
-    """A document's history without text, newest first."""
+async def list_document_versions(
+    user_id: str, conversation_id: str, path: str, limit: int, *, branch: FileBranch
+) -> DocumentVersionsOut:
+    """A document's history on the branch without text, newest first."""
     return await _call("GET", f"{build_conversation_documents_url(user_id, conversation_id)}/versions",
                        DocumentVersionsOut, operation="document_versions",
-                       params={"path": path, "limit": limit})
+                       params={**branch.params(), "path": path, "limit": limit})
 
 
-async def get_document_version(user_id: str, conversation_id: str, path: str, version: int) -> DocumentVersionOut:
-    """One version of a document with its text."""
+async def get_document_version(
+    user_id: str, conversation_id: str, path: str, version: int, *, branch: FileBranch
+) -> DocumentVersionOut:
+    """One version of a document on the branch, with its text."""
     return await _call("GET", f"{build_conversation_documents_url(user_id, conversation_id)}/versions/{version}",
-                       DocumentVersionOut, operation="document_version", params={"path": path})
+                       DocumentVersionOut, operation="document_version", params={**branch.params(), "path": path})
 
 
-async def save_document_version(user_id: str, conversation_id: str, payload: DocumentSaveIn) -> DocumentSaveOut:
-    """The user's save as the next version; a 409 carries the latest version and its text."""
+async def save_document_version(
+    user_id: str, conversation_id: str, payload: DocumentSaveIn, *, branch: FileBranch
+) -> DocumentSaveOut:
+    """The user's save as the next version on the branch; a 409 carries the latest version and its text."""
     saved = await _call("POST", f"{build_conversation_documents_url(user_id, conversation_id)}/versions",
-                        DocumentSaveOut, operation="document_save", json_body=payload.model_dump())
+                        DocumentSaveOut, operation="document_save", params=branch.params(),
+                        json_body=payload.model_dump())
     logger.info("document_version_saved", "Saved a version of a canvas document",
                 conversation_id=conversation_id, version=saved.version)
     return saved

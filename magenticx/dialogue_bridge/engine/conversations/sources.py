@@ -9,30 +9,35 @@ from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.security.internal_trust import internal_service_headers
 from schema import ConversationSource, keep_valid_sources
 from engine.agents.service_urls import build_conversation_files_url, build_conversation_sources_url
+from engine.conversations.file_branches import FileBranch
 
 logger = get_logger(__name__)
 
 
-async def _copy_to_fork(url: str, target_id: str) -> None:
-    """POST ``{"target_conversation_id": target_id}`` to an agents-service copy
+async def _copy_to_fork(url: str, target_id: str, *, extra: dict[str, object] | None = None) -> None:
+    """POST ``{"target_conversation_id": target_id, **extra}`` to an agents-service copy
     route; raises ``httpx.HTTPError`` for the caller to log."""
     async with httpx.AsyncClient(
         timeout=settings.http.agents_timeout, verify=get_httpx_verify(), cert=get_httpx_client_cert()
     ) as client:
         resp = await client.post(
             url,
-            json={"target_conversation_id": target_id},
+            json={"target_conversation_id": target_id, **(extra or {})},
             headers=internal_service_headers(get_context().get("request_id")),
         )
         resp.raise_for_status()
 
 
-async def copy_conversation_files(user_id: str, source_id: str, target_id: str) -> None:
-    """Give a fork its source conversation's files (paths only — the agents
-    service shares the bytes). Best-effort: a fork without them is still a
-    fork, so a failure is logged, not raised."""
+async def copy_conversation_files(
+    user_id: str, source_id: str, target_id: str, *, branch: FileBranch, answers: list[str]
+) -> None:
+    """Give a fork the files of the branch it was forked from, at the fork point (paths
+    only — the agents service shares the bytes). ``branch`` is that branch and
+    ``answers`` the answers on the forked path. Best-effort: a fork without
+    them is still a fork, so a failure is logged, not raised."""
     try:
-        await _copy_to_fork(f"{build_conversation_files_url(user_id, source_id)}/copy", target_id)
+        await _copy_to_fork(f"{build_conversation_files_url(user_id, source_id)}/copy", target_id,
+                            extra={"source_branch_thread_id": branch.thread_id, "messages": answers})
     except httpx.HTTPError as exc:
         logger.warning("conversation_files_copy_failed", "Could not give a fork its source's files",
                        conversation_id=target_id, error_type=type(exc).__name__)

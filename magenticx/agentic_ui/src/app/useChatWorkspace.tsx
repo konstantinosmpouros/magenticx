@@ -742,6 +742,13 @@ export function useChatWorkspace({
 
   // The composer's context gauge: the live run's latest main-agent call while
   // one runs, else the latest AI message on the visible branch that recorded one.
+  const canvasBranchMessageId = useMemo(() => {
+    for (let index = activeMessages.length - 1; index >= 0; index -= 1) {
+      const id = String(activeMessages[index].id);
+      if (!id.startsWith("temp-")) return id;
+    }
+    return null;
+  }, [activeMessages]);
   const conversationContext = useMemo(
     () => selectConversationContext(activeMessages, activeConversationRun),
     [activeMessages, activeConversationRun],
@@ -1584,6 +1591,9 @@ export function useChatWorkspace({
   // The hook returns the full workspace bundle. The shell (below) does the auth
   // gate and renders the chrome; the route views consume slices of this.
   return {
+    // The last saved message of the branch on screen: the canvas's documents
+    // are that branch's (an optimistic row is not on the server yet).
+    canvasBranchMessageId,
     // auth / gate
     authResolved,
     isLoggedIn,

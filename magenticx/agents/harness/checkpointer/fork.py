@@ -12,6 +12,10 @@ fresh checkpoint on the target thread via the graph's ``aget_state`` /
 the desired semantics: the new branch starts from the fork-point state and
 diverges, while the source thread is left untouched (isolation preserved).
 
+**The conversation's files come along too, cut at the same point**
+(:func:`copy_branch_files`): they are keyed by branch thread, and a write log
+lets the new branch get each file as it was at the fork point.
+
 If reducer-based seeding ever proves lossy for complex deepagents state, the
 fallback is a row-level copy of the source thread's checkpoint chain up to the
 fork checkpoint (rewriting ``thread_id``) directly in Postgres — see the
@@ -33,8 +37,9 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from core.logging import get_logger
+from harness.conversation_files.store import ConversationFileStore
 from harness.filesystem.scratch_store import BranchScratchStore
-from harness.memory import has_memory_pool
+from harness.memory import get_memory_pool, has_memory_pool
 from harness.middlewares import EVENT_KEY
 
 logger = get_logger(__name__)
@@ -86,6 +91,41 @@ async def copy_branch_scratch(source_thread_id: str, target_thread_id: str) -> i
         logger.warning(
             "checkpoint_fork_scratch_not_copied",
             "Seeded a branch thread but could not copy the source branch's scratch files",
+            exc_info=True,
+            source_thread_id=source_thread_id,
+            target_thread_id=target_thread_id,
+        )
+        return 0
+
+
+async def copy_branch_files(
+    *, user_id: str, conversation_id: str, source_thread_id: str, target_thread_id: str,
+    messages: list[str] | None,
+) -> int:
+    """Copy-on-fork for the conversation's files: the source branch's files **at the fork point**.
+
+    ``messages`` are the answers on the path from the root to the fork point
+    (the bridge sends them with ``fork_from``); each file comes as of the
+    latest write one of them made, so what the source branch wrote after the
+    fork point stays there (:meth:`ConversationFileStore.copy_branch`). Must
+    run before anything of the run touches its files: a branch's first touch
+    sets it up from the legacy rows, and a set-up branch is not forked into.
+
+    Degraded, never crashing, like the seed: without the store, or on a
+    database error, the new branch starts with the legacy files only, and the
+    failure is logged. A bridge that sent no ``messages`` gets the legacy-only
+    cut too, never the source's later files. Returns how many files were
+    copied.
+    """
+    if not has_memory_pool() or not source_thread_id or not target_thread_id:
+        return 0
+    try:
+        store = ConversationFileStore(get_memory_pool(), branch=target_thread_id)
+        return await store.copy_branch(user_id, conversation_id, source_thread_id, list(messages or []))
+    except Exception:
+        logger.warning(
+            "checkpoint_fork_files_not_copied",
+            "Could not give a forked branch its conversation files",
             exc_info=True,
             source_thread_id=source_thread_id,
             target_thread_id=target_thread_id,

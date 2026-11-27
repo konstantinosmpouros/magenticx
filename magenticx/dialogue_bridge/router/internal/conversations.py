@@ -4,7 +4,8 @@
 `INTERNAL_SERVICE_SECRET`, which the UI never holds) AND blocked at the nginx edge (`/api/v1/internal/`), so only the
 agents service — reaching the bridge directly on the `backend` network — can
 call them. They back the agent's read-only ``/conversation/input/`` folder
-(plan 36): the uploads stay here, and the agent reads them on demand. And the
+(plan 36): the uploads stay here, and the agent reads them on demand — only
+those on the branch of the message the run answers (``message_id``). And the
 steering claim (SSE plan, phase 5): a run takes the message the user sent
 while it worked.
 """
@@ -34,12 +35,13 @@ logger = get_logger(__name__)
 async def listInputFiles(
     conversation_id: str,
     user_id: str = Query(min_length=1),
+    message_id: str = Query(min_length=1, max_length=64),
     db: AsyncSession = Depends(get_db),
 ) -> InputFilesOut:
     set_context(user_id=user_id, conversation_id=conversation_id)
     if not await conversation_is_owned(db, conversation_id, user_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Conversation not found.")
-    files = await list_input_files(db, conversation_id, user_id)
+    files = await list_input_files(db, conversation_id, user_id, message_id)
     logger.info("input_files_listed", "Listed a conversation's uploads for the agent", files=len(files))
     return InputFilesOut.model_validate({"files": files})
 
@@ -52,10 +54,11 @@ async def readInputFile(
     conversation_id: str,
     attachment_id: str,
     user_id: str = Query(min_length=1),
+    message_id: str = Query(min_length=1, max_length=64),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     set_context(user_id=user_id, conversation_id=conversation_id)
-    data = await read_input_file(db, conversation_id, user_id, attachment_id)
+    data = await read_input_file(db, conversation_id, user_id, message_id, attachment_id)
     if data is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Upload not found.")
     return Response(content=data, media_type="application/octet-stream")

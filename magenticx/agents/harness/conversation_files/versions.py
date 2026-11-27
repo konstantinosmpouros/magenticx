@@ -8,8 +8,15 @@ text; this module adds the history: every version of the document is a row in
 matches the file costs no extra byte). Each version records its author, the
 user or the agent, and the version it was based on.
 
-Two ways a version is written, both serialised per (conversation, path) by a
-transaction-scoped advisory lock, so a check-then-insert can never race:
+Versions belong to a branch, like the files (:mod:`.store`): the store is
+bound to one, and a fork gives the new branch the versions made up to the fork
+point. Each version records the answer message that made it (``message_id``;
+for a user save, the answer the user was looking at), which is what that cut
+reads.
+
+Two ways a version is written, both serialised per (conversation, branch,
+path) by a transaction-scoped advisory lock, so a check-then-insert can never
+race:
 
 * **the agent's** — at run end the bridge asks for a :meth:`capture` of the
   documents the run presented, and (Phase 4.3) every document the
@@ -51,7 +58,9 @@ DOCUMENT_SUFFIX = ".md"
 #: file had no row to keep the agent's slug from.
 USER_WRITER = "user"
 
-_SCOPE = "conversation_id = %(conversation_id)s AND user_id = %(user_id)s"
+_SCOPE = (
+    "conversation_id = %(conversation_id)s AND branch_thread_id = %(branch)s AND user_id = %(user_id)s"
+)
 _VERSION_COLUMNS = "v.path, v.version, v.author, v.base_version, v.size_bytes, v.sha256, v.created_at"
 
 
@@ -153,17 +162,18 @@ class DocumentVersionStore(ConversationFileStore):
     A subclass on purpose: a version is written with the very blob primitives
     a file is (:meth:`_save_blob`, :meth:`_collect_garbage`, the cipher), and
     a user save writes the file row in the same transaction as the version.
-    Every statement filters on both ``conversation_id`` and ``user_id``.
+    Every statement filters on ``conversation_id``, the store's branch and ``user_id``.
     """
 
     # -- reads ---------------------------------------------------------------
     async def list_documents(self, user_id: str, conversation_id: str, *, limit: int) -> list[DocumentVersion]:
         """The latest version of each document, newest first, at most ``limit``."""
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 f"SELECT * FROM (SELECT DISTINCT ON (v.path) {_VERSION_COLUMNS} "
                 "FROM conversation_file_versions v "
-                "WHERE v.conversation_id = %(conversation_id)s AND v.user_id = %(user_id)s "
+                "WHERE v.conversation_id = %(conversation_id)s AND v.branch_thread_id = %(branch)s "
+                "AND v.user_id = %(user_id)s "
                 "ORDER BY v.path, v.version DESC) latest "
                 "ORDER BY created_at DESC, path LIMIT %(limit)s",
                 {"user_id": user_id, "conversation_id": conversation_id, "limit": limit},
@@ -177,10 +187,9 @@ class DocumentVersionStore(ConversationFileStore):
         4.3): an Ask agent edit changes the file with ``edit_file`` and need
         not present it again, yet must become the agent's next version.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
-                "SELECT DISTINCT path FROM conversation_file_versions "
-                "WHERE conversation_id = %(conversation_id)s AND user_id = %(user_id)s "
+                f"SELECT DISTINCT path FROM conversation_file_versions WHERE {_SCOPE} "
                 "ORDER BY path LIMIT %(limit)s",
                 {"user_id": user_id, "conversation_id": conversation_id, "limit": limit},
             )
@@ -190,10 +199,11 @@ class DocumentVersionStore(ConversationFileStore):
         self, user_id: str, conversation_id: str, path: str, *, limit: int
     ) -> list[DocumentVersion]:
         """A document's versions without their text, newest first. Empty when it has none."""
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 f"SELECT {_VERSION_COLUMNS} FROM conversation_file_versions v "
-                "WHERE v.conversation_id = %(conversation_id)s AND v.user_id = %(user_id)s "
+                "WHERE v.conversation_id = %(conversation_id)s AND v.branch_thread_id = %(branch)s "
+                "AND v.user_id = %(user_id)s "
                 "AND v.path = %(path)s ORDER BY v.version DESC LIMIT %(limit)s",
                 {"user_id": user_id, "conversation_id": conversation_id, "path": path, "limit": limit},
             )
@@ -201,7 +211,7 @@ class DocumentVersionStore(ConversationFileStore):
 
     async def get_version(self, user_id: str, conversation_id: str, path: str, version: int) -> DocumentVersion:
         """One version with its text, or :class:`DocumentNotFound`."""
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             found = await self._read_version(conn, user_id, conversation_id, path, version)
         if found is None:
             raise DocumentNotFound(path)
@@ -215,7 +225,7 @@ class DocumentVersionStore(ConversationFileStore):
         recorded as version 1 by the agent first. :class:`DocumentNotFound`
         when there is neither a version nor a file.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             found = await self._read_version(conn, user_id, conversation_id, path, None)
             if found is not None:
                 return found
@@ -247,7 +257,7 @@ class DocumentVersionStore(ConversationFileStore):
         bad path never undoes the others.
         """
         results: list[CaptureResult] = []
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             for path in document_paths:
                 async with conn.transaction():
                     await self._lock(conn, conversation_id, path)
@@ -275,7 +285,7 @@ class DocumentVersionStore(ConversationFileStore):
         data = content.encode("utf-8")
         if len(data) > MAX_DOCUMENT_BYTES:
             raise DocumentTooLarge(path)
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             await self._lock(conn, conversation_id, path)
             current = await self._read_version(conn, user_id, conversation_id, path, None)
             if current is None:
@@ -292,9 +302,10 @@ class DocumentVersionStore(ConversationFileStore):
             sha256 = await self._save_blob(conn, user_id, data)
             cur = await conn.execute(
                 "INSERT INTO conversation_file_versions "
-                "(user_id, conversation_id, path, version, sha256, size_bytes, author, base_version) "
-                "VALUES (%(user_id)s, %(conversation_id)s, %(path)s, %(version)s, %(sha256)s, %(size)s, "
-                "'user', %(base)s) "
+                "(user_id, conversation_id, branch_thread_id, path, version, sha256, size_bytes, author, "
+                "base_version, message_id) "
+                "VALUES (%(user_id)s, %(conversation_id)s, %(branch)s, %(path)s, %(version)s, %(sha256)s, "
+                "%(size)s, 'user', %(base)s, %(message_id)s) "
                 "RETURNING path, version, author, base_version, size_bytes, sha256, created_at",
                 {"user_id": user_id, "conversation_id": conversation_id, "path": path,
                  "version": current.version + 1, "sha256": sha256, "size": len(data), "base": base_version},
@@ -315,7 +326,7 @@ class DocumentVersionStore(ConversationFileStore):
         """
         await conn.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (f"conversation_file_versions\n{conversation_id}\n{path}",),
+            (f"conversation_file_versions\n{conversation_id}\n{self._branch}\n{path}",),
         )
 
     async def _read_version(
@@ -326,7 +337,8 @@ class DocumentVersionStore(ConversationFileStore):
         cur = await conn.execute(
             f"SELECT {_VERSION_COLUMNS}, b.cipher, b.data FROM conversation_file_versions v "
             "JOIN conversation_file_blobs b ON b.user_id = v.user_id AND b.sha256 = v.sha256 "
-            "WHERE v.conversation_id = %(conversation_id)s AND v.user_id = %(user_id)s "
+            "WHERE v.conversation_id = %(conversation_id)s AND v.branch_thread_id = %(branch)s "
+            "AND v.user_id = %(user_id)s "
             f"AND v.path = %(path)s {where}ORDER BY v.version DESC LIMIT 1",
             {"user_id": user_id, "conversation_id": conversation_id, "path": path, "version": version},
         )
@@ -364,9 +376,10 @@ class DocumentVersionStore(ConversationFileStore):
         version = int(latest["version"]) + 1 if latest is not None else 1
         await conn.execute(
             "INSERT INTO conversation_file_versions "
-            "(user_id, conversation_id, path, version, sha256, size_bytes, author, base_version, source_run_id) "
-            "VALUES (%(user_id)s, %(conversation_id)s, %(path)s, %(version)s, %(sha256)s, %(size)s, "
-            "%(author)s, %(base)s, %(run_id)s)",
+            "(user_id, conversation_id, branch_thread_id, path, version, sha256, size_bytes, author, "
+            "base_version, source_run_id, message_id) "
+            "VALUES (%(user_id)s, %(conversation_id)s, %(branch)s, %(path)s, %(version)s, %(sha256)s, %(size)s, "
+            "%(author)s, %(base)s, %(run_id)s, %(message_id)s)",
             {"user_id": user_id, "conversation_id": conversation_id, "path": path, "version": version,
              "sha256": file_row["sha256"], "size": int(file_row["size_bytes"]), "author": author,
              "base": int(latest["version"]) if latest is not None else None, "run_id": run_id},
@@ -378,8 +391,9 @@ class DocumentVersionStore(ConversationFileStore):
     ) -> None:
         """Point the document's file row at the saved bytes, keeping its provenance.
 
-        The previous blob is collected if nothing names it any more — which,
-        with a version naming every blob a document ever had, is rare.
+        Logged like any write, so a fork cuts the user's save where it was
+        made. The previous blob is collected if nothing names it any more —
+        which, with a version naming every blob a document ever had, is rare.
         """
         cur = await conn.execute(
             f"SELECT sha256 FROM conversation_files WHERE {_SCOPE} AND path = %(path)s FOR UPDATE",
@@ -388,12 +402,15 @@ class DocumentVersionStore(ConversationFileStore):
         previous = await cur.fetchone()
         await conn.execute(
             "INSERT INTO conversation_files "
-            "(conversation_id, path, user_id, sha256, size_bytes, agent_slug, source_run_id) "
-            "VALUES (%(conversation_id)s, %(path)s, %(user_id)s, %(sha256)s, %(size)s, %(writer)s, NULL) "
-            "ON CONFLICT (conversation_id, path) DO UPDATE SET sha256 = EXCLUDED.sha256, "
+            "(conversation_id, branch_thread_id, path, user_id, sha256, size_bytes, agent_slug, source_run_id) "
+            "VALUES (%(conversation_id)s, %(branch)s, %(path)s, %(user_id)s, %(sha256)s, %(size)s, %(writer)s, "
+            "NULL) "
+            "ON CONFLICT (conversation_id, branch_thread_id, path) DO UPDATE SET sha256 = EXCLUDED.sha256, "
             "size_bytes = EXCLUDED.size_bytes, source_run_id = NULL, updated_at = now()",
             {"user_id": user_id, "conversation_id": conversation_id, "path": path,
              "sha256": sha256, "size": size, "writer": USER_WRITER},
         )
+        if previous is None or previous["sha256"] != sha256:
+            await self._log_write(conn, user_id, conversation_id, path, sha256, size, USER_WRITER)
         if previous is not None and previous["sha256"] != sha256:
             await self._collect_garbage(conn, user_id, [previous["sha256"]])

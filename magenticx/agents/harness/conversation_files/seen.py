@@ -19,8 +19,9 @@ The markers move at two moments, both monotonic (``GREATEST``, never back):
   save the user made while the run was going is therefore not swallowed: the
   next turn still gets its diff.
 
-The DDL is in :mod:`.store`, beside the versions whose lifetime the markers
-share (fork copy, reap, purge).
+The markers belong to a branch, like the versions they point at. The DDL is in
+:mod:`.store`, beside the versions whose lifetime the markers share (fork
+copy, reap, purge).
 """
 from __future__ import annotations
 
@@ -67,8 +68,8 @@ class DocumentSeenStore(DocumentVersionStore):
     """The seen markers of one user's conversations, over the versions table.
 
     A subclass so it reads versions with the very decrypting reader the
-    canvas routes use. Every statement filters on ``user_id`` and
-    ``conversation_id``.
+    canvas routes use. Every statement filters on ``user_id``,
+    ``conversation_id`` and the store's branch.
     """
 
     async def turn_state(self, user_id: str, conversation_id: str) -> TurnState:
@@ -79,14 +80,15 @@ class DocumentSeenStore(DocumentVersionStore):
         made it): no diff, only a marker. A document whose newer versions are
         all the agent's (a capture that failed to mark) gets a marker, no note.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "SELECT v.path, max(v.version) AS latest, s.agent_seen_version AS seen, "
                 "coalesce(bool_or(v.author = 'user' AND v.version > s.agent_seen_version), false) AS user_edited "
                 "FROM conversation_file_versions v "
                 "LEFT JOIN conversation_file_seen s ON s.conversation_id = v.conversation_id "
-                "AND s.path = v.path AND s.user_id = v.user_id "
-                "WHERE v.conversation_id = %(conversation_id)s AND v.user_id = %(user_id)s "
+                "AND s.branch_thread_id = v.branch_thread_id AND s.path = v.path AND s.user_id = v.user_id "
+                "WHERE v.conversation_id = %(conversation_id)s AND v.branch_thread_id = %(branch)s "
+                "AND v.user_id = %(user_id)s "
                 "GROUP BY v.path, s.agent_seen_version "
                 "ORDER BY max(v.created_at) DESC, v.path LIMIT %(limit)s",
                 {"user_id": user_id, "conversation_id": conversation_id, "limit": MAX_TURN_DOCUMENTS},
@@ -115,12 +117,13 @@ class DocumentSeenStore(DocumentVersionStore):
         if not marks:
             return 0
         changed = 0
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             for path, version in marks.items():
                 cur = await conn.execute(
-                    "INSERT INTO conversation_file_seen (conversation_id, path, user_id, agent_seen_version) "
-                    "VALUES (%(conversation_id)s, %(path)s, %(user_id)s, %(version)s) "
-                    "ON CONFLICT (conversation_id, path) DO UPDATE SET "
+                    "INSERT INTO conversation_file_seen "
+                    "(conversation_id, branch_thread_id, path, user_id, agent_seen_version) "
+                    "VALUES (%(conversation_id)s, %(branch)s, %(path)s, %(user_id)s, %(version)s) "
+                    "ON CONFLICT (conversation_id, branch_thread_id, path) DO UPDATE SET "
                     "agent_seen_version = EXCLUDED.agent_seen_version, updated_at = now() "
                     "WHERE conversation_file_seen.user_id = EXCLUDED.user_id "
                     "AND conversation_file_seen.agent_seen_version < EXCLUDED.agent_seen_version",
@@ -136,7 +139,7 @@ class DocumentSeenStore(DocumentVersionStore):
         counts from nothing, so its agent versions are marked and a later user
         version stays unseen. Returns how many rows changed.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "WITH docs AS ("
                 "SELECT v.path, coalesce(s.agent_seen_version, 0) AS seen, max(v.version) AS latest, "
@@ -144,13 +147,15 @@ class DocumentSeenStore(DocumentVersionStore):
                 "AND v.version > coalesce(s.agent_seen_version, 0)) AS first_user "
                 "FROM conversation_file_versions v "
                 "LEFT JOIN conversation_file_seen s ON s.conversation_id = v.conversation_id "
-                "AND s.path = v.path AND s.user_id = v.user_id "
-                "WHERE v.conversation_id = %(conversation_id)s AND v.user_id = %(user_id)s "
+                "AND s.branch_thread_id = v.branch_thread_id AND s.path = v.path AND s.user_id = v.user_id "
+                "WHERE v.conversation_id = %(conversation_id)s AND v.branch_thread_id = %(branch)s "
+                "AND v.user_id = %(user_id)s "
                 "GROUP BY v.path, s.agent_seen_version), "
                 "target AS (SELECT path, seen, coalesce(first_user - 1, latest) AS version FROM docs) "
-                "INSERT INTO conversation_file_seen (conversation_id, path, user_id, agent_seen_version) "
-                "SELECT %(conversation_id)s, path, %(user_id)s, version FROM target WHERE version > seen "
-                "ON CONFLICT (conversation_id, path) DO UPDATE SET "
+                "INSERT INTO conversation_file_seen (conversation_id, branch_thread_id, path, user_id, "
+                "agent_seen_version) "
+                "SELECT %(conversation_id)s, %(branch)s, path, %(user_id)s, version FROM target WHERE version > seen "
+                "ON CONFLICT (conversation_id, branch_thread_id, path) DO UPDATE SET "
                 "agent_seen_version = EXCLUDED.agent_seen_version, updated_at = now() "
                 "WHERE conversation_file_seen.user_id = EXCLUDED.user_id "
                 "AND conversation_file_seen.agent_seen_version < EXCLUDED.agent_seen_version",
@@ -160,10 +165,11 @@ class DocumentSeenStore(DocumentVersionStore):
 
     async def seen_versions(self, user_id: str, conversation_id: str) -> dict[str, int]:
         """path → the agent's seen version, for every marked document (tests, diagnostics)."""
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "SELECT path, agent_seen_version FROM conversation_file_seen "
-                "WHERE conversation_id = %(conversation_id)s AND user_id = %(user_id)s ORDER BY path",
+                "WHERE conversation_id = %(conversation_id)s AND branch_thread_id = %(branch)s "
+                "AND user_id = %(user_id)s ORDER BY path",
                 {"user_id": user_id, "conversation_id": conversation_id},
             )
             rows: list[dict[str, Any]] = await cur.fetchall()

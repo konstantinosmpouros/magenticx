@@ -40,6 +40,7 @@ from engine.conversations.sources import (
 )
 from utils.http import encode_disposition
 from utils.citations import has_citation_markers
+from engine.conversations.file_branches import branch_of_path
 from engine.conversations.share_pdf import conversation_pdf_filename, render_conversation_pdf, select_scoped_messages
 from engine.conversations.conversations import (
     _preview,
@@ -183,7 +184,8 @@ async def forkConversation(
     # bytes — and so do the citation sources (plan 42), so the copied answers'
     # markers keep resolving. Independent and best-effort, so concurrent.
     await asyncio.gather(
-        copy_conversation_files(user_id, conversation_id, forked_conv.id),
+        copy_conversation_files(user_id, conversation_id, forked_conv.id, branch=branch_of_path(branch),
+                                answers=[message.id for message in branch if message.sender == "ai"]),
         copy_conversation_sources(user_id, conversation_id, forked_conv.id),
     )
 

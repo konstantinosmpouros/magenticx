@@ -1,7 +1,7 @@
 """Internal routes over a conversation's canvas documents (plan 44, Phase 4.1).
 
-The bridge's calls, internal-caller only, keyed by user and conversation like
-the files. A document's path is a query or body field (never part of the URL
+The bridge's calls, internal-caller only, keyed by user, conversation and
+branch (``branch_thread_id``, :mod:`utils.file_branch`) like the files. A document's path is a query or body field (never part of the URL
 path). The handlers only map the store's exceptions to statuses:
 
 * :class:`InvalidDocumentPath` / :class:`DocumentTooLarge` / :class:`DocumentPathTaken` → 422
@@ -27,6 +27,7 @@ from schema import (
     SaveDocumentVersionRequest,
     SaveDocumentVersionResponse,
 )
+from utils.file_branch import FileBranch, file_branch
 from utils.documents import (
     capture_documents,
     get_document_version,
@@ -60,17 +61,19 @@ def _invalid(exc: Exception) -> HTTPException:
 
 @router.get("", response_model=DocumentListResponse)
 async def list_conversation_documents(
-    user_id: str, conversation_id: str, limit: int = _LIMIT_QUERY
+    user_id: str, conversation_id: str, limit: int = _LIMIT_QUERY, branch: FileBranch = Depends(file_branch)
 ) -> DocumentListResponse:
-    """The conversation's documents at their latest version, newest first."""
-    return await list_documents(user_id, conversation_id, limit)
+    """The branch's documents at their latest version, newest first."""
+    return await list_documents(user_id, conversation_id, limit, branch=branch)
 
 
 @router.get("/latest", response_model=DocumentVersionContent)
-async def read_latest_document(user_id: str, conversation_id: str, path: str = _PATH_QUERY) -> DocumentVersionContent:
+async def read_latest_document(
+    user_id: str, conversation_id: str, path: str = _PATH_QUERY, branch: FileBranch = Depends(file_branch)
+) -> DocumentVersionContent:
     """The latest version with its text; a document without versions gets v1 first."""
     try:
-        return await latest_document(user_id, conversation_id, path)
+        return await latest_document(user_id, conversation_id, path, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid(exc) from exc
     except DocumentNotFound as exc:
@@ -79,22 +82,24 @@ async def read_latest_document(user_id: str, conversation_id: str, path: str = _
 
 @router.get("/versions", response_model=DocumentVersionsResponse)
 async def list_versions_of_document(
-    user_id: str, conversation_id: str, path: str = _PATH_QUERY, limit: int = _LIMIT_QUERY
+    user_id: str, conversation_id: str, path: str = _PATH_QUERY, limit: int = _LIMIT_QUERY,
+    branch: FileBranch = Depends(file_branch),
 ) -> DocumentVersionsResponse:
     """A document's versions without their text, newest first."""
     try:
-        return await list_document_versions(user_id, conversation_id, path, limit)
+        return await list_document_versions(user_id, conversation_id, path, limit, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid(exc) from exc
 
 
 @router.get("/versions/{version}", response_model=DocumentVersionContent)
 async def read_document_version(
-    user_id: str, conversation_id: str, version: int = Path(ge=1), path: str = _PATH_QUERY
+    user_id: str, conversation_id: str, version: int = Path(ge=1), path: str = _PATH_QUERY,
+    branch: FileBranch = Depends(file_branch),
 ) -> DocumentVersionContent:
     """One version with its text; 404 when the document has no such version."""
     try:
-        return await get_document_version(user_id, conversation_id, path, version)
+        return await get_document_version(user_id, conversation_id, path, version, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid(exc) from exc
     except DocumentNotFound as exc:
@@ -103,12 +108,13 @@ async def read_document_version(
 
 @router.post("/versions", response_model=SaveDocumentVersionResponse, status_code=status.HTTP_201_CREATED)
 async def save_version_of_document(
-    user_id: str, conversation_id: str, payload: SaveDocumentVersionRequest
+    user_id: str, conversation_id: str, payload: SaveDocumentVersionRequest,
+    branch: FileBranch = Depends(file_branch),
 ) -> SaveDocumentVersionResponse:
     """The user's save as the next version; 409 with the latest text on a stale base."""
     try:
         return await save_document_version(
-            user_id, conversation_id, payload.path, payload.base_version, payload.content
+            user_id, conversation_id, payload.path, payload.base_version, payload.content, branch=branch
         )
     except (InvalidDocumentPath, DocumentTooLarge, DocumentPathTaken) as exc:
         raise _invalid(exc) from exc
@@ -127,7 +133,8 @@ async def save_version_of_document(
 
 @router.post("/capture", response_model=CaptureDocumentsResponse)
 async def capture_presented_documents(
-    user_id: str, conversation_id: str, payload: CaptureDocumentsRequest
+    user_id: str, conversation_id: str, payload: CaptureDocumentsRequest,
+    branch: FileBranch = Depends(file_branch),
 ) -> CaptureDocumentsResponse:
     """Run end: the presented documents' current files as agent versions, where changed."""
-    return await capture_documents(user_id, conversation_id, payload.paths, payload.source_run_id)
+    return await capture_documents(user_id, conversation_id, payload.paths, payload.source_run_id, branch=branch)

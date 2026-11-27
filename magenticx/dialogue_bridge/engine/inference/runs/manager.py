@@ -35,6 +35,7 @@ from engine.inference.hitl import (
     stale_decisions_from_conflict,
 )
 from engine.inference.history import (
+    answers_up_to,
     nearest_committed_ai,
     prepare_inference_history,
     serialise_message_with_images_for_agent,
@@ -331,6 +332,9 @@ class InferenceRunManager:
                     fork_from = {
                         "thread_id": committed_ancestor.checkpoint_thread_id,
                         "checkpoint_id": committed_ancestor.checkpoint_id,
+                        # The answers up to the fork point: the new branch's
+                        # conversation files are cut there, like its state.
+                        "messages": answers_up_to(conversation.messages, committed_ancestor.id),
                     }
                 else:
                     payload_mode = "full_seed"

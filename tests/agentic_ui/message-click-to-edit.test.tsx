@@ -1,10 +1,17 @@
 // @vitest-environment happy-dom
 import type React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ChatMessage } from "@/features/chat/components/ChatMessage";
 import { TooltipProvider } from "@/shared/ui/tooltip";
+import { useWorkspaceStore } from "@/shared/stores/workspaceStore";
+
+const api = vi.hoisted(() => ({ transcribeDictation: vi.fn() }));
+vi.mock("@/shared/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/shared/lib/api")>()),
+  ...api,
+}));
 
 /**
  * A click on the user's own bubble opens it for editing (as in Cursor), and
@@ -141,6 +148,51 @@ describe("the editor", () => {
     expect(onChangeEditAttachments).toHaveBeenCalledWith({ keptIds: ["a1"], files: [file] });
     // The keyboard hint line is gone; the keys still work.
     expect(screen.queryByText(/to send/)).toBeNull();
+  });
+
+  it("cancels on a press outside the editor, not inside it, and has no Cancel button", () => {
+    const p = props({ isEditing: true, editingDraft: "Hello again", onCancelEdit: vi.fn() });
+    render(<ChatMessage {...p} />, { wrapper });
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+
+    fireEvent.pointerDown(screen.getByRole("textbox", { name: "Edit your message" }));
+    expect(p.onCancelEdit).not.toHaveBeenCalled();
+    fireEvent.pointerDown(document.body);
+    expect(p.onCancelEdit).toHaveBeenCalledTimes(1);
+  });
+
+  it("dictates into the draft: the transcript is appended", async () => {
+    // A recorder that hands over one chunk when stopped.
+    class FakeRecorder {
+      state = "inactive";
+      mimeType = "audio/webm";
+      ondataavailable: ((event: { data: Blob }) => void) | null = null;
+      onstop: (() => void) | null = null;
+      start() {
+        this.state = "recording";
+      }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob(["voice"], { type: "audio/webm" }) });
+        this.onstop?.();
+      }
+    }
+    vi.stubGlobal("MediaRecorder", FakeRecorder);
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [] })) },
+    });
+    useWorkspaceStore.setState({ userId: "u1" });
+    api.transcribeDictation.mockResolvedValue("  and more  ");
+    const p = props({ isEditing: true, editingDraft: "Hello", onChangeEditDraft: vi.fn() });
+    render(<ChatMessage {...p} />, { wrapper });
+
+    await act(async () => fireEvent.click(screen.getByRole("button", { name: "Dictate" })));
+    await act(async () => fireEvent.click(await screen.findByRole("button", { name: "Stop dictation" })));
+
+    await waitFor(() => expect(p.onChangeEditDraft).toHaveBeenCalledWith("Hello and more"));
+    expect(api.transcribeDictation).toHaveBeenCalledWith("u1", expect.any(Blob), expect.stringMatching(/\.webm$/));
+    vi.unstubAllGlobals();
   });
 
   it("cannot send an empty draft", () => {

@@ -1,5 +1,7 @@
 """Bridge ↔ agents: a conversation's files (plan 36)."""
-from pydantic import BaseModel, Field
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StringConstraints
 
 
 class OutputFileOut(BaseModel):
@@ -32,8 +34,14 @@ class ReapConversationRequest(BaseModel):
 
 
 class CopyConversationFilesRequest(BaseModel):
-    """Bridge → agents: give a fork its source's files (paths only, no bytes)."""
+    """Bridge → agents: give a fork the files of the branch it was forked from (paths only, no bytes).
+
+    ``source_branch_thread_id`` is that branch's checkpoint thread and
+    ``messages`` the answers on its path up to the fork point: the fork gets
+    each file as of the latest write one of them made."""
     target_conversation_id: str = Field(min_length=1, max_length=128)
+    source_branch_thread_id: str = Field(max_length=128)  # empty: the legacy branch
+    messages: list[Annotated[str, StringConstraints(min_length=1, max_length=64)]] = Field(max_length=5000)
 
 
 class CopyConversationFilesResponse(BaseModel):

@@ -304,6 +304,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
         <DocumentCanvas
           userId="user-1"
           conversationId="conv-1"
+          messageId="msg-1"
           path={PATH}
           revision="0"
           compact={false}

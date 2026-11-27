@@ -29,14 +29,15 @@ class ReapFailed(Exception):
     """Part of a conversation's runtime is still there; the bridge retries."""
 
 
-def _store() -> ConversationFileStore:
-    return ConversationFileStore(get_memory_pool())
+def _store(branch: str | None = None) -> ConversationFileStore:
+    """A file store; ``branch`` for what reads one branch, none for what spans them (the reap)."""
+    return ConversationFileStore(get_memory_pool(), branch=branch)
 
 
 async def read_output_files(
-    user_id: str, conversation_id: str, requested: list[str]
+    user_id: str, conversation_id: str, requested: list[str], *, branch: str
 ) -> tuple[list[dict[str, object]], list[str]]:
-    """The presented files, base64, for the bridge's run-end snapshot.
+    """The presented files of the run's ``branch``, base64, for the bridge's run-end snapshot.
 
     Only paths under ``/conversation/output/`` are ever returned — an upload or
     an offloaded tool result can never be turned into a deliverable. A path
@@ -56,7 +57,7 @@ async def read_output_files(
             wanted[virtual_path] = path
         else:
             missing.append(virtual_path)
-    found = await _store().read_many(user_id, conversation_id, sorted(set(wanted.values())))
+    found = await _store(branch).read_many(user_id, conversation_id, sorted(set(wanted.values())))
     files: list[dict[str, object]] = []
     for virtual_path, path in wanted.items():
         data = found.get(path)
@@ -76,9 +77,12 @@ async def read_output_files(
     return files, missing
 
 
-async def copy_conversation_files(user_id: str, source_id: str, target_id: str) -> int:
-    """A fork's files: the source's paths, naming the same blobs."""
-    return await _store().copy_conversation(user_id, source_id, target_id)
+async def copy_conversation_files(
+    user_id: str, source_id: str, target_id: str, *, source_branch: str, messages: list[str]
+) -> int:
+    """A fork's files: the forked branch's paths at the fork point, naming the same blobs."""
+    return await _store().copy_conversation(user_id, source_id, target_id, source_branch=source_branch,
+                                            messages=messages)
 
 
 async def reap_conversation(user_id: str, conversation_id: str, thread_ids: list[str]) -> None:

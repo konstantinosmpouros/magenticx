@@ -37,6 +37,14 @@ DOCS = "/users/u1/conversations/c1/documents"
 BRIEF = "/conversation/output/brief.md"
 
 
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
+
 @pytest.fixture(scope="module")
 def event_loop_policy():
     """psycopg's async mode cannot run on Windows' default Proactor loop."""
@@ -68,12 +76,12 @@ async def docs(pg_pool, agents_service, monkeypatch):
     """A DocumentVersionStore on the scratch database, also behind the routes."""
     versions = importlib.import_module("harness.conversation_files.versions")
     cipher = importlib.import_module("harness.conversation_files.cipher").FileCipher(None)
-    store = versions.DocumentVersionStore(pg_pool, cipher)
+    store = versions.DocumentVersionStore(pg_pool, cipher, branch="b1")
     await store.setup()
     await store.setup()  # idempotent: every boot runs it
-    monkeypatch.setattr(importlib.import_module("utils.documents"), "_store", lambda: store)
-    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, cipher)
-    monkeypatch.setattr(importlib.import_module("utils.documents"), "_seen_store", lambda: seen)
+    monkeypatch.setattr(importlib.import_module("utils.documents"), "_store", lambda *_: store)
+    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, cipher, branch="b1")
+    monkeypatch.setattr(importlib.import_module("utils.documents"), "_seen_store", lambda *_: seen)
     return store
 
 
@@ -106,7 +114,7 @@ async def test_a_path_is_canonicalised(agents_service):
 
 
 async def test_a_bad_path_is_a_422_before_any_query(client, internal_headers, agents_service, monkeypatch):
-    def no_store():
+    def no_store(*_):
         raise AssertionError("the store must not be reached")
 
     monkeypatch.setattr(importlib.import_module("utils.documents"), "_store", no_store)
@@ -239,8 +247,8 @@ async def test_a_fork_copies_the_versions_and_a_reap_drops_them(docs, pg_pool):
     await docs.capture("u1", "c1", [BRIEF], run_id=None)
     await docs.save_user_version("u1", "c1", BRIEF, base_version=1, content="v2")
 
-    assert await docs.copy_conversation("u1", "c1", "fork") == 1
-    assert await docs.copy_conversation("u1", "c1", "fork") == 0  # a retried copy changes nothing
+    assert await docs.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[]) == 1
+    assert await docs.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[]) == 0  # a retried copy changes nothing
     fork = await docs.list_versions("u1", "fork", BRIEF, limit=10)
     assert [(v.version, v.author) for v in fork] == [(2, "user"), (1, "agent")]
 
@@ -260,7 +268,8 @@ async def test_a_purge_takes_every_version_of_that_user_only(docs):
 
     counts = await docs.purge_user("u1")
 
-    assert counts == {"conversation_files": 1, "conversation_file_versions": 1, "conversation_file_seen": 0,
+    assert counts == {"conversation_files": 1, "conversation_file_writes": 1, "conversation_file_branches": 1,
+                      "conversation_file_versions": 1, "conversation_file_seen": 0,
                       "conversation_file_comments": 0, "conversation_file_suggestions": 0,
                       "conversation_file_blobs": 1}
     assert (await docs.latest("u2", "c2", BRIEF)).content == "theirs"

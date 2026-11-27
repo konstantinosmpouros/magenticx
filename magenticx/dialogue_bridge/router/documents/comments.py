@@ -18,6 +18,7 @@ from core.security.rate_limit import document_comment_rate_limit, document_read_
 from schema import DocumentCommentIn, DocumentCommentOut, DocumentCommentPatchIn, DocumentCommentsOut
 from schema.documents.documents import DOCUMENT_PATH_MAX_CHARS
 from utils.validators import validate_convId, validate_userId
+from engine.conversations.file_branches import FileBranch, document_branch
 from engine.documents.comments import (
     add_document_comment,
     delete_document_comment,
@@ -39,10 +40,11 @@ async def listDocumentComments(
     current_user: AuthUser = Depends(validate_userId),
     _rate_limited: None = Depends(document_read_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> DocumentCommentsOut:
     """Threads and replies, resolved ones included (the UI filters), oldest first."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    return await list_document_comments(current_user.id, current_conv.id, path)
+    return await list_document_comments(current_user.id, current_conv.id, path, branch=branch)
 
 
 @router.post("/{user_id}/{conversation_id}/documents/comments", response_model=DocumentCommentOut,
@@ -55,10 +57,11 @@ async def addDocumentComment(
     _csrf: None = Depends(require_csrf_protection),
     _rate_limited: None = Depends(document_comment_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> DocumentCommentOut:
     """A new thread on a passage (``anchor``) or a reply to one (``parentId``)."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    return await add_document_comment(current_user.id, current_conv.id, payload)
+    return await add_document_comment(current_user.id, current_conv.id, payload, branch=branch)
 
 
 @router.patch("/{user_id}/{conversation_id}/documents/comments/{comment_id}", response_model=DocumentCommentOut,
@@ -72,10 +75,11 @@ async def updateDocumentComment(
     _csrf: None = Depends(require_csrf_protection),
     _rate_limited: None = Depends(document_comment_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> DocumentCommentOut:
     """``status`` on a thread (resolving sets ``resolvedBy: "user"``), ``body`` on the user's own comment."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    return await update_document_comment(current_user.id, current_conv.id, str(comment_id), payload)
+    return await update_document_comment(current_user.id, current_conv.id, str(comment_id), payload, branch=branch)
 
 
 @router.delete("/{user_id}/{conversation_id}/documents/comments/{comment_id}",
@@ -88,8 +92,9 @@ async def deleteDocumentComment(
     _csrf: None = Depends(require_csrf_protection),
     _rate_limited: None = Depends(document_comment_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> Response:
     """The user's own comment; a thread goes with its replies."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    await delete_document_comment(current_user.id, current_conv.id, str(comment_id))
+    await delete_document_comment(current_user.id, current_conv.id, str(comment_id), branch=branch)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

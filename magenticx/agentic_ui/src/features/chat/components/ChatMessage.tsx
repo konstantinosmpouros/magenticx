@@ -1,6 +1,7 @@
-import { memo, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { Card } from "@/shared/ui/card";
+import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import type {
   Agent,
@@ -10,8 +11,9 @@ import type {
   ThinkingState,
 } from "@/shared/lib/types";
 import type { LucideIcon } from "lucide-react";
-import { Plus } from "lucide-react";
+import { Loader2, Plus, Square } from "lucide-react";
 import { HiArrowUp } from "react-icons/hi";
+import { VscMicFilled } from "react-icons/vsc";
 import StarBorder from "@/shared/ui/react_bits/star_border";
 import { AIActionBar, UserActionBar } from "./message_parts/ActionBars";
 import { answerGroupText, type AnswerGroupPlace } from "@/features/chat/lib/answerGroups";
@@ -20,6 +22,7 @@ import { useCitationSources } from "@/shared/lib/citations-context";
 import { MessageAttachments } from "./message_parts/MessageAttachments";
 import { MessageContent } from "./message_parts/Content";
 import { EditAttachmentStrip } from "./message_parts/EditAttachmentStrip";
+import { useEditDictation } from "@/features/chat/hooks/useEditDictation";
 import { CanvasEditChip } from "./message_parts/CanvasEditChip";
 import { PlanSidePanel, SubagentsSidePanel } from "./message_parts/RunSidePanels";
 import { AnswerSourcesPanel } from "./message_parts/AnswerSourcesPanel";
@@ -148,6 +151,32 @@ function ChatMessageView({
   const isTempUserMessage = isUser && String(message.id ?? "").startsWith("temp-");
   const reduceMotion = useReducedMotion();
   const editFileInputRef = useRef<HTMLInputElement>(null);
+  const editCardRef = useRef<HTMLDivElement>(null);
+  // Dictation appends to the draft as it is when the transcript lands.
+  const draftRef = useRef(editingDraft ?? "");
+  draftRef.current = editingDraft ?? "";
+  const dictation = useEditDictation(isEditing, (text) => {
+    const draft = draftRef.current;
+    onChangeEditDraft?.(draft && !/\s$/.test(draft) ? `${draft} ${text}` : `${draft}${text}`);
+  });
+
+  // A press outside the editor cancels the edit, as Esc does (there is no
+  // Cancel button). Not while it sends, and not a press in something the
+  // editor opened above the page (a menu, a tooltip, a dialog).
+  useEffect(() => {
+    if (!isEditing || !onCancelEdit) return;
+    const cancelOutside = (event: PointerEvent) => {
+      const card = editCardRef.current;
+      const target = event.target;
+      if (!card || editingBusy || !(target instanceof Node) || card.contains(target)) return;
+      if (target instanceof Element && target.closest("[data-radix-popper-content-wrapper],[role='dialog']")) {
+        return;
+      }
+      onCancelEdit();
+    };
+    document.addEventListener("pointerdown", cancelOutside);
+    return () => document.removeEventListener("pointerdown", cancelOutside);
+  }, [isEditing, editingBusy, onCancelEdit]);
   const [openRunPanel, setOpenRunPanel] = useState<"plan" | "subagents" | "sources" | null>(null);
   // Per-message agent for the AI action bar. With a resolver (main chat) we get
   // catalog name + icon; without one (e.g. shared view) we fall back to the
@@ -289,6 +318,7 @@ function ChatMessageView({
       ) : null}
 
       <MotionCard
+        ref={editCardRef}
         // Measured only when the edit state flips (layoutDependency): without
         // it every user bubble re-animated, stretched, on any reflow of the
         // list (a scrollbar, the composer growing, a streamed answer).
@@ -397,16 +427,33 @@ function ChatMessageView({
                     }}
                   />
                   <div className="ml-auto flex items-center gap-1.5">
+                    {/* Dictation, as in the composer: press to record, again to stop; the text is appended. */}
                     <Button
                       type="button"
-                      size="sm"
+                      size="icon"
                       variant="ghost"
-                      // The same hover surface as the message action bars.
-                      className="h-8 rounded-lg px-2.5 text-muted-foreground transition-colors hover:bg-[hsl(var(--hover-surface))] hover:text-foreground active:bg-[hsl(var(--hover-surface-strong))] focus-visible:bg-[hsl(var(--hover-surface-strong))]"
-                      disabled={editingBusy}
-                      onClick={() => onCancelEdit?.()}
+                      className={cn(
+                        "h-8 w-8 rounded-full text-muted-foreground [&_svg]:size-5 hover:bg-[hsl(var(--hover-surface))] hover:text-foreground active:bg-[hsl(var(--hover-surface-strong))] focus-visible:bg-[hsl(var(--hover-surface-strong))]",
+                        dictation.status === "recording" && "text-destructive hover:text-destructive",
+                      )}
+                      disabled={editingBusy || dictation.status === "transcribing" || !onChangeEditDraft}
+                      onClick={dictation.toggle}
+                      aria-label={dictation.status === "recording" ? "Stop dictation" : "Dictate"}
+                      title={
+                        dictation.status === "recording"
+                          ? "Stop and add the text"
+                          : dictation.status === "transcribing"
+                            ? "Transcribing..."
+                            : "Dictate"
+                      }
                     >
-                      Cancel
+                      {dictation.status === "recording" ? (
+                        <Square className="h-4 w-4 animate-pulse fill-current motion-reduce:animate-none" aria-hidden="true" />
+                      ) : dictation.status === "transcribing" ? (
+                        <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                      ) : (
+                        <VscMicFilled aria-hidden="true" />
+                      )}
                     </Button>
                     {/* The composer's own send button, so sending looks the same everywhere. */}
                     <StarBorder
@@ -416,7 +463,7 @@ function ChatMessageView({
                       className="shadow-elegant transition-smooth hover:opacity-90 active:scale-110 disabled:cursor-not-allowed disabled:opacity-40"
                       color="hsl(var(--primary))"
                       thickness={2}
-                      disabled={editingBusy || isStreaming || !editingDraft?.trim()}
+                      disabled={editingBusy || isStreaming || !editingDraft?.trim() || dictation.status !== "idle"}
                       onClick={() => onSubmitEdit?.()}
                       aria-label="Send the edited message"
                       title="Send the edited message"

@@ -44,7 +44,7 @@ def store(agents_service, monkeypatch):
     sources = importlib.import_module("harness.sources")
     url = "https://example.com/report"
     fake = _Store([sources.Source(id=sources.source_id(url), url=url, title="Report", snippet="s", tool="tavily-search")])
-    monkeypatch.setattr(importlib.import_module("utils.conversation_sources"), "_store", lambda: fake)
+    monkeypatch.setattr(importlib.import_module("utils.conversation_sources"), "_store", lambda *_: fake)
     return fake
 
 

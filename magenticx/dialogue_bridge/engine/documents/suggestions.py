@@ -31,6 +31,7 @@ from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
 from schema import DocumentSuggestionIn, DocumentSuggestionOut
 from engine.agents.service_urls import build_conversation_documents_url
+from engine.conversations.file_branches import FileBranch
 
 logger = get_logger(__name__)
 
@@ -103,19 +104,21 @@ def _validated(response: httpx.Response, *, operation: str) -> DocumentSuggestio
         )
 
 
-async def get_document_suggestion(user_id: str, conversation_id: str, path: str) -> DocumentSuggestionOut:
-    """The document's pending set; a 404 ``no_suggestion`` when it has none."""
+async def get_document_suggestion(
+    user_id: str, conversation_id: str, path: str, *, branch: FileBranch
+) -> DocumentSuggestionOut:
+    """The document's pending set on the branch; a 404 ``no_suggestion`` when it has none."""
     response = await _request("GET", _suggestion_url(user_id, conversation_id), operation="document_suggestion_get",
-                              params={"path": path})
+                              params={**branch.params(), "path": path})
     return _validated(response, operation="document_suggestion_get")
 
 
 async def put_document_suggestion(
-    user_id: str, conversation_id: str, payload: DocumentSuggestionIn
+    user_id: str, conversation_id: str, payload: DocumentSuggestionIn, *, branch: FileBranch
 ) -> DocumentSuggestionOut | None:
     """Save the pending set; None when the agents service cleared it (the proposed text equals the base)."""
     response = await _request("PUT", _suggestion_url(user_id, conversation_id), operation="document_suggestion_put",
-                              json_body=payload.upstream())
+                              params=branch.params(), json_body=payload.upstream())
     if response.status_code == status.HTTP_204_NO_CONTENT:
         logger.info("document_suggestion_cleared", "Cleared the pending suggestions on a canvas document",
                     conversation_id=conversation_id)
@@ -126,9 +129,11 @@ async def put_document_suggestion(
     return saved
 
 
-async def delete_document_suggestion(user_id: str, conversation_id: str, path: str) -> None:
+async def delete_document_suggestion(
+    user_id: str, conversation_id: str, path: str, *, branch: FileBranch
+) -> None:
     """Drop the pending set (idempotent upstream)."""
     await _request("DELETE", _suggestion_url(user_id, conversation_id), operation="document_suggestion_delete",
-                   params={"path": path})
+                   params={**branch.params(), "path": path})
     logger.info("document_suggestion_deleted", "Dropped the pending suggestions on a canvas document",
                 conversation_id=conversation_id)

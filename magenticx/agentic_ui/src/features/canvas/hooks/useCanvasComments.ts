@@ -17,6 +17,7 @@ import type {
 } from "@/shared/lib/types";
 
 import { canvasCommentsKey } from "../lib/queryKeys";
+import { useCanvasBranchMessage } from "../lib/branch";
 
 /** The id a comment carries until the bridge answers with its own. */
 const LOCAL_PREFIX = "local-";
@@ -53,17 +54,18 @@ function toThreads(comments: CanvasComment[]): {
  * of it works while reading too.
  */
 export function useCanvasComments(userId: string, conversationId: string, path: string) {
+  const messageId = useCanvasBranchMessage();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const key = useMemo(
-    () => canvasCommentsKey(userId, conversationId, path),
-    [userId, conversationId, path],
+    () => canvasCommentsKey(userId, conversationId, messageId, path),
+    [userId, conversationId, messageId, path],
   );
   const counter = useRef(0);
 
   const query = useQuery({
     queryKey: key,
-    queryFn: ({ signal }) => listDocumentComments(userId, conversationId, path, signal),
+    queryFn: ({ signal }) => listDocumentComments(userId, conversationId, messageId, path, signal),
     // Re-read on every mount, as before the app's 30 s default (plan 45): an
     // agent run may have answered or resolved threads while the canvas was closed.
     staleTime: 0,
@@ -117,7 +119,7 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
       };
       edit((list) => [...list, local]);
       try {
-        const saved = await createDocumentComment(userId, conversationId, { path, ...draft });
+        const saved = await createDocumentComment(userId, conversationId, messageId, { path, ...draft });
         settle(local.id, saved);
         return saved;
       } catch (error) {
@@ -126,7 +128,7 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
         return null;
       }
     },
-    [edit, settle, toast, userId, conversationId, path],
+    [edit, settle, toast, userId, conversationId, messageId, path],
   );
 
   /** Starts a thread on a passage of `version`; resolves to the saved thread, or null when refused. */
@@ -162,14 +164,14 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
         ),
       );
       try {
-        const saved = await updateDocumentComment(userId, conversationId, comment.id, change);
+        const saved = await updateDocumentComment(userId, conversationId, messageId, comment.id, change);
         edit((list) => list.map((item) => (item.id === saved.id ? saved : item)));
       } catch (error) {
         edit((list) => list.map((item) => (item.id === before.id ? before : item)));
         toastError(toast, failure, error);
       }
     },
-    [edit, toast, userId, conversationId],
+    [edit, toast, userId, conversationId, messageId],
   );
 
   const setStatus = useCallback(
@@ -195,7 +197,7 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
       const removed = (queryClient.getQueryData<CanvasComment[]>(key) ?? []).filter(gone);
       edit((list) => list.filter((item) => !gone(item)));
       try {
-        await deleteDocumentComment(userId, conversationId, comment.id);
+        await deleteDocumentComment(userId, conversationId, messageId, comment.id);
       } catch (error) {
         edit((list) =>
           [...list.filter((item) => !gone(item)), ...removed].sort((a, b) =>
@@ -205,7 +207,7 @@ export function useCanvasComments(userId: string, conversationId: string, path: 
         toastError(toast, "Couldn't delete the comment", error);
       }
     },
-    [edit, queryClient, key, toast, userId, conversationId],
+    [edit, queryClient, key, toast, userId, conversationId, messageId],
   );
 
   /**

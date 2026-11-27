@@ -41,6 +41,7 @@ from core.logging import get_context, get_logger
 from core.security.internal_trust import internal_service_headers
 from core.security.tls import get_httpx_client_cert, get_httpx_verify
 from core.settings import settings
+from engine.conversations.file_branches import FileBranch, run_file_branch
 from engine.agents.service_urls import (
     build_conversation_documents_url,
     build_conversation_files_url,
@@ -76,14 +77,14 @@ def canvas_document_paths(presented: list[dict[str, Any]]) -> list[str]:
     return found
 
 
-async def fetch_output_files(url: str, paths: list[str]) -> list[dict[str, Any]]:
-    """The named files, base64. Paths the agent could not return are simply absent."""
+async def fetch_output_files(url: str, paths: list[str], branch: FileBranch) -> list[dict[str, Any]]:
+    """The named files of the run's branch, base64. Paths the agent could not return are simply absent."""
     async with httpx.AsyncClient(
         timeout=settings.http.inference_timeout, verify=get_httpx_verify(), cert=get_httpx_client_cert()
     ) as client:
         resp = await client.get(
             url,
-            params=[("paths", path) for path in paths],
+            params=[*branch.params().items(), *(("paths", path) for path in paths)],
             headers=internal_service_headers(get_context().get("request_id")),
         )
         resp.raise_for_status()
@@ -98,7 +99,7 @@ async def _store_fetched(
     Returns (stored, skipped)."""
     paths = list(meta_by_path)
     try:
-        fetched = await fetch_output_files(url, paths)
+        fetched = await fetch_output_files(url, paths, run_file_branch(run))
     except (httpx.HTTPError, ValueError) as exc:
         logger.warning("output_capture_batch_failed", "Could not fetch the presented files",
                        run_id=run.id, files=len(paths), error_type=type(exc).__name__)
@@ -213,6 +214,7 @@ async def capture_canvas_documents(
         ) as client:
             resp = await client.post(
                 url,
+                params=run_file_branch(run).params(),
                 json={"paths": document_paths, "source_run_id": str(run.id)},
                 headers=internal_service_headers(get_context().get("request_id")),
             )

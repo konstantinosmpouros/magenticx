@@ -23,6 +23,7 @@ from core.security.rate_limit import document_read_rate_limit, document_suggesti
 from schema import DocumentSuggestionIn, DocumentSuggestionOut
 from schema.documents.documents import DOCUMENT_PATH_MAX_CHARS
 from utils.validators import validate_convId, validate_userId
+from engine.conversations.file_branches import FileBranch, document_branch
 from engine.documents.suggestions import (
     delete_document_suggestion,
     get_document_suggestion,
@@ -44,10 +45,11 @@ async def getDocumentSuggestion(
     current_user: AuthUser = Depends(validate_userId),
     _rate_limited: None = Depends(document_read_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> DocumentSuggestionOut:
     """The proposed text and the version it was made on."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    return await get_document_suggestion(current_user.id, current_conv.id, path)
+    return await get_document_suggestion(current_user.id, current_conv.id, path, branch=branch)
 
 
 @router.put(_ROUTE, response_model=DocumentSuggestionOut, summary="Save a canvas document's pending suggestions",
@@ -60,10 +62,11 @@ async def putDocumentSuggestion(
     _csrf: None = Depends(require_csrf_protection),
     _rate_limited: None = Depends(document_suggestion_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> DocumentSuggestionOut | Response:
     """The whole pending set (proposed text on ``baseVersion``) replaces the stored one."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    saved = await put_document_suggestion(current_user.id, current_conv.id, payload)
+    saved = await put_document_suggestion(current_user.id, current_conv.id, payload, branch=branch)
     if saved is None:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     return saved
@@ -78,8 +81,9 @@ async def deleteDocumentSuggestion(
     _csrf: None = Depends(require_csrf_protection),
     _rate_limited: None = Depends(document_suggestion_rate_limit),
     current_conv: ConversationTable = Depends(validate_convId),
+    branch: FileBranch = Depends(document_branch),
 ) -> Response:
     """Reject all, or the tail of an accept — never a new version."""
     set_context(user_id=user_id, conversation_id=conversation_id)
-    await delete_document_suggestion(current_user.id, current_conv.id, path)
+    await delete_document_suggestion(current_user.id, current_conv.id, path, branch=branch)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

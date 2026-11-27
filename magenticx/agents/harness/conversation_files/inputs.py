@@ -2,10 +2,12 @@
 
 The uploads are the bridge's attachments in ``chat_db``; the bridge validated
 them, caps them, and shares, forks and exports them. So nothing is copied here:
-the bridge lists every upload of the conversation — every turn, every branch —
-under the stable name it gave the file at upload (``attachments.workspace_name``),
+the bridge lists the uploads of the run's branch — every turn on the path from
+the message the run answers up to the root, never a sibling branch's — under
+the stable name it gave the file at upload (``attachments.workspace_name``),
 and serves the bytes on demand. A file from the first turn is as readable on
-the fiftieth as it was then, under the name the history shows.
+the fiftieth as it was then, under the name the history shows; a file an edit
+or a retry left behind is not.
 
 The list is fetched once per run (uploads only arrive with a new user message,
 which is a new run). Bytes are cached process-wide by content hash: content
@@ -110,21 +112,35 @@ def _input_file(item: dict[str, Any]) -> InputFile:
 
 
 class InputView:
-    """One run's read-only view of its conversation's uploads."""
+    """One run's read-only view of the uploads on its branch.
 
-    def __init__(self, user_id: str, conversation_id: str) -> None:
+    ``message_id`` is the message the run answers (a task's: its
+    orchestrator's); the bridge walks up from it. A run without one sees no
+    uploads rather than every branch's.
+    """
+
+    def __init__(self, user_id: str, conversation_id: str, message_id: str | None) -> None:
         self._user_id = user_id
         self._conversation_id = conversation_id
+        self._message_id = message_id
         self._files: dict[str, InputFile] | None = None
+
+    def _params(self) -> dict[str, str]:
+        return {"user_id": self._user_id, "message_id": self._message_id or ""}
 
     async def files(self) -> dict[str, InputFile]:
         """Every upload by name. Fetched on first use, then kept for the run."""
         if self._files is not None:
             return self._files
+        if not self._message_id:
+            logger.warning("conversation_input_manifest_unavailable",
+                           "The run names no message, so it sees no uploads", status=None)
+            self._files = {}
+            return self._files
         started = time.monotonic()
         try:
             response = await _bridge_get(
-                f"/{self._conversation_id}/input-files", {"user_id": self._user_id}
+                f"/{self._conversation_id}/input-files", self._params()
             )
             if response.status_code == httpx.codes.NOT_FOUND:
                 # A bridge that predates the endpoint, or a conversation it no
@@ -158,7 +174,7 @@ class InputView:
         started = time.monotonic()
         try:
             response = await _bridge_get(
-                f"/{self._conversation_id}/input-files/{entry.attachment_id}", {"user_id": self._user_id}
+                f"/{self._conversation_id}/input-files/{entry.attachment_id}", self._params()
             )
             response.raise_for_status()
         except httpx.HTTPError as exc:

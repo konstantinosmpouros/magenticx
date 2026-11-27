@@ -44,7 +44,7 @@ class FakeAgents:
         self.fetches: list[list[str]] = []
         self.urls: list[str] = []
 
-    async def fetch(self, url, paths):
+    async def fetch(self, url, paths, branch):
         self.urls.append(url)
         self.fetches.append(list(paths))
         return [
@@ -151,7 +151,7 @@ async def test_fetches_are_batched(agents, patch_session_local, session_factory,
 
 
 async def test_failures_never_fail_the_run(agents, patch_session_local, session_factory, seeded_user, seeded_agent, monkeypatch):
-    async def broken_fetch(url, paths):
+    async def broken_fetch(url, paths, branch):
         raise httpx.ConnectError("agents down")
 
     monkeypatch.setattr(oc, "fetch_output_files", broken_fetch)
@@ -169,8 +169,8 @@ async def test_bad_base64_is_skipped(agents, patch_session_local, session_factor
     agents.files = {"/conversation/output/ok.txt": b"ok", "/conversation/output/bad.txt": b"x"}
     real_fetch = agents.fetch
 
-    async def corrupting_fetch(url, paths):
-        files = await real_fetch(url, paths)
+    async def corrupting_fetch(url, paths, branch):
+        files = await real_fetch(url, paths, branch)
         for f in files:
             if f["path"].endswith("bad.txt"):
                 f["base64"] = "%%% not base64"

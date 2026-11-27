@@ -62,6 +62,7 @@ from pydantic import BaseModel, Field
 from core.logging import get_logger
 from harness.canvas.fence import document_name, inline_code
 from harness.canvas.notes import thread_text
+from harness.conversation_files import ConversationFiles
 from harness.conversation_files.comments import (
     LIST_MAX_THREADS,
     DocumentCommentStore,
@@ -70,7 +71,6 @@ from harness.conversation_files.comments import (
     ThreadListing,
 )
 from harness.conversation_files.versions import InvalidDocumentPath, document_path
-from harness.memory import get_memory_pool
 
 logger = get_logger(__name__)
 
@@ -90,8 +90,9 @@ _LEAD = (
 )
 
 
-def _store() -> DocumentCommentStore:
-    return DocumentCommentStore(get_memory_pool())
+def _store(files: ConversationFiles) -> DocumentCommentStore:
+    """The comment store of the run's branch."""
+    return files.store.sibling(DocumentCommentStore)
 
 
 def _tag(thread: ListedThread) -> str:
@@ -162,8 +163,9 @@ class _ListArgs(BaseModel):
     )
 
 
-def build_list_comments_tool(*, user_id: str, conversation_id: str) -> StructuredTool:
-    """``list_comments`` bound to this run's conversation. Read-only: no write budget."""
+def build_list_comments_tool(*, files: ConversationFiles) -> StructuredTool:
+    """``list_comments`` bound to this run's conversation branch. Read-only: no write budget."""
+    user_id, conversation_id = files.user_id, files.conversation_id
 
     async def _list(path: str | None = None, status: str = "open", limit: int = DEFAULT_LIST_LIMIT) -> str:
         canonical: str | None = None
@@ -175,7 +177,7 @@ def build_list_comments_tool(*, user_id: str, conversation_id: str) -> Structure
         if status not in _STATUSES:
             return "Could not list comments: 'status' is 'open', 'resolved' or 'all'."
         bounded = max(1, min(int(limit), LIST_MAX_THREADS))
-        listing = await _store().list_threads(user_id, conversation_id, path=canonical, status=status,
+        listing = await _store(files).list_threads(user_id, conversation_id, path=canonical, status=status,
                                               limit=bounded)
         logger.info("canvas_comment_tool_read", "The agent read the comment threads",
                     tool=LIST_TOOL_NAME, status=status, scoped=canonical is not None,

@@ -7,6 +7,10 @@
  * otherwise, never an existence leak) and passes the agents service's answer
  * through. The document's path travels as a query parameter, never in the URL
  * path, so a nested path needs no escaping rules of its own.
+ *
+ * Documents are kept per branch of the conversation: every call names
+ * `messageId`, a message of the branch on screen, and the bridge resolves the
+ * branch from it (the browser never names one itself).
  */
 import type {
   CanvasComment,
@@ -37,20 +41,23 @@ import { CONVERSATIONS_BASE_PATH } from "./paths";
 const documentsUrl = (
   userId: string,
   conversationId: string,
+  messageId: string,
   suffix: string,
   path?: string,
 ): string => {
   const base = `${CONVERSATIONS_BASE_PATH}/${encodeURIComponent(userId)}/${encodeURIComponent(conversationId)}/documents${suffix}`;
-  return path === undefined ? base : `${base}?${new URLSearchParams({ path })}`;
+  const query = new URLSearchParams(path === undefined ? { messageId } : { messageId, path });
+  return `${base}?${query}`;
 };
 
 /** The conversation's canvas documents, latest version each, newest first. */
 export async function listConversationDocuments(
   userId: string,
   conversationId: string,
+  messageId: string,
   signal?: AbortSignal,
 ): Promise<CanvasDocumentSummary[]> {
-  return requestJson(documentsUrl(userId, conversationId, ""), {
+  return requestJson(documentsUrl(userId, conversationId, messageId, ""), {
     schema: CanvasDocumentListSchema,
     fallbackMessage: "Failed to load the conversation's documents",
     signal,
@@ -66,10 +73,11 @@ export async function listConversationDocuments(
 export async function getLatestDocument(
   userId: string,
   conversationId: string,
+  messageId: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<CanvasDocumentVersion> {
-  const data = await requestJson(documentsUrl(userId, conversationId, "/latest", path), {
+  const data = await requestJson(documentsUrl(userId, conversationId, messageId, "/latest", path), {
     schema: CanvasDocumentVersionSchema,
     fallbackMessage: "Failed to load the document",
     signal,
@@ -81,10 +89,11 @@ export async function getLatestDocument(
 export async function listDocumentVersions(
   userId: string,
   conversationId: string,
+  messageId: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<CanvasDocumentVersionMeta[]> {
-  const data = await requestJson(documentsUrl(userId, conversationId, "/versions", path), {
+  const data = await requestJson(documentsUrl(userId, conversationId, messageId, "/versions", path), {
     schema: CanvasDocumentVersionsSchema,
     fallbackMessage: "Failed to load the document's versions",
     signal,
@@ -104,11 +113,12 @@ export async function listDocumentVersions(
 export async function saveDocumentVersion(
   userId: string,
   conversationId: string,
+  messageId: string,
   save: { path: string; baseVersion: number; content: string },
   signal?: AbortSignal,
 ): Promise<CanvasSaveResult> {
   try {
-    const data = await requestJson(documentsUrl(userId, conversationId, "/versions"), {
+    const data = await requestJson(documentsUrl(userId, conversationId, messageId, "/versions"), {
       method: "POST",
       csrf: true,
       body: { path: save.path, base_version: save.baseVersion, content: save.content },
@@ -139,10 +149,11 @@ const SUGGESTION_ERRORS = { 429: "Saving too often. Wait a moment, then try agai
 export async function getDocumentSuggestion(
   userId: string,
   conversationId: string,
+  messageId: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<CanvasDocumentSuggestion | null> {
-  const res = await requestRaw(documentsUrl(userId, conversationId, "/suggestion", path), {
+  const res = await requestRaw(documentsUrl(userId, conversationId, messageId, "/suggestion", path), {
     fallbackMessage: "Failed to load the suggestions",
     ignoreStatuses: [404],
     signal,
@@ -160,9 +171,10 @@ export async function getDocumentSuggestion(
 export async function putDocumentSuggestion(
   userId: string,
   conversationId: string,
+  messageId: string,
   set: { path: string; baseVersion: number; content: string },
 ): Promise<CanvasDocumentSuggestion | null> {
-  const res = await requestRaw(documentsUrl(userId, conversationId, "/suggestion"), {
+  const res = await requestRaw(documentsUrl(userId, conversationId, messageId, "/suggestion"), {
     method: "PUT",
     csrf: true,
     body: { path: set.path, baseVersion: set.baseVersion, content: set.content },
@@ -177,9 +189,10 @@ export async function putDocumentSuggestion(
 export async function deleteDocumentSuggestion(
   userId: string,
   conversationId: string,
+  messageId: string,
   path: string,
 ): Promise<void> {
-  await requestVoid(documentsUrl(userId, conversationId, "/suggestion", path), {
+  await requestVoid(documentsUrl(userId, conversationId, messageId, "/suggestion", path), {
     method: "DELETE",
     csrf: true,
     fallbackMessage: "Failed to discard the suggestions",
@@ -191,12 +204,13 @@ export async function deleteDocumentSuggestion(
 export async function getDocumentVersion(
   userId: string,
   conversationId: string,
+  messageId: string,
   path: string,
   version: number,
   signal?: AbortSignal,
 ): Promise<CanvasDocumentVersion> {
   const data = await requestJson(
-    documentsUrl(userId, conversationId, `/versions/${encodeURIComponent(String(version))}`, path),
+    documentsUrl(userId, conversationId, messageId, `/versions/${encodeURIComponent(String(version))}`, path),
     {
       schema: CanvasDocumentVersionSchema,
       fallbackMessage: "Failed to load this version of the document",
@@ -224,10 +238,11 @@ const COMMENT_ERRORS = { 429: "Commenting too often. Wait a moment, then try aga
 export async function listDocumentComments(
   userId: string,
   conversationId: string,
+  messageId: string,
   path: string,
   signal?: AbortSignal,
 ): Promise<CanvasComment[]> {
-  return requestJson(documentsUrl(userId, conversationId, "/comments", path), {
+  return requestJson(documentsUrl(userId, conversationId, messageId, "/comments", path), {
     schema: CanvasCommentListSchema,
     fallbackMessage: "Failed to load the comments",
     signal,
@@ -242,9 +257,10 @@ export async function listDocumentComments(
 export async function createDocumentComment(
   userId: string,
   conversationId: string,
+  messageId: string,
   draft: CanvasCommentDraft,
 ): Promise<CanvasComment> {
-  const data = await requestJson(documentsUrl(userId, conversationId, "/comments"), {
+  const data = await requestJson(documentsUrl(userId, conversationId, messageId, "/comments"), {
     method: "POST",
     csrf: true,
     body: {
@@ -265,11 +281,12 @@ export async function createDocumentComment(
 export async function updateDocumentComment(
   userId: string,
   conversationId: string,
+  messageId: string,
   commentId: string,
   patch: CanvasCommentPatch,
 ): Promise<CanvasComment> {
   const data = await requestJson(
-    documentsUrl(userId, conversationId, `/comments/${encodeURIComponent(commentId)}`),
+    documentsUrl(userId, conversationId, messageId, `/comments/${encodeURIComponent(commentId)}`),
     {
       method: "PATCH",
       csrf: true,
@@ -286,10 +303,11 @@ export async function updateDocumentComment(
 export async function deleteDocumentComment(
   userId: string,
   conversationId: string,
+  messageId: string,
   commentId: string,
 ): Promise<void> {
   await requestVoid(
-    documentsUrl(userId, conversationId, `/comments/${encodeURIComponent(commentId)}`),
+    documentsUrl(userId, conversationId, messageId, `/comments/${encodeURIComponent(commentId)}`),
     {
       method: "DELETE",
       csrf: true,
@@ -320,10 +338,11 @@ const EXPORT_ACCEPT: Record<CanvasExportFormat, string> = {
 export async function exportDocument(
   userId: string,
   conversationId: string,
+  messageId: string,
   request: { path: string; format: CanvasExportFormat; version?: number },
   fallbackName: string,
 ): Promise<CanvasExportFile> {
-  const res = await requestRaw(documentsUrl(userId, conversationId, "/export"), {
+  const res = await requestRaw(documentsUrl(userId, conversationId, messageId, "/export"), {
     method: "POST",
     csrf: true,
     accept: EXPORT_ACCEPT[request.format],

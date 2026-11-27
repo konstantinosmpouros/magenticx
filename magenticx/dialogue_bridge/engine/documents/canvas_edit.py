@@ -35,6 +35,7 @@ from pydantic import ValidationError
 from core.database import MessageTable
 from core.logging import get_logger
 from schema import CanvasEditIn, CanvasEditOut, MessageIn
+from engine.conversations.file_branches import FileBranch
 from engine.documents.comments import get_document_comment
 from engine.documents.documents import list_document_versions
 
@@ -60,8 +61,11 @@ def refuse_without_conversation(message: MessageIn | None) -> None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_NEEDS_CONVERSATION)
 
 
-async def check_canvas_edit(user_id: str, conversation_id: str, edit: CanvasEditIn) -> None:
-    """Refuse a canvas edit that does not name a version of one of this conversation's documents.
+async def check_canvas_edit(user_id: str, conversation_id: str, edit: CanvasEditIn, *, branch: FileBranch) -> None:
+    """Refuse a canvas edit that does not name a version of one of this branch's documents.
+
+    ``branch`` is the branch the new message is sent on (the documents the
+    run will see are that branch's).
 
     The caller has already established that ``conversation_id`` is the
     caller's (``validate_convId_full``). Asks the agents service for the
@@ -76,7 +80,7 @@ async def check_canvas_edit(user_id: str, conversation_id: str, edit: CanvasEdit
     than a thread, a resolved thread or one on another document is a 422
     ``invalid_canvas_edit``.
     """
-    history = await list_document_versions(user_id, conversation_id, edit.path, 1)
+    history = await list_document_versions(user_id, conversation_id, edit.path, 1, branch=branch)
     if history.path != edit.path:
         # The agents service canonicalised it (``//``, a trailing ``/``): the
         # UI always sends the canonical path, so anything else is refused
@@ -87,17 +91,17 @@ async def check_canvas_edit(user_id: str, conversation_id: str, edit: CanvasEdit
     if edit.version > history.versions[0].version:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=_BAD_VERSION)
     if edit.commentId is not None:
-        await _check_thread(user_id, conversation_id, edit)
+        await _check_thread(user_id, conversation_id, edit, branch)
     logger.info("canvas_edit_checked", "Checked a canvas edit against the conversation's document",
                 conversation_id=conversation_id, version=edit.version,
                 latest_version=history.versions[0].version, preset=edit.preset,
                 from_comment=edit.commentId is not None)
 
 
-async def _check_thread(user_id: str, conversation_id: str, edit: CanvasEditIn) -> None:
+async def _check_thread(user_id: str, conversation_id: str, edit: CanvasEditIn, branch: FileBranch) -> None:
     """422 unless ``edit.commentId`` is an open thread of this conversation on ``edit.path``."""
     try:
-        comment = await get_document_comment(user_id, conversation_id, str(edit.commentId))
+        comment = await get_document_comment(user_id, conversation_id, str(edit.commentId), branch=branch)
     except HTTPException as exc:
         if exc.status_code != status.HTTP_404_NOT_FOUND:
             raise  # 503 / 502: the agents service could not answer

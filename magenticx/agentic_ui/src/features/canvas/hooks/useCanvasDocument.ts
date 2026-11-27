@@ -10,6 +10,7 @@ import {
 import { ApiError } from "@/shared/lib/http";
 
 import { canvasContentKey, canvasKey, canvasListKey, canvasVersionsKey } from "../lib/queryKeys";
+import { useCanvasBranchMessage } from "../lib/branch";
 
 /** A 404 is an answer (the document is gone), not a fault worth retrying. */
 const isNotFound = (error: unknown): boolean => error instanceof ApiError && error.status === 404;
@@ -36,6 +37,7 @@ export function useCanvasDocument(
   path: string,
   revision: string,
 ) {
+  const messageId = useCanvasBranchMessage();
   const queryClient = useQueryClient();
   // The picked version and "the version list was asked for" belong to one
   // document: held with its key, so opening another one starts fresh on its
@@ -47,7 +49,8 @@ export function useCanvasDocument(
   const versionsWanted = versionsFor === docKey;
 
   // A new turn may have written a new version: re-read what is cached. Not on
-  // mount — the queries below are fetching for the first time already.
+  // mount — the queries below are fetching for the first time already. Another
+  // branch needs no re-read: its message is in the keys, so it is its own query.
   const seenRevision = useRef(revision);
   useEffect(() => {
     if (seenRevision.current === revision) return;
@@ -61,23 +64,28 @@ export function useCanvasDocument(
   // closed must show on reopen. (`revision` only catches changes while open.)
   // Content read by version number never changes, so it keeps the default.
   const documents = useQuery({
-    queryKey: canvasListKey(userId, conversationId),
-    queryFn: ({ signal }) => listConversationDocuments(userId, conversationId, signal),
+    queryKey: canvasListKey(userId, conversationId, messageId),
+    queryFn: ({ signal }) => listConversationDocuments(userId, conversationId, messageId, signal),
     retry: retryUnlessGone,
     staleTime: 0,
+    // A new message (or another branch) is a new key: keep the shown list meanwhile.
+    placeholderData: (previous) => previous,
   });
 
   const latest = useQuery({
-    queryKey: canvasContentKey(userId, conversationId, path, "latest"),
-    queryFn: ({ signal }) => getLatestDocument(userId, conversationId, path, signal),
+    queryKey: canvasContentKey(userId, conversationId, messageId, path, "latest"),
+    queryFn: ({ signal }) => getLatestDocument(userId, conversationId, messageId, path, signal),
     retry: retryUnlessGone,
     staleTime: 0,
+    // Each turn moves the branch's message, so the key: the editor keeps the
+    // document it shows until the read for the new key lands.
+    placeholderData: (previous) => (previous?.path === path ? previous : undefined),
   });
 
   const older = useQuery({
-    queryKey: canvasContentKey(userId, conversationId, path, pickedVersion ?? 0),
+    queryKey: canvasContentKey(userId, conversationId, messageId, path, pickedVersion ?? 0),
     queryFn: ({ signal }) =>
-      getDocumentVersion(userId, conversationId, path, pickedVersion ?? 0, signal),
+      getDocumentVersion(userId, conversationId, messageId, path, pickedVersion ?? 0, signal),
     enabled: pickedVersion !== null,
     retry: retryUnlessGone,
     // Switching versions keeps the shown text until the next one arrives.
@@ -85,8 +93,8 @@ export function useCanvasDocument(
   });
 
   const versions = useQuery({
-    queryKey: canvasVersionsKey(userId, conversationId, path),
-    queryFn: ({ signal }) => listDocumentVersions(userId, conversationId, path, signal),
+    queryKey: canvasVersionsKey(userId, conversationId, messageId, path),
+    queryFn: ({ signal }) => listDocumentVersions(userId, conversationId, messageId, path, signal),
     enabled: versionsWanted,
     retry: retryUnlessGone,
     staleTime: 0,
@@ -110,9 +118,9 @@ export function useCanvasDocument(
   const refreshVersions = useCallback(() => {
     setVersionsFor(docKey);
     void queryClient.invalidateQueries({
-      queryKey: canvasVersionsKey(userId, conversationId, path),
+      queryKey: canvasVersionsKey(userId, conversationId, messageId, path),
     });
-  }, [docKey, queryClient, userId, conversationId, path]);
+  }, [docKey, queryClient, userId, conversationId, messageId, path]);
 
   /**
    * Re-read the conversation's documents now, resolving once they are in

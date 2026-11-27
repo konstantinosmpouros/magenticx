@@ -37,6 +37,7 @@ from core.database import (
     MessageTable,
 )
 from core.settings import settings
+from engine.conversations.file_branches import FileBranch, document_branch
 
 BRIEF = "/conversation/output/brief.md"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -82,6 +83,16 @@ async def _attachment(session_factory, conversation_id: str, *, file_name: str =
         await s.commit()
         return attachment.id
 
+
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Document routes resolve the branch from a message of the conversation;
+    these tests are about the pass-through, so the branch is given: one of
+    its answers on thread b1."""
+    if "app" in request.fixturenames or "client" in request.fixturenames:
+        app = request.getfixturevalue("app")
+        app.dependency_overrides[document_branch] = lambda: FileBranch(thread_id="b1", message_id="m1")
 
 @pytest.fixture
 async def conv(session_factory, seeded_user, seeded_agent):

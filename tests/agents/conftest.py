@@ -781,7 +781,7 @@ class MemoryFileStore:
             self._put(user_id, conversation_id, path, updated, agent_slug)
         return True
 
-    async def copy_conversation(self, user_id, source_id, target_id):
+    async def copy_conversation(self, user_id, source_id, target_id, *, source_branch="", messages=()):
         copied = 0
         for path, entry in self._scope(user_id, source_id).items():
             if (target_id, path) not in self.rows:
@@ -804,7 +804,10 @@ class MemoryFileStore:
         for key in blobs:
             del self.blobs[key]
         # The in-memory store keeps no document versions (plan 44); Postgres does.
-        return {"conversation_files": len(files), "conversation_file_versions": 0,
+        # One write per file and one branch per conversation, as the Postgres store logs them.
+        return {"conversation_files": len(files), "conversation_file_writes": len(files),
+                "conversation_file_branches": len({conversation for conversation, _ in files}),
+                "conversation_file_versions": 0,
                 "conversation_file_seen": 0, "conversation_file_comments": 0,
                 "conversation_file_suggestions": 0, "conversation_file_blobs": len(blobs)}
 

@@ -19,6 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.security.internal_trust import require_internal_caller
+from utils.file_branch import FileBranch, file_branch
 from harness.conversation_files.comments import CommentNotFound, InvalidComment
 from harness.conversation_files.versions import DocumentNotFound, InvalidDocumentPath
 from schema import (
@@ -58,19 +59,23 @@ def _not_found() -> HTTPException:
 
 
 @router.get("", response_model=DocumentCommentsResponse)
-async def list_comments(user_id: str, conversation_id: str, path: str = _PATH_QUERY) -> DocumentCommentsResponse:
+async def list_comments(
+    user_id: str, conversation_id: str, path: str = _PATH_QUERY, branch: FileBranch = Depends(file_branch)
+) -> DocumentCommentsResponse:
     """A document's threads and replies, resolved ones included, oldest first."""
     try:
-        return await list_document_comments(user_id, conversation_id, path)
+        return await list_document_comments(user_id, conversation_id, path, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid_path() from exc
 
 
 @router.post("", response_model=DocumentCommentOut, status_code=status.HTTP_201_CREATED)
-async def add_comment(user_id: str, conversation_id: str, payload: CreateCommentRequest) -> DocumentCommentOut:
+async def add_comment(
+    user_id: str, conversation_id: str, payload: CreateCommentRequest, branch: FileBranch = Depends(file_branch)
+) -> DocumentCommentOut:
     """A new thread on a passage, or a reply to a thread."""
     try:
-        return await add_document_comment(user_id, conversation_id, payload)
+        return await add_document_comment(user_id, conversation_id, payload, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid_path() from exc
     except InvalidComment as exc:
@@ -80,22 +85,25 @@ async def add_comment(user_id: str, conversation_id: str, payload: CreateComment
 
 
 @router.get("/{comment_id}", response_model=DocumentCommentOut)
-async def get_comment(user_id: str, conversation_id: str, comment_id: UUID) -> DocumentCommentOut:
-    """One comment (a thread or a reply) of this conversation."""
+async def get_comment(
+    user_id: str, conversation_id: str, comment_id: UUID, branch: FileBranch = Depends(file_branch)
+) -> DocumentCommentOut:
+    """One comment (a thread or a reply) of this conversation branch."""
     try:
-        return await get_document_comment(user_id, conversation_id, str(comment_id))
+        return await get_document_comment(user_id, conversation_id, str(comment_id), branch=branch)
     except CommentNotFound as exc:
         raise _not_found() from exc
 
 
 @router.patch("/{comment_id}", response_model=DocumentCommentOut)
 async def update_comment(
-    user_id: str, conversation_id: str, comment_id: UUID, payload: UpdateCommentRequest
+    user_id: str, conversation_id: str, comment_id: UUID, payload: UpdateCommentRequest,
+    branch: FileBranch = Depends(file_branch),
 ) -> DocumentCommentOut:
     """Resolve or reopen a thread, and/or edit the user's own comment."""
     try:
         return await update_document_comment(user_id, conversation_id, str(comment_id),
-                                             status=payload.status, body=payload.body)
+                                             status=payload.status, body=payload.body, branch=branch)
     except InvalidComment as exc:
         raise _invalid(exc) from exc
     except CommentNotFound as exc:
@@ -103,10 +111,12 @@ async def update_comment(
 
 
 @router.delete("/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_comment(user_id: str, conversation_id: str, comment_id: UUID) -> Response:
+async def delete_comment(
+    user_id: str, conversation_id: str, comment_id: UUID, branch: FileBranch = Depends(file_branch)
+) -> Response:
     """Delete the user's own comment; a thread goes with its replies."""
     try:
-        await delete_document_comment(user_id, conversation_id, str(comment_id))
+        await delete_document_comment(user_id, conversation_id, str(comment_id), branch=branch)
     except InvalidComment as exc:
         raise _invalid(exc) from exc
     except CommentNotFound as exc:

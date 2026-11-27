@@ -57,7 +57,9 @@ logger = get_logger(__name__)
 #: the query and the decryption.
 TURN_MAX_DOCUMENTS = 10
 
-_SCOPE = "conversation_id = %(conversation_id)s AND user_id = %(user_id)s"
+_SCOPE = (
+    "conversation_id = %(conversation_id)s AND branch_thread_id = %(branch)s AND user_id = %(user_id)s"
+)
 
 
 @dataclass(frozen=True)
@@ -99,8 +101,8 @@ class DocumentSuggestionStore(DocumentVersionStore):
     """The pending suggestion sets of one user's canvas documents.
 
     A subclass of the version store for its pool, its cipher and its
-    decrypting version reader. Every statement filters on both
-    ``conversation_id`` and ``user_id``; paths are expected canonical.
+    decrypting version reader. Every statement filters on ``conversation_id``,
+    the store's branch and ``user_id``; paths are expected canonical.
     """
 
     def _suggestion(self, row: dict[str, Any]) -> DocumentSuggestion:
@@ -114,7 +116,7 @@ class DocumentSuggestionStore(DocumentVersionStore):
     # -- reads ---------------------------------------------------------------
     async def get(self, user_id: str, conversation_id: str, path: str) -> DocumentSuggestion | None:
         """The document's pending set, or None when it has none."""
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "SELECT path, base_version, cipher, content, updated_at FROM conversation_file_suggestions "
                 f"WHERE {_SCOPE} AND path = %(path)s",
@@ -130,17 +132,20 @@ class DocumentSuggestionStore(DocumentVersionStore):
         its base version's text (the blob the version names) and the
         document's latest version number, plus the total. Read-only.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "SELECT s.path, s.base_version, s.cipher, s.content, b.cipher AS base_cipher, b.data AS base_data, "
                 "(SELECT max(l.version) FROM conversation_file_versions l "
-                "WHERE l.conversation_id = s.conversation_id AND l.user_id = s.user_id AND l.path = s.path) "
+                "WHERE l.conversation_id = s.conversation_id AND l.branch_thread_id = s.branch_thread_id "
+                "AND l.user_id = s.user_id AND l.path = s.path) "
                 "AS latest_version, count(*) OVER () AS total "
                 "FROM conversation_file_suggestions s "
                 "JOIN conversation_file_versions v ON v.conversation_id = s.conversation_id "
+                "AND v.branch_thread_id = s.branch_thread_id "
                 "AND v.path = s.path AND v.version = s.base_version AND v.user_id = s.user_id "
                 "JOIN conversation_file_blobs b ON b.user_id = v.user_id AND b.sha256 = v.sha256 "
-                "WHERE s.conversation_id = %(conversation_id)s AND s.user_id = %(user_id)s "
+                "WHERE s.conversation_id = %(conversation_id)s AND s.branch_thread_id = %(branch)s "
+                "AND s.user_id = %(user_id)s "
                 "ORDER BY s.updated_at DESC, s.path LIMIT %(limit)s",
                 {"user_id": user_id, "conversation_id": conversation_id, "limit": TURN_MAX_DOCUMENTS},
             )
@@ -172,7 +177,7 @@ class DocumentSuggestionStore(DocumentVersionStore):
         if len(data) > MAX_DOCUMENT_BYTES:
             raise DocumentTooLarge(path)
         scope = {"user_id": user_id, "conversation_id": conversation_id, "path": path}
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             base = await self._read_version(conn, user_id, conversation_id, path, base_version)
             if base is None:
                 raise DocumentNotFound(path)
@@ -184,9 +189,11 @@ class DocumentSuggestionStore(DocumentVersionStore):
                 cipher, sealed = self._cipher.encrypt(data)
                 cur = await conn.execute(
                     "INSERT INTO conversation_file_suggestions "
-                    "(conversation_id, path, user_id, base_version, cipher, content, size_bytes) "
-                    "VALUES (%(conversation_id)s, %(path)s, %(user_id)s, %(base)s, %(cipher)s, %(content)s, %(size)s) "
-                    "ON CONFLICT (conversation_id, path) DO UPDATE SET base_version = EXCLUDED.base_version, "
+                    "(conversation_id, branch_thread_id, path, user_id, base_version, cipher, content, size_bytes) "
+                    "VALUES (%(conversation_id)s, %(branch)s, %(path)s, %(user_id)s, %(base)s, %(cipher)s, "
+                    "%(content)s, %(size)s) "
+                    "ON CONFLICT (conversation_id, branch_thread_id, path) DO UPDATE SET "
+                    "base_version = EXCLUDED.base_version, "
                     "cipher = EXCLUDED.cipher, content = EXCLUDED.content, size_bytes = EXCLUDED.size_bytes, "
                     "updated_at = now() "
                     # Belt and braces: a row is only ever replaced by its own user.
@@ -212,7 +219,7 @@ class DocumentSuggestionStore(DocumentVersionStore):
         the user saved again in the meantime is theirs to keep.
         """
         only_that = " AND updated_at = %(saved_at)s" if saved_at is not None else ""
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 f"DELETE FROM conversation_file_suggestions WHERE {_SCOPE} AND path = %(path)s{only_that}",
                 {"user_id": user_id, "conversation_id": conversation_id, "path": path, "saved_at": saved_at},

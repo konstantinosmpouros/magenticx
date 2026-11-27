@@ -10,7 +10,8 @@ from harness.abstractions.user_agents import definition_texts, errors_of
 from harness.agui.keepalive import with_keepalive
 from harness.async_tasks.notification import normalize_payload_messages
 from harness.checkpointer import has_checkpointer_initialized
-from harness.checkpointer.fork import seed_thread_from_checkpoint
+from harness.checkpointer.fork import copy_branch_files, seed_thread_from_checkpoint
+from harness.filesystem.scratch_backend import resolve_branch_thread_id
 from harness.commands import AgentFacts, CommandRefused, apply_command, resolve_invocation
 from schema import (
     AgentDefinition,
@@ -112,13 +113,28 @@ async def stream_agent(agent_slug: str, req: Request):
         except CommandRefused as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
         messages = apply_command(req.messages, invocation) if invocation else req.messages
+        branch = resolve_branch_thread_id(context_data, run_config)
+        fork_from = req.config.get("fork_from") if isinstance(req.config, dict) else None
+        # An edit or a retry starts a branch: its files come from the source
+        # branch as they were at the fork point. First, before the canvas note
+        # or the build touch the branch's files (a first touch would set it up
+        # from the legacy rows instead).
+        if isinstance(fork_from, dict) and branch:
+            await copy_branch_files(
+                user_id=str(context_data.get("user_id") or ""),
+                conversation_id=str(context_data.get("conversation_id") or ""),
+                source_thread_id=str(fork_from.get("thread_id") or ""),
+                target_thread_id=branch,
+                messages=fork_from.get("messages") if isinstance(fork_from.get("messages"), list) else None,
+            )
         # The canvas (plan 44 4.3): the user's edits since the last turn as a
         # note, and an Ask agent request as this turn's scoped instruction —
         # both into the turn's message only, never the chat. The bridge checked
         # the request; it is validated again here, fail-closed.
         try:
             messages = await prepare_canvas_turn(
-                messages, context_data, deep_agent=definition.manifest.get("type") == "deep agent"
+                messages, context_data, deep_agent=definition.manifest.get("type") == "deep agent",
+                branch=branch,
             )
         except CanvasEditRefused as exc:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from exc
@@ -148,9 +164,9 @@ async def stream_agent(agent_slug: str, req: Request):
     # Per-run identity (assistant message id) used for the namespace-binding
     # cache; distinct from the branch-scoped checkpoint thread_id.
     run_id = context_data.get("run_id") or stream_thread_id
-    # Edit/retry forks: seed this (fresh) branch thread from the parent branch's
-    # checkpoint at the fork point before running the delta. Continue/new omit it.
-    fork_from = req.config.get("fork_from") if isinstance(req.config, dict) else None
+    # Edit/retry forks (fork_from, read above): seed this (fresh) branch thread
+    # from the parent branch's checkpoint at the fork point before running the
+    # delta. Continue/new omit it.
 
     # Stream agent responses. NOTE: durable threads — a fresh /stream must NOT
     # wipe the checkpoint; resume relies on it persisting across turns.

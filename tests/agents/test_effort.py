@@ -161,7 +161,7 @@ def test_a_background_task_inherits_the_effort():
     inherited = _agent({"effort": "low"})._inherited_context()
     assert inherited.effort == "low"
     task = {
-        "user_id": "u1", "conversation_id": "c1", "branch_thread_id": "b1", "task_id": "t1",
+        "user_id": "u1", "conversation_id": "c1", "branch_thread_id": "b1", "task_id": "t1", "root_run_id": "m1",
         "context": inherited.model_dump(),
     }
     assert task_context(task, "run-1")["effort"] == "low"

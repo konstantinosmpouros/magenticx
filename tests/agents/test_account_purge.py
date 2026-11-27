@@ -112,7 +112,8 @@ async def test_conversation_file_store_purge_deletes_every_file_and_blob_of_that
     pool = FakePool(rowcount=4)
     counts = await agents_service.conversation_files.ConversationFileStore(pool).purge_user("u1")
 
-    assert counts == {"conversation_files": 4, "conversation_file_versions": 4, "conversation_file_seen": 4,
+    assert counts == {"conversation_files": 4, "conversation_file_writes": 4, "conversation_file_branches": 4,
+                      "conversation_file_versions": 4, "conversation_file_seen": 4,
                       "conversation_file_comments": 4, "conversation_file_suggestions": 4,
                       "conversation_file_blobs": 4}
     assert pool.transactions == 1
@@ -120,6 +121,9 @@ async def test_conversation_file_store_purge_deletes_every_file_and_blob_of_that
     # comments (4.4) and the suggestions (4.6) before the versions they name.
     assert pool.calls == [
         ("DELETE FROM conversation_files WHERE user_id = %s", ("u1",)),
+        # The write log names blobs too; the branch records name nothing.
+        ("DELETE FROM conversation_file_writes WHERE user_id = %s", ("u1",)),
+        ("DELETE FROM conversation_file_branches WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_comments WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_suggestions WHERE user_id = %s", ("u1",)),
         ("DELETE FROM conversation_file_versions WHERE user_id = %s", ("u1",)),

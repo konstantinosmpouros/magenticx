@@ -228,8 +228,9 @@ def task_context(task: Mapping[str, Any], run_id: str) -> dict[str, Any]:
 
     ``branch_thread_id`` is the root's branch: the shared scratch store and
     everything else keyed by branch see the orchestrator's branch, not the
-    task's own thread. ``async_task_id`` marks the run as a task's (no
-    ``ask_user``).
+    task's own thread. ``branch_message_id`` is the root's answer message,
+    so the task sees the uploads of the orchestrator's branch. ``async_task_id``
+    marks the run as a task's (no ``ask_user``).
     """
     inherited = InheritedContext.model_validate(task.get("context") or {})
     context: dict[str, Any] = {
@@ -238,6 +239,7 @@ def task_context(task: Mapping[str, Any], run_id: str) -> dict[str, Any]:
         "run_id": run_id,
         "thread_id": task["task_id"],
         "branch_thread_id": task["branch_thread_id"],
+        "branch_message_id": task["root_run_id"],
         "async_task_id": task["task_id"],
         "interactive": inherited.interactive,
         "search_past_convs": inherited.search_past_convs,

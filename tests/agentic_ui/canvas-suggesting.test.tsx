@@ -376,7 +376,7 @@ function serve(versions: Array<{ content: string; author: CanvasDocumentAuthor }
     [...all].reverse().map((item) => meta(item.version, item.author)),
   );
   api.getDocumentVersion.mockImplementation(
-    async (_u: string, _c: string, _p: string, n: number) => all[n - 1],
+    async (_u: string, _c: string, _m: string, _p: string, n: number) => all[n - 1],
   );
   return latest;
 }
@@ -394,6 +394,7 @@ function renderCanvas() {
         <DocumentCanvas
           userId="user-1"
           conversationId="conv-1"
+          messageId="msg-1"
           path={PATH}
           revision={revision}
           runActive={runActive}
@@ -433,6 +434,7 @@ beforeEach(() => {
     async (
       _u: string,
       _c: string,
+      _m: string,
       body: { path: string; baseVersion: number; content: string },
     ) => ({
       ...body,
@@ -440,7 +442,7 @@ beforeEach(() => {
     }),
   );
   api.saveDocumentVersion.mockImplementation(
-    async (_u: string, _c: string, body: { baseVersion: number }) => ({
+    async (_u: string, _c: string, _m: string, body: { baseVersion: number }) => ({
       kind: "saved",
       path: PATH,
       version: body.baseVersion + 1,
@@ -500,7 +502,7 @@ describe("Suggesting mode in the canvas", () => {
 
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     await waitFor(() => expect(api.putDocumentSuggestion).toHaveBeenCalledTimes(1));
-    expect(api.putDocumentSuggestion).toHaveBeenCalledWith("user-1", "conv-1", {
+    expect(api.putDocumentSuggestion).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", {
       path: PATH,
       baseVersion: 1,
       content: "# Brief\n\nWe will cover everything. Soon\n\n## Budget\n\nTen thousand.\n",
@@ -543,13 +545,13 @@ describe("Suggesting mode in the canvas", () => {
 
     await waitFor(() => expect(api.putDocumentSuggestion).toHaveBeenCalledTimes(1));
     expect(api.saveDocumentVersion).toHaveBeenCalledTimes(1);
-    expect(api.saveDocumentVersion).toHaveBeenCalledWith("user-1", "conv-1", {
+    expect(api.saveDocumentVersion).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", {
       path: PATH,
       baseVersion: 1,
       content:
         "# Brief\n\nWe will cover everything.\n\n## Budget\n\nTen thousand.\n\n## Risks\n\nTiming.\n",
     });
-    expect(api.putDocumentSuggestion).toHaveBeenCalledWith("user-1", "conv-1", {
+    expect(api.putDocumentSuggestion).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", {
       path: PATH,
       baseVersion: 2,
       content: normalizeMarkdown(PROPOSED),
@@ -566,7 +568,7 @@ describe("Suggesting mode in the canvas", () => {
 
     await waitFor(() => expect(api.deleteDocumentSuggestion).toHaveBeenCalledTimes(1));
     expect(api.saveDocumentVersion).toHaveBeenCalledTimes(1);
-    expect(api.saveDocumentVersion.mock.calls[0][2]).toEqual({
+    expect(api.saveDocumentVersion.mock.calls[0][3]).toEqual({
       path: PATH,
       baseVersion: 1,
       content: normalizeMarkdown(PROPOSED),
@@ -586,7 +588,7 @@ describe("Suggesting mode in the canvas", () => {
     fireEvent.click(screen.getByRole("button", { name: "Reject all" }));
 
     await waitFor(() => expect(api.deleteDocumentSuggestion).toHaveBeenCalledTimes(1));
-    expect(api.deleteDocumentSuggestion).toHaveBeenCalledWith("user-1", "conv-1", PATH);
+    expect(api.deleteDocumentSuggestion).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", PATH);
     expect(api.saveDocumentVersion).not.toHaveBeenCalled();
     expect(api.putDocumentSuggestion).not.toHaveBeenCalled();
     const editor = screen.getByLabelText("brief, editing");
@@ -624,6 +626,7 @@ describe("Suggesting mode in the canvas", () => {
     expect(api.getDocumentVersion).toHaveBeenCalledWith(
       "user-1",
       "conv-1",
+      "msg-1",
       PATH,
       1,
       expect.anything(),

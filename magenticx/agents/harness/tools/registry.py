@@ -277,8 +277,8 @@ register_native_tool(
         # Read-only, so not counted against the write budget; it shares the
         # writes' gate so the three always come and go together.
         builder=lambda ctx: (
-            build_list_comments_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id))
-            if ctx.comments_available
+            build_list_comments_tool(files=ctx.files)
+            if ctx.comments_available and ctx.files is not None
             else None
         ),
     )
@@ -290,9 +290,8 @@ register_native_tool(
         description="Reply in a comment thread on one of the conversation's canvas documents.",
         auto_attach=True,
         builder=lambda ctx: (
-            build_reply_to_comment_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id),
-                                        budget=ctx.comment_writes)
-            if ctx.comments_available and ctx.comment_writes is not None
+            build_reply_to_comment_tool(files=ctx.files, budget=ctx.comment_writes)
+            if ctx.comments_available and ctx.files is not None and ctx.comment_writes is not None
             else None
         ),
     )
@@ -304,9 +303,8 @@ register_native_tool(
         description="Leave a comment (an assumption or a question) on a passage of a canvas document.",
         auto_attach=True,
         builder=lambda ctx: (
-            build_add_comment_tool(user_id=ctx.user_id, conversation_id=str(ctx.conversation_id),
-                                   run_id=ctx.run_id, budget=ctx.comment_writes)
-            if ctx.comments_available and ctx.comment_writes is not None
+            build_add_comment_tool(files=ctx.files, budget=ctx.comment_writes)
+            if ctx.comments_available and ctx.files is not None and ctx.comment_writes is not None
             else None
         ),
     )

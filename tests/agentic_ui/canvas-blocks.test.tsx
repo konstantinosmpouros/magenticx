@@ -300,6 +300,7 @@ describe("structural edits mark the document unsaved, like typing", () => {
           <DocumentCanvas
             userId="user-1"
             conversationId="conv-1"
+            messageId="msg-1"
             path={PATH}
             revision="0"
             compact={false}
@@ -328,7 +329,7 @@ describe("structural edits mark the document unsaved, like typing", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /^Save \(/ })).not.toBeInTheDocument(),
     );
-    const first = api.saveDocumentVersion.mock.calls[0][2] as {
+    const first = api.saveDocumentVersion.mock.calls[0][3] as {
       content: string;
       baseVersion: number;
     };
@@ -339,7 +340,7 @@ describe("structural edits mark the document unsaved, like typing", () => {
     expect(await screen.findByText("Unsaved changes")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     await waitFor(() => expect(api.saveDocumentVersion).toHaveBeenCalledTimes(2));
-    const second = api.saveDocumentVersion.mock.calls[1][2] as {
+    const second = api.saveDocumentVersion.mock.calls[1][3] as {
       content: string;
       baseVersion: number;
     };
@@ -355,6 +356,7 @@ describe("structural edits mark the document unsaved, like typing", () => {
           <DocumentCanvas
             userId="user-1"
             conversationId="conv-1"
+            messageId="msg-1"
             path={PATH}
             revision="0"
             compact={false}

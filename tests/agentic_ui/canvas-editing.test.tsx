@@ -50,13 +50,13 @@ describe("save client and schemas", () => {
         created_at: "2026-11-18T10:00:00Z",
       }),
     );
-    const result = await saveDocumentVersion("user-1", "conv-1", {
+    const result = await saveDocumentVersion("user-1", "conv-1", "msg-1", {
       path: PATH,
       baseVersion: 3,
       content: "# Brief\n",
     });
     const [url, opts] = http.requestJson.mock.calls[0];
-    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/versions");
+    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/versions?messageId=msg-1");
     expect(opts).toMatchObject({
       method: "POST",
       csrf: true,
@@ -82,7 +82,7 @@ describe("save client and schemas", () => {
         },
       }),
     );
-    const result = await saveDocumentVersion("u", "c", {
+    const result = await saveDocumentVersion("u", "c", "m", {
       path: PATH,
       baseVersion: 3,
       content: "x",
@@ -95,11 +95,11 @@ describe("save client and schemas", () => {
       new ApiError("conflict", { status: 409, detailObject: { code: "stale_base" } }),
     );
     await expect(
-      saveDocumentVersion("u", "c", { path: PATH, baseVersion: 1, content: "x" }),
+      saveDocumentVersion("u", "c", "m", { path: PATH, baseVersion: 1, content: "x" }),
     ).rejects.toThrow();
     http.requestJson.mockRejectedValueOnce(new ApiError("Too many", { status: 429 }));
     await expect(
-      saveDocumentVersion("u", "c", { path: PATH, baseVersion: 1, content: "x" }),
+      saveDocumentVersion("u", "c", "m", { path: PATH, baseVersion: 1, content: "x" }),
     ).rejects.toThrow("Too many");
   });
 

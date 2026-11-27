@@ -20,6 +20,7 @@ from schema import (
 )
 from engine.agents.catalog import get_agent_by_id
 from engine.conversations.sources import insert_conversation_sources
+from engine.conversations.file_branches import resolve_file_branch
 from engine.documents.canvas_edit import check_canvas_edit, refuse_without_conversation
 from engine.agents.commands import check_invocation
 from engine.conversations.conversations import (
@@ -121,7 +122,8 @@ async def start_inference_flow(
     # conversation's ownership already established above. Retry re-runs the
     # stored one, which was checked when it was sent.
     if mode != "retry" and payload.message is not None and payload.message.canvasEdit is not None:
-        await check_canvas_edit(user_id, conversation.id, payload.message.canvasEdit)
+        await check_canvas_edit(user_id, conversation.id, payload.message.canvasEdit,
+                                branch=await resolve_file_branch(db, conversation.id, parent_message_id))
 
     # For new/send/edit/shared_continue the backend creates the run parent inside this request,
     # so any client path necessarily ends before the real parent. Retry is the

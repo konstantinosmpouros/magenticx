@@ -16,6 +16,7 @@ have → 404 (no code: the document, not the set, is missing).
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from core.security.internal_trust import require_internal_caller
+from utils.file_branch import FileBranch, file_branch
 from harness.conversation_files.versions import DocumentNotFound, DocumentTooLarge, InvalidDocumentPath
 from schema import DocumentSuggestionOut, PutDocumentSuggestionRequest
 from utils.document_suggestions import (
@@ -41,11 +42,11 @@ def _invalid(exc: Exception) -> HTTPException:
 
 @router.get("", response_model=DocumentSuggestionOut)
 async def read_document_suggestion(
-    user_id: str, conversation_id: str, path: str = _PATH_QUERY
+    user_id: str, conversation_id: str, path: str = _PATH_QUERY, branch: FileBranch = Depends(file_branch)
 ) -> DocumentSuggestionOut:
     """The document's pending set; 404 ``no_suggestion`` when it has none."""
     try:
-        found = await get_document_suggestion(user_id, conversation_id, path)
+        found = await get_document_suggestion(user_id, conversation_id, path, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid(exc) from exc
     if found is None:
@@ -58,12 +59,13 @@ async def read_document_suggestion(
 @router.put("", response_model=DocumentSuggestionOut,
             responses={204: {"description": "The proposed text equals the base: the set was cleared."}})
 async def save_document_suggestion(
-    user_id: str, conversation_id: str, payload: PutDocumentSuggestionRequest
+    user_id: str, conversation_id: str, payload: PutDocumentSuggestionRequest,
+    branch: FileBranch = Depends(file_branch),
 ) -> DocumentSuggestionOut | Response:
     """Save the pending set (an upsert); 204 when nothing is suggested any more."""
     try:
         saved = await put_document_suggestion(
-            user_id, conversation_id, payload.path, payload.base_version, payload.content)
+            user_id, conversation_id, payload.path, payload.base_version, payload.content, branch=branch)
     except (InvalidDocumentPath, DocumentTooLarge) as exc:
         raise _invalid(exc) from exc
     except DocumentNotFound as exc:
@@ -74,10 +76,12 @@ async def save_document_suggestion(
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
-async def drop_document_suggestion(user_id: str, conversation_id: str, path: str = _PATH_QUERY) -> Response:
+async def drop_document_suggestion(
+    user_id: str, conversation_id: str, path: str = _PATH_QUERY, branch: FileBranch = Depends(file_branch)
+) -> Response:
     """Drop the pending set — reject all, or after the accepted text was saved. Idempotent."""
     try:
-        await delete_document_suggestion(user_id, conversation_id, path)
+        await delete_document_suggestion(user_id, conversation_id, path, branch=branch)
     except InvalidDocumentPath as exc:
         raise _invalid(exc) from exc
     return Response(status_code=status.HTTP_204_NO_CONTENT)

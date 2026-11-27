@@ -116,7 +116,7 @@ async def test_it_spends_no_comment_write(agents_service, registry, tool_mod, mo
         async def delete(self, *_args, **_kwargs):
             return False
 
-    monkeypatch.setattr(tool_mod, "_store", lambda: _Empty())
+    monkeypatch.setattr(tool_mod, "_store", lambda *_: _Empty())
     ctx = _ctx(agents_service, registry)
     tool = registry.NATIVE_TOOLS[NAME].builder(ctx)
 
@@ -126,7 +126,7 @@ async def test_it_spends_no_comment_write(agents_service, registry, tool_mod, mo
 
 
 async def test_bad_arguments_are_refused_without_a_store(agents_service, tool_mod, monkeypatch):
-    def no_store():
+    def no_store(*_):
         raise AssertionError("the store must not be reached")
 
     monkeypatch.setattr(tool_mod, "_store", no_store)
@@ -200,9 +200,9 @@ async def pg_pool(agents_service):
 async def store(pg_pool, tool_mod, monkeypatch):
     """A suggestion store on the scratch database, behind the tool; brief.md has v1 with a pending set on it."""
     suggestions = importlib.import_module("harness.conversation_files.suggestions").DocumentSuggestionStore(
-        pg_pool, importlib.import_module("harness.conversation_files.cipher").FileCipher(None))
+        pg_pool, importlib.import_module("harness.conversation_files.cipher").FileCipher(None), branch="b1")
     await suggestions.setup()
-    monkeypatch.setattr(tool_mod, "_store", lambda: suggestions)
+    monkeypatch.setattr(tool_mod, "_store", lambda *_: suggestions)
     await suggestions.create("u1", "c1", BRIEF, BASE.encode(), agent_slug="omni")
     await suggestions.capture("u1", "c1", [BRIEF], run_id=None)
     await suggestions.put("u1", "c1", BRIEF, base_version=1, content=PROPOSED)
@@ -242,9 +242,10 @@ async def test_accept_writes_the_file_as_the_agents_edit_and_deletes_the_set(age
     assert await _count(pg_pool, "conversation_file_versions") == 1
 
     documents = importlib.import_module("utils.documents")
-    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, store._cipher)
-    monkeypatch.setattr(documents, "_seen_store", lambda: seen)
-    captured = await documents.capture_documents("u1", "c1", [], source_run_id="run-1")
+    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, store._cipher, branch="b1")
+    monkeypatch.setattr(documents, "_seen_store", lambda *_: seen)
+    branch = importlib.import_module("utils.file_branch").FileBranch(thread_id="b1")
+    captured = await documents.capture_documents("u1", "c1", [], source_run_id="run-1", branch=branch)
 
     assert [(c.path, c.version, c.created) for c in captured.captured] == [(BRIEF, 2, True)]
     latest = await store.latest("u1", "c1", BRIEF)

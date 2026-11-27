@@ -98,11 +98,12 @@ describe("the export call", () => {
     const file = await wire.exportDocument(
       "user-1",
       "conv-1",
+      "msg-1",
       { path: PATH, format: "pdf", version: 3 },
       "brief.pdf",
     );
     const [url, options] = http.requestRaw.mock.calls[0];
-    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/export");
+    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/export?messageId=msg-1");
     expect(options).toMatchObject({
       method: "POST",
       csrf: true,
@@ -116,7 +117,7 @@ describe("the export call", () => {
   it("falls back to the title, and words the sandbox's 503 and 504", async () => {
     http.requestRaw.mockResolvedValue(new Response("# md"));
     expect(
-      (await wire.exportDocument("u", "c", { path: PATH, format: "md" }, "brief.md")).filename,
+      (await wire.exportDocument("u", "c", "m", { path: PATH, format: "md" }, "brief.md")).filename,
     ).toBe("brief.md");
     expect(http.requestRaw.mock.calls[0][1].body).toEqual({ path: PATH, format: "md" });
     expect(http.requestRaw.mock.calls[0][1].errorMessages).toMatchObject({
@@ -135,6 +136,7 @@ function renderCanvas() {
         <DocumentCanvas
           userId="user-1"
           conversationId="conv-1"
+          messageId="msg-1"
           path={PATH}
           revision="0"
           compact={false}
@@ -182,6 +184,7 @@ describe("Export panel in the canvas header", () => {
     expect(api.exportDocument).toHaveBeenCalledWith(
       "user-1",
       "conv-1",
+      "msg-1",
       { path: PATH, format, version: 3 },
       `brief.${format}`,
     );
@@ -276,6 +279,7 @@ describe("Export panel in the canvas header", () => {
       expect(api.exportDocument).toHaveBeenCalledWith(
         "user-1",
         "conv-1",
+        "msg-1",
         { path: PATH, format: "docx", version: 3 },
         "brief.docx",
       ),
@@ -292,6 +296,7 @@ describe("Export panel in the canvas header", () => {
       expect(api.exportDocument).toHaveBeenLastCalledWith(
         "user-1",
         "conv-1",
+        "msg-1",
         { path: PATH, format: "pdf", version: 4 },
         "brief.pdf",
       ),

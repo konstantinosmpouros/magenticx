@@ -354,12 +354,14 @@ sequenceDiagram
     participant PG as chat_db
 
     Note over A: first look at input/ in a run
-    A->>D: GET /v1/internal/conversations/{cid}/input-files?user_id=
-    D->>PG: every upload of the conversation, all branches (owner-checked)
+    A->>D: GET /v1/internal/conversations/{cid}/input-files?user_id=&message_id=
+    D->>PG: the uploads on message_id's path to the root (owner-checked)
     D-->>A: [{name, attachment_id, size, sha256, …}]
-    A->>D: GET …/input-files/{attachment_id}?user_id= (on read)
+    A->>D: GET …/input-files/{attachment_id}?user_id=&message_id= (on read)
     D-->>A: bytes — checked against sha256, cached by it
 ```
+
+**One branch only.** `message_id` is the message the run answers: the run's own answer message, or for a background task its orchestrator's (`branch_message_id` in the task's context). The bridge walks up `parent_message_id` from it (a recursive query held to the conversation) and lists only the uploads on that path, so an upload an edit or a retry left behind, or one on a sibling branch, is not in the folder and cannot be read. A run with no message id sees no uploads rather than every branch's.
 
 - **Stable names.** Each upload gets `attachments.workspace_name` when it is stored (`engine/conversations/workspace_names.py`, migration `0042` backfilled the rest): one safe path segment; the first file keeps a name, different bytes become `stem_1.ext`, the same bytes reuse it. Names never change, and forks and continued shares carry them, so a file from turn 1 is readable on turn 50 under the name the history shows.
 - **History.** `serialise_message_with_images_for_agent()` still inlines images; for deep agents a non-image **upload** is labelled `/conversation/input/<workspace_name>`. Generated files get no input path.

@@ -5,6 +5,7 @@ import type { CanvasShineTexts } from "@/shared/lib/types";
 
 import { changedTexts } from "../lib/changeShine";
 import { onCanvasShine, takeCanvasShine, type CanvasShineRequest } from "../lib/pendingShine";
+import { useCanvasBranchMessage } from "../lib/branch";
 
 /**
  * The texts an Ask agent card asked this canvas to shine (`pendingShine`):
@@ -19,6 +20,7 @@ export function useRequestedShine(
   path: string,
   fetchVersionText: (version: number) => Promise<string>,
 ): CanvasShineTexts | null {
+  const messageId = useCanvasBranchMessage();
   const [shine, setShine] = useState<CanvasShineTexts | null>(null);
   const fetchRef = useRef(fetchVersionText);
   fetchRef.current = fetchVersionText;
@@ -29,7 +31,7 @@ export function useRequestedShine(
       if (request.path !== path) return;
       takeCanvasShine(path); // handled here: nobody else takes it
       try {
-        const versions = await listDocumentVersions(userId, conversationId, path);
+        const versions = await listDocumentVersions(userId, conversationId, messageId, path);
         const agentVersion = versions
           .filter((meta) => meta.author === "agent" && meta.version > request.afterVersion)
           .sort((a, b) => a.version - b.version)[0];
@@ -51,7 +53,7 @@ export function useRequestedShine(
       alive = false;
       stop();
     };
-  }, [userId, conversationId, path]);
+  }, [userId, conversationId, messageId, path]);
 
   return shine;
 }

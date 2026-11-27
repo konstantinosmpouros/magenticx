@@ -10,7 +10,7 @@
 - Check Postgres `LISTEN` / `NOTIFY` for live updates between services.
 - Check `pg_cron` for scheduled jobs.
 - Add a header button that opens a conversation overview panel: the files the agent produced (with previews), the files the user attached, and what the run used (web searches with their sources, memory reads, other tools), grouped and counted.
-- **A branch sees files from other branches.** The agent's `/conversation/input/` lists every upload in the conversation, from every branch (`engine/conversations/inputs.py` has no branch filter), and the conversation's own files (plan 36) are conversation-wide too. So after an edit or a retry that drops an attachment, the agent on the new branch can still open the file the user removed. Scope the files the agent sees to the branch it runs on: only the uploads on its message path, and the files that branch wrote.
+- **A branch sees files from other branches.** Done: the uploads (`/conversation/input/`) and the files the agent writes, with the canvas documents, are kept per branch and forked at the fork point ([plan](../docs/draft/branch-scoped-conversation-files-change-plan.md)). Remains: the branch scratch store (`branch_scratch_files`) still forks the source branch's files as they are now, not as at the fork point; give it the same write log and cut.
 - SSE streams and steering ([change plan](../docs/draft/sse-streaming-and-steering-change-plan.md)). Done locally: every phase (SSE only, WebSockets removed; steering, saved as its own message; live thinking; Send now; a queue of up to 5 messages, sent stacked). Remains: the release (migrations `0052`, `0053`), then the §6 acceptance test through Cloudflare on agents.magenticx.com.
 
 ## New Features

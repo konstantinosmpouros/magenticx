@@ -32,10 +32,13 @@ class ConversationFiles:
     agent_slug: str
     store: ConversationFileStore
     run_id: str | None = None
+    # The message the run answers, whose branch the uploads come from: the
+    # run's own id for an orchestrator, the orchestrator's for a task.
+    branch_message_id: str | None = None
     inputs: InputView = field(init=False)
 
     def __post_init__(self) -> None:
-        self.inputs = InputView(self.user_id, self.conversation_id)
+        self.inputs = InputView(self.user_id, self.conversation_id, self.branch_message_id)
 
     # -- reads ---------------------------------------------------------------
     async def entries(self, directory: str) -> list[Entry]:

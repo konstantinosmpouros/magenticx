@@ -57,6 +57,14 @@ def _thread(**overrides):
 # ---------------------------------------------------------------------------
 # No database needed: the note
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
+
 @pytest.fixture
 def notes():
     return importlib.import_module("harness.canvas.notes")
@@ -162,7 +170,7 @@ async def test_the_comments_routes_are_internal_only(client):
     _thread(author="agent"),
 ])
 async def test_a_bad_shape_is_a_422_before_any_query(client, internal_headers, agents_service, monkeypatch, body):
-    def no_store():
+    def no_store(*_):
         raise AssertionError("the store must not be reached")
 
     monkeypatch.setattr(importlib.import_module("utils.document_comments"), "_store", no_store)
@@ -204,7 +212,8 @@ async def pg_pool(agents_service):
 def _make_store(pg_pool, cipher=None):
     module = importlib.import_module("harness.conversation_files.comments")
     return module.DocumentCommentStore(
-        pg_pool, cipher or importlib.import_module("harness.conversation_files.cipher").FileCipher(None))
+        pg_pool, cipher or importlib.import_module("harness.conversation_files.cipher").FileCipher(None),
+        branch="b1")
 
 
 @pytest_asyncio.fixture
@@ -213,7 +222,7 @@ async def store(pg_pool, agents_service, monkeypatch):
     comments = _make_store(pg_pool)
     await comments.setup()
     await comments.setup()  # idempotent: every boot runs it
-    monkeypatch.setattr(importlib.import_module("utils.document_comments"), "_store", lambda: comments)
+    monkeypatch.setattr(importlib.import_module("utils.document_comments"), "_store", lambda *_: comments)
     await comments.create("u1", "c1", BRIEF, b"# Brief\n\nthe passage", agent_slug="omni")
     await comments.capture("u1", "c1", [BRIEF], run_id=None)
     await comments.save_user_version("u1", "c1", BRIEF, base_version=1, content="# Brief\n\nthe passage, v2")
@@ -395,8 +404,8 @@ async def test_a_fork_copies_the_threads_and_a_reap_and_a_purge_drop_them(store,
                       json={"path": BRIEF, "version": 2, "body": "reply", "parent_id": thread["id"]})
     await client.patch(f"{COMMENTS}/{thread['id']}", json={"status": "resolved"}, headers=internal_headers)
 
-    await store.copy_conversation("u1", "c1", "fork")
-    await store.copy_conversation("u1", "c1", "fork")  # a retried copy changes nothing
+    await store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])
+    await store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])  # a retried copy changes nothing
     fork = await store.list_comments("u1", "fork", BRIEF)
     assert [(c.body, c.status, c.resolved_by) for c in fork] == [("Shorter here?", "resolved", "user"),
                                                                   ("reply", None, None)]
@@ -407,7 +416,8 @@ async def test_a_fork_copies_the_threads_and_a_reap_and_a_purge_drop_them(store,
     assert len(await store.list_comments("u1", "fork", BRIEF)) == 2
 
     counts = await store.purge_user("u1")
-    assert counts["conversation_file_comments"] == 2
+    # The fork's rows sit in its legacy bucket and in the branch that read them.
+    assert counts["conversation_file_comments"] == 4
     assert await _count(pg_pool, "conversation_file_comments") == 0
 
 
@@ -430,13 +440,13 @@ async def test_open_threads_feed_the_turn_note(store, client, internal_headers, 
     done = (await _post(client, internal_headers, body="Fixed already")).json()
     await client.patch(f"{COMMENTS}/{done['id']}", json={"status": "resolved"}, headers=internal_headers)
     canvas_turn = importlib.import_module("utils.canvas_turn")
-    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(store._pool, store._cipher)
+    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(store._pool, store._cipher, branch="b1")
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: True)
-    monkeypatch.setattr(canvas_turn, "_seen_store", lambda: seen)
-    monkeypatch.setattr(canvas_turn, "_comment_store", lambda: store)
+    monkeypatch.setattr(canvas_turn, "_seen_store", lambda *_: seen)
+    monkeypatch.setattr(canvas_turn, "_comment_store", lambda *_: store)
 
     out = await canvas_turn.prepare_canvas_turn(
-        [{"role": "user", "content": "hello"}], {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True)
+        [{"role": "user", "content": "hello"}], {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True, branch="b1")
 
     text = out[0]["content"]
     assert (f"<canvas_comments>\n[thread {first['id']}] «the passage» — user: Shorter here?\n"

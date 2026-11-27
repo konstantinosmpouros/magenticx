@@ -204,51 +204,87 @@ def test_the_history_points_at_an_upload_by_its_stable_name():
 # The internal endpoints
 # ---------------------------------------------------------------------------
 async def _conversation_with_branches(session_factory, user, agent):
-    """Two sibling branches, each with an upload, plus a generated file."""
+    """Two sibling branches, each with an upload, plus a generated file.
+
+    Branch one: the first message (``a.txt`` = alpha), a reply with a
+    generated file, and a follow-up with its own upload (``notes.txt``).
+    Branch two: an edit of the first message (``a.txt`` = beta).
+    """
     async with session_factory() as s:
         conversation = await init_conv(s, user, agent, False, "t", MessageIn(
             sender="user", content="first", attachments=[_upload("a.txt", b"alpha")]))
         await s.flush()
         root = (await s.execute(select(MessageTable).where(MessageTable.conversation_id == conversation.id))).scalar_one()
-        await init_message(s, conversation, MessageIn(sender="user", content="edit",
-                                                      attachments=[_upload("a.txt", b"beta")]))
+        edit = await init_message(s, conversation, MessageIn(sender="user", content="edit",
+                                                             attachments=[_upload("a.txt", b"beta")]))
+        edit_answer = await init_message(s, conversation, MessageIn(sender="ai", content="ok"),
+                                         parent_message_id=edit.id)
         answer = await init_message(s, conversation, MessageIn(sender="ai", content="done"), parent_message_id=root.id)
         s.add(AttachmentTable(message_id=answer.id, file_name="out.md", mime_type="text/markdown",
                               origin="generated", presented=True, blob=BlobTable(data=b"out")))
+        follow_up = await init_message(s, conversation, MessageIn(
+            sender="user", content="more", attachments=[_upload("notes.txt", b"notes")]), parent_message_id=answer.id)
+        follow_answer = await init_message(s, conversation, MessageIn(sender="ai", content="ok"),
+                                           parent_message_id=follow_up.id)
         await s.commit()
-        return conversation.id
+        return SimpleNamespace(id=conversation.id, answer=answer.id, follow_answer=follow_answer.id,
+                               edit_answer=edit_answer.id)
 
 
-async def test_the_agent_lists_every_upload_of_every_branch(client, session_factory, seeded_user, seeded_agent,
-                                                            internal_headers):
-    conversation_id = await _conversation_with_branches(session_factory, seeded_user, seeded_agent)
-
+async def _listed(client, conversation_id, user_id, message_id, headers):
     response = await client.get(f"/v1/internal/conversations/{conversation_id}/input-files",
-                                params={"user_id": seeded_user.id}, headers=internal_headers)
-
+                                params={"user_id": user_id, "message_id": message_id}, headers=headers)
     assert response.status_code == 200
-    files = response.json()["files"]
-    assert [(f["name"], f["size"], f["sha256"]) for f in files] == [
-        ("a.txt", 5, _sha(b"alpha")), ("a_1.txt", 4, _sha(b"beta")),
-    ]
+    return response.json()["files"]
 
-    read = await client.get(f"/v1/internal/conversations/{conversation_id}/input-files/{files[1]['attachment_id']}",
-                            params={"user_id": seeded_user.id}, headers=internal_headers)
+
+async def test_the_agent_lists_only_the_uploads_on_its_branch(client, session_factory, seeded_user, seeded_agent,
+                                                              internal_headers):
+    conv = await _conversation_with_branches(session_factory, seeded_user, seeded_agent)
+
+    first = await _listed(client, conv.id, seeded_user.id, conv.answer, internal_headers)
+    later = await _listed(client, conv.id, seeded_user.id, conv.follow_answer, internal_headers)
+    edited = await _listed(client, conv.id, seeded_user.id, conv.edit_answer, internal_headers)
+
+    # Every turn above the message counts; the sibling branch's file never does.
+    assert [(f["name"], f["sha256"]) for f in first] == [("a.txt", _sha(b"alpha"))]
+    assert [f["name"] for f in later] == ["a.txt", "notes.txt"]
+    assert [(f["name"], f["size"], f["sha256"]) for f in edited] == [("a_1.txt", 4, _sha(b"beta"))]
+
+    url = f"/v1/internal/conversations/{conv.id}/input-files/{edited[0]['attachment_id']}"
+    read = await client.get(url, params={"user_id": seeded_user.id, "message_id": conv.edit_answer},
+                            headers=internal_headers)
     assert read.status_code == 200 and read.content == b"beta"
+    # The same file, asked for from the other branch, is not there.
+    other = await client.get(url, params={"user_id": seeded_user.id, "message_id": conv.answer},
+                             headers=internal_headers)
+    assert other.status_code == 404
+
+
+async def test_a_message_from_elsewhere_or_none_finds_no_uploads(client, session_factory, seeded_user, seeded_agent,
+                                                                 internal_headers):
+    conv = await _conversation_with_branches(session_factory, seeded_user, seeded_agent)
+    other = await _conversation_with_branches(session_factory, seeded_user, seeded_agent)
+    url = f"/v1/internal/conversations/{conv.id}/input-files"
+
+    # A message of another conversation walks nowhere in this one.
+    assert await _listed(client, conv.id, seeded_user.id, other.follow_answer, internal_headers) == []
+    assert (await client.get(url, params={"user_id": seeded_user.id}, headers=internal_headers)).status_code == 422
 
 
 async def test_uploads_are_served_to_internal_callers_and_the_owner_only(client, session_factory, seeded_user,
                                                                          seeded_agent, internal_headers):
-    conversation_id = await _conversation_with_branches(session_factory, seeded_user, seeded_agent)
-    url = f"/v1/internal/conversations/{conversation_id}/input-files"
+    conv = await _conversation_with_branches(session_factory, seeded_user, seeded_agent)
+    url = f"/v1/internal/conversations/{conv.id}/input-files"
+    mine = {"user_id": seeded_user.id, "message_id": conv.answer}
 
-    assert (await client.get(url, params={"user_id": seeded_user.id})).status_code == 403
-    assert (await client.get(url, params={"user_id": "someone-else"}, headers=internal_headers)).status_code == 404
+    assert (await client.get(url, params=mine)).status_code == 403
+    assert (await client.get(url, params={**mine, "user_id": "someone-else"}, headers=internal_headers)).status_code == 404
 
     async with session_factory() as s:
         generated_id = (await s.execute(
             select(AttachmentTable.id).where(AttachmentTable.origin == "generated"))).scalar_one()
-    generated = await client.get(f"{url}/{generated_id}", params={"user_id": seeded_user.id}, headers=internal_headers)
+    generated = await client.get(f"{url}/{generated_id}", params=mine, headers=internal_headers)
     assert generated.status_code == 404  # the agent's own output is not an upload
 
 

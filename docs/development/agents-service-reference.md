@@ -117,6 +117,7 @@ magenticx/agents/
 │   │   ├── versions.py         DocumentVersionStore — a canvas document's append-only versions (plan 44)
 │   │   ├── backend.py          ConversationFilesBackend (BackendProtocol) for /conversation/ + the offload dirs
 │   │   ├── inputs.py           InputView — /conversation/input/ read from the bridge, LRU by hash
+│   │   ├── store.py            ConversationFileStore — rows per (conversation, branch thread, path); write log; copy_branch
 │   │   └── files.py · paths.py · cipher.py   per-run view · path normaliser · checkpointer AES cipher
 │   ├── filesystem/
 │   │   ├── layout.py           global-plane path authority

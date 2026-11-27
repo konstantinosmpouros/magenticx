@@ -485,7 +485,7 @@ async def test_fork_conversation_clones_selected_branch(
 
     source_copies = []
 
-    async def copy_conversation_files(user_id, source_id, target_id):
+    async def copy_conversation_files(user_id, source_id, target_id, *, branch, answers):
         copies.append((user_id, source_id, target_id))
 
     async def copy_conversation_sources(user_id, source_id, target_id):
@@ -548,7 +548,7 @@ async def test_fork_keeps_what_the_user_sent_while_an_answer_ran(
         ))
         await session.commit()
 
-    async def _noop(*_args):
+    async def _noop(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(conversation_router, "copy_conversation_files", _noop)

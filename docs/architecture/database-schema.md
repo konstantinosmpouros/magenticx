@@ -1,6 +1,6 @@
 # Database Schema
 
-This document describes the bridge's **`chat_db`** database (the render + relational store), accessed through an async SQLAlchemy engine backed by asyncpg. Its schema is defined in `magenticx/dialogue_bridge/core/database/models.py` via SQLAlchemy ORM models and **versioned with Alembic** — migration files live in `magenticx/dialogue_bridge/core/database/migrations/versions/` (`0001_baseline` → `0051_attachment_pdf_previews`), applied via `alembic upgrade head` automatically on bridge startup (see the CLAUDE.md schema-change workflow). A separate **`agent_runtime`** database on the same Postgres instance is owned by the agents service and holds five things: LangGraph `AsyncPostgresSaver` checkpoints, **`agent_memories`** (per-(user, agent) long-term memory — see [agent-memory](../flows/agent-memory.md)), the **skill tables** (`skill_pool`, `skill_files`, `agent_skills`, plus the remote-skill catalogue `skill_catalogue`, `remote_skill_manifest`, `remote_skill_files` and `remote_skill_sources` — see [remote-skills](../flows/remote-skills.md)), the **agent-definition tables** (`agent_definitions`, `agent_definition_files`, and their version history `agent_definition_versions` — see [agent-version-history](../flows/agent-version-history.md)), every conversation's files (**`conversation_files`** + **`conversation_file_blobs`**, plan 36) and its canvas documents' versions (**`conversation_file_versions`**, plan 44) with what the agent last saw of each (**`conversation_file_seen`**, plan 44 Phase 4.3) the user's comments on them (**`conversation_file_comments`**, plan 44 Phase 4.4) and the user's pending suggestions on them (**`conversation_file_suggestions`**, plan 44 Phase 4.6), every conversation's citable sources (**`conversation_sources`**, plan 42), each branch's shared scratch files (**`branch_scratch_files`**, plan 41, + the one-shot marker `branch_scratch_imports`), the **workflow tables** (`workflow_definitions`, `workflow_versions`, `workflow_persisted_state`, plan 38 — see [workflows](../flows/workflows.md)), and the **background-task tables** (`async_tasks`, `async_task_runs`, plan 41 — see [async-subagents](../flows/async-subagents.md)). None of them is part of these ORM models; that database has no alembic chain and its tables are created by `setup()` calls on boot.
+This document describes the bridge's **`chat_db`** database (the render + relational store), accessed through an async SQLAlchemy engine backed by asyncpg. Its schema is defined in `magenticx/dialogue_bridge/core/database/models.py` via SQLAlchemy ORM models and **versioned with Alembic** — migration files live in `magenticx/dialogue_bridge/core/database/migrations/versions/` (`0001_baseline` → `0051_attachment_pdf_previews`), applied via `alembic upgrade head` automatically on bridge startup (see the CLAUDE.md schema-change workflow). A separate **`agent_runtime`** database on the same Postgres instance is owned by the agents service and holds five things: LangGraph `AsyncPostgresSaver` checkpoints, **`agent_memories`** (per-(user, agent) long-term memory — see [agent-memory](../flows/agent-memory.md)), the **skill tables** (`skill_pool`, `skill_files`, `agent_skills`, plus the remote-skill catalogue `skill_catalogue`, `remote_skill_manifest`, `remote_skill_files` and `remote_skill_sources` — see [remote-skills](../flows/remote-skills.md)), the **agent-definition tables** (`agent_definitions`, `agent_definition_files`, and their version history `agent_definition_versions` — see [agent-version-history](../flows/agent-version-history.md)), every conversation's files, kept per branch (**`conversation_files`** + **`conversation_file_blobs`**, plan 36, with the write log **`conversation_file_writes`** and **`conversation_file_branches`**) and its canvas documents' versions (**`conversation_file_versions`**, plan 44) with what the agent last saw of each (**`conversation_file_seen`**, plan 44 Phase 4.3) the user's comments on them (**`conversation_file_comments`**, plan 44 Phase 4.4) and the user's pending suggestions on them (**`conversation_file_suggestions`**, plan 44 Phase 4.6), every conversation's citable sources (**`conversation_sources`**, plan 42), each branch's shared scratch files (**`branch_scratch_files`**, plan 41, + the one-shot marker `branch_scratch_imports`), the **workflow tables** (`workflow_definitions`, `workflow_versions`, `workflow_persisted_state`, plan 38 — see [workflows](../flows/workflows.md)), and the **background-task tables** (`async_tasks`, `async_task_runs`, plan 41 — see [async-subagents](../flows/async-subagents.md)). None of them is part of these ORM models; that database has no alembic chain and its tables are created by `setup()` calls on boot.
 
 **Why those live there and not here.** The consumer owns the store. The agent reads its memory and its skills on *every run*, so putting them in the agents service's own database makes the hot path a local read and leaves the rare path — the Memories and Skills tabs — as an HTTP call the bridge already makes. Skills previously existed **twice**, as rows here and as directories on the agents volume, reconciled by a 900-second per-user pass that read and hashed every user's entire tree whether or not anything had changed — `O(content × users)`, which does not degrade gracefully. Migration `0024` dropped the four `chat_db` skill tables; there is now one copy and nothing to reconcile. The trade is that these tables have no FK to `users` (deleting a user does not cascade) and no versioned migration history. All primary keys are UUIDs generated by a server-side `gen_uuid()` helper. All timestamps are timezone-naive UTC. `updated_at` columns are maintained via SQLAlchemy's `onupdate=func.now()`.
 
@@ -1144,14 +1144,20 @@ See [agent-memory](../flows/agent-memory.md).
 
 A conversation's files (plan 36): what the agent writes under `/conversation/`, `/large_tool_results/` and `/conversation_history/`. Uploads are not here — `/conversation/input/` is a view of `attachments` served by the bridge. Created by `ConversationFileStore.setup()` (`harness/conversation_files/store.py`).
 
+**Kept per branch.** Every row belongs to one branch of the conversation: `branch_thread_id`, the checkpoint thread the branch's answers run on (`messages.checkpoint_thread_id` in `chat_db`). An edit or a retry starts a branch whose files are copied from the source branch **as they were at the fork point**, cut by the write log (see [conversation-management](../flows/conversation-management.md#editing-a-user-message)). Rows from before branches have `branch_thread_id = ''` (the **legacy** branch); a branch copies them once, the first time it touches its files.
+
 | Table | Key | Columns |
 | --- | --- | --- |
 | `conversation_file_blobs` | `(user_id, sha256)` | `size_bytes`, `cipher` (`none` \| `aes`), `data` bytea (`STORAGE EXTERNAL`, encrypted with the checkpointer's `LANGGRAPH_AES_KEY` and cipher), `created_at` |
-| `conversation_files` | `(conversation_id, path COLLATE "C")` | `user_id`, `sha256` (FK → blobs), `size_bytes`, `agent_slug` (last writer, provenance only), `source_run_id`, `created_at`, `updated_at`; CHECK: path under one of the three mounts, never `/conversation/input/` |
+| `conversation_files` | `(conversation_id, branch_thread_id, path COLLATE "C")` | `user_id`, `sha256` (FK → blobs), `size_bytes`, `agent_slug` (last writer, provenance only), `source_run_id`, `created_at`, `updated_at`; CHECK: path under one of the three mounts, never `/conversation/input/` |
+| `conversation_file_writes` | `id bigserial` | Append-only: `conversation_id`, `branch_thread_id`, `path`, `user_id`, `message_id` (the answer that wrote it; NULL for a legacy row or a write no answer made), `sha256` (FK → blobs), `size_bytes`, `agent_slug`, `created_at`. Index `(conversation_id, branch_thread_id, path, id DESC)` for the fork cut, `(user_id, sha256)` for GC and purge |
+| `conversation_file_branches` | `(conversation_id, branch_thread_id)` | `user_id`, `created_at`: the branch has its files (from the legacy rows, or from a fork). Index `(user_id)` |
 
-- **Content-addressed per user.** A byte sequence is stored once per user however many paths, conversations or forks name it — never across users. A **fork** inserts path rows only (`files/copy`).
-- **Garbage collection** runs in the transaction that removes or replaces a row: a blob no row names is deleted. The foreign key is the guard — a delete racing a write that just picked the blob up is refused and retried, so a referenced blob can never vanish.
-- **Lifetime** = the conversation's: deleted by the reap (`conversation_id`), or with the account (`user_id`, index `conversation_files_blob_idx` on `(user_id, sha256)`). No TTL, no quota; one file is capped at `CONVERSATION_FILE_MAX_BYTES` (100 MB) as a technical limit.
+- **Content-addressed per user.** A byte sequence is stored once per user however many paths, branches, conversations or forks name it — never across users. A **fork** inserts path rows only (`files/copy`, and the branch fork).
+- **The fork cut.** `copy_branch(source, messages)` gives the new branch, per path, the source's latest `conversation_file_writes` row whose `message_id` is one of `messages` (the answers up to the fork point, sent by the bridge with `fork_from`) or NULL. The copies are logged on the new branch with the original `message_id`, so a fork of a fork cuts the same way.
+- **Garbage collection** runs in the transaction that removes or replaces a row: a blob no file, write or version names is deleted. The write log keeps every blob a branch ever had alive while the conversation lives (a later fork may cut before an overwrite). The foreign key is the guard — a delete racing a write that just picked the blob up is refused and retried, so a referenced blob can never vanish.
+- **Migration** (boot, idempotent): tables from before branches get `branch_thread_id text NOT NULL DEFAULT ''` and their keys rebuilt with it, in one `DO` block guarded by whether `conversation_files_pkey` already has the column.
+- **Lifetime** = the conversation's: every branch is deleted by the reap (`conversation_id`), or with the account (`user_id`, index `conversation_files_blob_idx` on `(user_id, sha256)`), the write log and branch records with them. No TTL, no quota; one file is capped at `CONVERSATION_FILE_MAX_BYTES` (100 MB) as a technical limit.
 - **No directory rows** — a directory is a path prefix; the `"C"` collation makes `[dir/, dir0)` an exact btree range.
 
 ### `conversation_file_versions`
@@ -1163,21 +1169,24 @@ The versions of a **canvas document** (plan 44, Phase 4.1): a `.md` file the age
 | `id` | `bigserial` | PK |
 | `user_id` | `text` | Owner; with `sha256` the FK → `conversation_file_blobs (user_id, sha256)` |
 | `conversation_id` | `text` | — |
+| `branch_thread_id` | `text` | The branch (`''` = legacy); versions are per branch |
 | `path` | `text COLLATE "C"` | CHECK `path ~ '^/conversation/output/.+[.]md$'` |
-| `version` | `integer` | Per path, from 1; CHECK `version >= 1` |
+| `version` | `integer` | Per (branch, path), from 1; CHECK `version >= 1` |
 | `sha256` | `text` | The version's bytes — the same encrypted, content-addressed blob a file uses (no extra byte when it matches the file) |
 | `size_bytes` | `bigint` | — |
 | `author` | `text` | CHECK in (`agent`, `user`) |
 | `base_version` | `integer` NULL | The version this one followed: a user save must name the latest (else 409); `NULL` for v1 |
 | `source_run_id` | `text` NULL | The run whose capture recorded an `agent` version |
+| `message_id` | `text` NULL | The answer the version belongs to (for a user save, the answer on screen); what a fork cuts on |
 | `created_at` | `timestamptz` | `now()` |
 
-- **Unique** `conversation_file_versions_unique (conversation_id, path, version)` (also the index the reads use); index `conversation_file_versions_blob_idx (user_id, sha256)` for the GC probe, the purge and the FK check.
+- **Unique** `conversation_file_versions_unique (conversation_id, branch_thread_id, path, version)` (also the index the reads use); index `conversation_file_versions_blob_idx (user_id, sha256)` for the GC probe, the purge and the FK check.
 - **Serialised writes:** every version write takes `pg_advisory_xact_lock(hashtextextended('conversation_file_versions
 <conversation>
+<branch>
 <path>', 0))`, so a check-then-insert never races — two saves from one base: one wins, the other is a 409.
 - **Blob GC counts versions:** a blob is collected only when no file *and* no version names it, so an agent overwrite keeps the old version readable.
-- **Lifecycle:** copied on fork (`files/copy`, same transaction as the files, `ON CONFLICT DO NOTHING`), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_versions` count, before the blobs).
+- **Lifecycle:** copied on a branch fork (the versions whose `message_id` is up to the fork point, numbers kept) and on a conversation fork (`files/copy`), same transaction as the files, `ON CONFLICT DO NOTHING`; deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_versions` count, before the blobs).
 
 ### `conversation_file_seen`
 
@@ -1185,7 +1194,8 @@ Which version of each canvas document the agent last saw (plan 44, Phase 4.3), s
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `conversation_id` | `text` | PK with `path` |
+| `conversation_id` | `text` | PK with `branch_thread_id` and `path` |
+| `branch_thread_id` | `text` | The branch (`''` = legacy) |
 | `path` | `text COLLATE "C"` | CHECK `path ~ '^/conversation/output/.+[.]md$'` |
 | `user_id` | `text` | Owner; every statement filters on it (not in the plan's sketch — added so the purge and the owner filter need no join); index `conversation_file_seen_user_idx` |
 | `agent_seen_version` | `integer` | CHECK `>= 1`; only ever raised (`GREATEST`-style upsert) |
@@ -1193,7 +1203,7 @@ Which version of each canvas document the agent last saw (plan 44, Phase 4.3), s
 
 - **Run start** (`turn_state` + `mark_seen`): every document is marked at its latest version once the turn's note is in the message; no row yet = first look, marked without a diff. A turn whose last message is a task notification marks nothing.
 - **Run end** (`advance_after_run`, inside the capture call): the marker moves over the consecutive `agent` versions only and stops before the first unseen `user` version, so a save made during the run still reaches the next turn.
-- **Lifecycle:** copied on fork (`files/copy`, same transaction), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_seen` count).
+- **Lifecycle:** copied on fork (`files/copy` and the branch fork, never past the latest version the new branch has), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_seen` count).
 
 ### `conversation_file_comments`
 
@@ -1201,11 +1211,12 @@ Comments on a canvas document (plan 44, Phase 4.4): a **thread** (`parent_id` NU
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | `uuid` | PK; generated by the service (`uuid4`); a fork's copy is `md5(target:id)::uuid` |
+| `id` | `uuid` | PK; generated by the service (`uuid4`); a fork's copy is `md5(target_conversation:target_branch:id)::uuid` |
 | `user_id` | `text` | Owner; every statement filters on it; index `conversation_file_comments_user_idx` (the purge) |
 | `conversation_id` | `text` | — |
+| `branch_thread_id` | `text` | The branch (`''` = legacy) |
 | `path` | `text COLLATE "C"` | CHECK `path ~ '^/conversation/output/.+[.]md$'` |
-| `version` | `integer` | The version the comment was made on; FK `(conversation_id, path, version)` → `conversation_file_versions` `ON DELETE CASCADE` |
+| `version` | `integer` | The version the comment was made on; FK `(conversation_id, branch_thread_id, path, version)` → `conversation_file_versions` `ON DELETE CASCADE` |
 | `parent_id` | `uuid` NULL | NULL = a thread; else its thread — FK `(conversation_id, parent_id)` → `(conversation_id, id)` `ON DELETE CASCADE`, so a reply's thread is in the same conversation |
 | `cipher` | `text` | `none`, or the cipher that sealed `anchor`, `body` and `resolution_note` (`LANGGRAPH_AES_KEY`, as the blobs) |
 | `anchor` | `bytea` NULL | Sealed JSON `{quote ≤ 2000, prefix ≤ 200, suffix ≤ 200}`; threads only |
@@ -1218,8 +1229,8 @@ Comments on a canvas document (plan 44, Phase 4.4): a **thread** (`parent_id` NU
 
 - **Shape CHECK** `conversation_file_comments_shape_ck`: `(parent_id IS NULL) = (anchor IS NOT NULL)` and `(parent_id IS NULL) = (status IS NOT NULL)`.
 - **Unique** `(conversation_id, id)` (the parent FK's target); index `conversation_file_comments_doc_idx (conversation_id, path, created_at)` for the list and the thread count; partial index `conversation_file_comments_parent_idx (conversation_id, parent_id) WHERE parent_id IS NOT NULL` for the reply count and the cascade.
-- **Limits** (200 threads per document, 50 replies per thread) are checked under `pg_advisory_xact_lock(hashtextextended('conversation_file_comments\n<conversation>\n<path>', 0))`.
-- **Lifecycle:** copied on fork (`files/copy`, same transaction, after the versions, `ON CONFLICT (id) DO NOTHING`), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_comments` count), both before the versions.
+- **Limits** (200 threads per document, 50 replies per thread) are checked under `pg_advisory_xact_lock(hashtextextended('conversation_file_comments\n<conversation>\n<branch>\n<path>', 0))`.
+- **Lifecycle:** copied on fork (`files/copy` and the branch fork, same transaction, after the versions — a comment comes only with its version, a reply only with its thread — `ON CONFLICT (id) DO NOTHING`), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_comments` count), both before the versions.
 
 ### `conversation_file_suggestions`
 
@@ -1228,16 +1239,17 @@ The user's pending suggestions on a canvas document (plan 44, Phase 4.6 — the 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `conversation_id` | `text` | PK part |
+| `branch_thread_id` | `text` | PK part: the branch (`''` = legacy) |
 | `path` | `text COLLATE "C"` | PK part; CHECK `path ~ '^/conversation/output/.+[.]md$'` |
 | `user_id` | `text` | Owner; every statement filters on it; index `conversation_file_suggestions_user_idx` (the purge) |
-| `base_version` | `integer` | The accepted version the suggestions were made on; FK `(conversation_id, path, base_version)` → `conversation_file_versions` `ON DELETE CASCADE` (the version must exist) |
+| `base_version` | `integer` | The accepted version the suggestions were made on; FK `(conversation_id, branch_thread_id, path, base_version)` → `conversation_file_versions` `ON DELETE CASCADE` (the version must exist) |
 | `cipher` | `text` | `none`, or the cipher that sealed `content` (`LANGGRAPH_AES_KEY`, as the blobs) |
 | `content` | `bytea` | The sealed proposed text, ≤ 1 MiB of UTF-8 (the version cap); storage `EXTERNAL` |
 | `size_bytes` | `bigint` | The plaintext's UTF-8 size |
 | `created_at` / `updated_at` | `timestamptz` | `now()`; `updated_at` moves on every save (the turn note's order) |
 
-- **Writes:** one upsert per save (`ON CONFLICT (conversation_id, path) DO UPDATE … WHERE user_id = EXCLUDED.user_id`), after reading the base version in the same transaction (404 when the conversation's document has no such version). A proposed text equal to the base's deletes the row instead (nothing suggested). No lock: versions are append-only and the row is replaced whole. Accepting writes a normal user version through the save route; the set is then deleted or rewritten — this table never creates a version.
-- **Lifecycle:** copied on fork (`files/copy`, same transaction, after the versions, `ON CONFLICT DO NOTHING`), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_suggestions` count), both before the versions.
+- **Writes:** one upsert per save (`ON CONFLICT (conversation_id, branch_thread_id, path) DO UPDATE … WHERE user_id = EXCLUDED.user_id`), after reading the base version in the same transaction (404 when the conversation's document has no such version). A proposed text equal to the base's deletes the row instead (nothing suggested). No lock: versions are append-only and the row is replaced whole. Accepting writes a normal user version through the save route; the set is then deleted or rewritten — this table never creates a version.
+- **Lifecycle:** copied on fork (`files/copy` and the branch fork, same transaction, after the versions — only when its base version came — `ON CONFLICT DO NOTHING`), deleted by the reap (`delete_conversation`) and the account purge (`purge_user` → `conversation_file_suggestions` count), both before the versions.
 
 ### `conversation_sources`
 

@@ -200,14 +200,14 @@ describe("the comments contract", () => {
 
   it("sends each change to its route, with the CSRF token", async () => {
     http.requestJson.mockResolvedValue(comment());
-    await wire.createDocumentComment("user-1", "conv-1", {
+    await wire.createDocumentComment("user-1", "conv-1", "msg-1", {
       path: PATH,
       version: 2,
       body: "Shorter?",
       anchor: { quote: "Intro text.", prefix: "", suffix: "" },
     });
     let [url, options] = http.requestJson.mock.calls.at(-1)!;
-    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/comments");
+    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/comments?messageId=msg-1");
     expect(options).toMatchObject({
       method: "POST",
       csrf: true,
@@ -215,7 +215,7 @@ describe("the comments contract", () => {
     });
     expect(options.body).not.toHaveProperty("parentId");
 
-    await wire.createDocumentComment("user-1", "conv-1", {
+    await wire.createDocumentComment("user-1", "conv-1", "msg-1", {
       path: PATH,
       version: 2,
       body: "Yes",
@@ -224,21 +224,21 @@ describe("the comments contract", () => {
     [, options] = http.requestJson.mock.calls.at(-1)!;
     expect(options.body).toEqual({ path: PATH, version: 2, body: "Yes", parentId: "c1" });
 
-    await wire.updateDocumentComment("user-1", "conv-1", "c1", { status: "resolved" });
+    await wire.updateDocumentComment("user-1", "conv-1", "msg-1", "c1", { status: "resolved" });
     [url, options] = http.requestJson.mock.calls.at(-1)!;
-    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/comments/c1");
+    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/comments/c1?messageId=msg-1");
     expect(options).toMatchObject({ method: "PATCH", csrf: true, body: { status: "resolved" } });
 
-    await wire.deleteDocumentComment("user-1", "conv-1", "c1");
+    await wire.deleteDocumentComment("user-1", "conv-1", "msg-1", "c1");
     [url, options] = http.requestVoid.mock.calls.at(-1)!;
-    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/comments/c1");
+    expect(url).toBe("/api/v1/conversations/user-1/conv-1/documents/comments/c1?messageId=msg-1");
     expect(options).toMatchObject({ method: "DELETE", csrf: true });
 
     http.requestJson.mockResolvedValue([]);
-    await wire.listDocumentComments("user-1", "conv-1", PATH);
+    await wire.listDocumentComments("user-1", "conv-1", "msg-1", PATH);
     [url] = http.requestJson.mock.calls.at(-1)!;
     expect(url).toBe(
-      `/api/v1/conversations/user-1/conv-1/documents/comments?${new URLSearchParams({ path: PATH })}`,
+      `/api/v1/conversations/user-1/conv-1/documents/comments?${new URLSearchParams({ messageId: "msg-1", path: PATH })}`,
     );
   });
 });
@@ -251,6 +251,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
         <DocumentCanvas
           userId="user-1"
           conversationId="conv-1"
+          messageId="msg-1"
           path={PATH}
           revision="0"
           compact={false}
@@ -335,7 +336,7 @@ describe("comments in the canvas", () => {
     fireEvent.keyDown(field, { key: "Enter", ctrlKey: true });
 
     await waitFor(() => expect(api.createDocumentComment).toHaveBeenCalledTimes(1));
-    expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", {
+    expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", {
       path: PATH,
       version: 2,
       body: "Shorter here?",
@@ -428,7 +429,7 @@ describe("comments in the canvas", () => {
 
   it("replies, resolves and reopens, rolling back a refused change", async () => {
     api.listDocumentComments.mockResolvedValue([comment()]);
-    api.createDocumentComment.mockImplementation(async (_u, _c, draft) =>
+    api.createDocumentComment.mockImplementation(async (_u, _c, _m, draft) =>
       comment({ id: "r9", parentId: draft.parentId, anchor: null, body: draft.body }),
     );
     renderCanvas();
@@ -443,7 +444,7 @@ describe("comments in the canvas", () => {
     fireEvent.change(field, { target: { value: "On it." } });
     fireEvent.click(within(card).getByRole("button", { name: "Reply" }));
     await waitFor(() =>
-      expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", {
+      expect(api.createDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", {
         path: PATH,
         version: 2,
         parentId: "c1",
@@ -458,14 +459,14 @@ describe("comments in the canvas", () => {
     await waitFor(() => expect(api.updateDocumentComment).toHaveBeenCalledTimes(1));
     expect(await findMark()).toBeInTheDocument();
 
-    api.updateDocumentComment.mockImplementation(async (_u, _c, _id, patch) =>
+    api.updateDocumentComment.mockImplementation(async (_u, _c, _m, _id, patch) =>
       comment({ ...patch, resolvedBy: patch.status === "resolved" ? "user" : null }),
     );
     const card2 = await screen.findByRole("dialog", { name: "Comment" }).catch(openCard);
     fireEvent.click(
       within(threadCard(card2, "Intro text.")).getByRole("button", { name: "Resolve thread" }),
     );
-    expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "c1", {
+    expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "msg-1", "c1", {
       status: "resolved",
     });
     // Resolved: off the line, under the top mark.
@@ -477,7 +478,7 @@ describe("comments in the canvas", () => {
     );
     const others = await screen.findByRole("dialog", { name: "Resolved and detached comments" });
     fireEvent.click(within(others).getByRole("button", { name: "Reopen" }));
-    expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "c1", {
+    expect(api.updateDocumentComment).toHaveBeenLastCalledWith("user-1", "conv-1", "msg-1", "c1", {
       status: "open",
     });
     expect(await findMark()).toBeInTheDocument();
@@ -485,7 +486,7 @@ describe("comments in the canvas", () => {
 
   it("edits and deletes one's own comment after a confirmation", async () => {
     api.listDocumentComments.mockResolvedValue([comment()]);
-    api.updateDocumentComment.mockImplementation(async (_u, _c, _id, patch) => comment(patch));
+    api.updateDocumentComment.mockImplementation(async (_u, _c, _m, _id, patch) => comment(patch));
     api.deleteDocumentComment.mockResolvedValue(undefined);
     renderCanvas();
     await screen.findByRole("heading", { level: 1, name: "The brief" });
@@ -501,7 +502,7 @@ describe("comments in the canvas", () => {
     const field = within(thread()).getByLabelText("Edit the comment");
     fireEvent.change(field, { target: { value: "Much shorter here?" } });
     fireEvent.click(within(thread()).getByRole("button", { name: "Save" }));
-    expect(api.updateDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "c1", {
+    expect(api.updateDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", "c1", {
       body: "Much shorter here?",
     });
     expect(await within(thread()).findByText("Much shorter here?")).toBeInTheDocument();
@@ -512,7 +513,7 @@ describe("comments in the canvas", () => {
     expect(api.deleteDocumentComment).not.toHaveBeenCalled();
     fireEvent.click(within(confirm).getByRole("button", { name: "Delete" }));
     await waitFor(() =>
-      expect(api.deleteDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "c1"),
+      expect(api.deleteDocumentComment).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", "c1"),
     );
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: /on this line/ })).not.toBeInTheDocument(),

@@ -85,7 +85,9 @@ LIST_MAX_THREADS = 50
 #: Which threads a listing reads: ``all`` is both.
 ThreadFilter = Literal["open", "resolved", "all"]
 
-_SCOPE = "conversation_id = %(conversation_id)s AND user_id = %(user_id)s"
+_SCOPE = (
+    "conversation_id = %(conversation_id)s AND branch_thread_id = %(branch)s AND user_id = %(user_id)s"
+)
 _COLUMNS = (
     "id, path, version, parent_id, cipher, anchor, body, author, status, resolved_by, "
     "resolution_note, created_at, updated_at"
@@ -222,8 +224,8 @@ class DocumentCommentStore(DocumentVersionStore):
     """The comments of one user's canvas documents.
 
     A subclass of the version store for its pool, its cipher and its
-    conventions: every statement filters on both ``conversation_id`` and
-    ``user_id``. Paths are expected canonical
+    conventions: every statement filters on ``conversation_id``, the store's
+    branch and ``user_id``. Paths are expected canonical
     (:func:`~harness.conversation_files.versions.document_path`).
     """
 
@@ -264,7 +266,7 @@ class DocumentCommentStore(DocumentVersionStore):
         not have). Bounded by the limits, so at most
         :data:`MAX_COMMENTS_PER_DOCUMENT` rows.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 f"SELECT {_COLUMNS} FROM conversation_file_comments WHERE {_SCOPE} AND path = %(path)s "
                 "ORDER BY created_at, id LIMIT %(limit)s",
@@ -286,7 +288,7 @@ class DocumentCommentStore(DocumentVersionStore):
         """
         params = {"user_id": user_id, "conversation_id": conversation_id, "documents": TURN_MAX_DOCUMENTS,
                   "threads": TURN_MAX_THREADS, "replies": TURN_MAX_REPLIES}
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "WITH open_threads AS ("
                 "SELECT id, path, cipher, anchor, body, author, created_at, "
@@ -356,7 +358,7 @@ class DocumentCommentStore(DocumentVersionStore):
             "status": None if status == "all" else status,
             "threads": max(1, min(int(limit), LIST_MAX_THREADS)), "replies": TURN_MAX_REPLIES,
         }
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 "WITH threads AS ("
                 "SELECT id, path, cipher, anchor, body, author, status, resolved_by, created_at, "
@@ -373,7 +375,7 @@ class DocumentCommentStore(DocumentVersionStore):
                 "array_agg(body ORDER BY created_at, id) AS bodies, max(reply_total) AS reply_total "
                 "FROM (SELECT author, cipher, body, created_at, id, count(*) OVER () AS reply_total "
                 "FROM conversation_file_comments c WHERE c.conversation_id = %(conversation_id)s "
-                "AND c.user_id = %(user_id)s AND c.parent_id = t.id "
+                "AND c.branch_thread_id = %(branch)s AND c.user_id = %(user_id)s AND c.parent_id = t.id "
                 "ORDER BY created_at DESC, id DESC LIMIT %(replies)s) newest) r ON true "
                 "ORDER BY t.created_at DESC, t.id DESC",
                 params,
@@ -417,7 +419,7 @@ class DocumentCommentStore(DocumentVersionStore):
         if anchor is not None:
             _check_anchor(anchor)
         scope = {"user_id": user_id, "conversation_id": conversation_id, "path": path}
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             await self._lock_comments(conn, conversation_id, path)
             cur = await conn.execute(
                 f"SELECT 1 FROM conversation_file_versions WHERE {_SCOPE} AND path = %(path)s "
@@ -445,7 +447,7 @@ class DocumentCommentStore(DocumentVersionStore):
         the edit names. Scoped like every read, so another conversation's (or
         user's) id is simply not found.
         """
-        async with self._pool.connection() as conn:
+        async with self._connect(user_id, conversation_id) as conn:
             cur = await conn.execute(
                 f"SELECT {_COLUMNS} FROM conversation_file_comments WHERE {_SCOPE} AND id = %(id)s",
                 {"user_id": user_id, "conversation_id": conversation_id, "id": _comment_id(comment_id)},
@@ -466,7 +468,7 @@ class DocumentCommentStore(DocumentVersionStore):
         at the thread's reply cap.
         """
         _check_body(body)
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             thread = await self._locked_thread(conn, user_id, conversation_id, thread_id)
             scope = {"user_id": user_id, "conversation_id": conversation_id, "path": thread["path"]}
             await self._check_reply(conn, scope, str(thread["id"]))
@@ -491,7 +493,7 @@ class DocumentCommentStore(DocumentVersionStore):
         """
         _check_body(body)
         scope = {"user_id": user_id, "conversation_id": conversation_id, "path": path}
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             await self._lock_comments(conn, conversation_id, path)
             latest = await self._read_version(conn, user_id, conversation_id, path, None)
             if latest is None:
@@ -523,7 +525,7 @@ class DocumentCommentStore(DocumentVersionStore):
         if body is not None:
             _check_body(body)
         scope = {"user_id": user_id, "conversation_id": conversation_id, "id": _comment_id(comment_id)}
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             cur = await conn.execute(
                 f"SELECT {_COLUMNS} FROM conversation_file_comments WHERE {_SCOPE} AND id = %(id)s FOR UPDATE",
                 scope,
@@ -573,7 +575,7 @@ class DocumentCommentStore(DocumentVersionStore):
         comment the user did not write.
         """
         scope = {"user_id": user_id, "conversation_id": conversation_id, "id": _comment_id(comment_id)}
-        async with self._pool.connection() as conn, conn.transaction():
+        async with self._connect(user_id, conversation_id) as conn, conn.transaction():
             cur = await conn.execute(
                 f"SELECT author FROM conversation_file_comments WHERE {_SCOPE} AND id = %(id)s FOR UPDATE",
                 scope,
@@ -607,8 +609,9 @@ class DocumentCommentStore(DocumentVersionStore):
                 raise RuntimeError("The file cipher changed between two fields of one comment.")
         cur = await conn.execute(
             "INSERT INTO conversation_file_comments "
-            "(id, user_id, conversation_id, path, version, parent_id, cipher, anchor, body, author, status) "
-            "VALUES (%(id)s, %(user_id)s, %(conversation_id)s, %(path)s, %(version)s, %(parent_id)s, "
+            "(id, user_id, conversation_id, branch_thread_id, path, version, parent_id, cipher, anchor, body, "
+            "author, status) "
+            "VALUES (%(id)s, %(user_id)s, %(conversation_id)s, %(branch)s, %(path)s, %(version)s, %(parent_id)s, "
             "%(cipher)s, %(anchor)s, %(body)s, %(author)s, %(status)s) "
             f"RETURNING {_COLUMNS}",
             {**scope, "id": uuid.uuid4(), "version": version, "parent_id": parent_id, "cipher": cipher,
@@ -690,7 +693,7 @@ class DocumentCommentStore(DocumentVersionStore):
         """Serialise the comment writes of one document, so the limits hold under concurrency."""
         await conn.execute(
             "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
-            (f"conversation_file_comments\n{conversation_id}\n{path}",),
+            (f"conversation_file_comments\n{conversation_id}\n{self._branch}\n{path}",),
         )
 
 

@@ -38,6 +38,7 @@ import importlib
 import os
 import sys
 import uuid
+from types import SimpleNamespace
 
 import psycopg
 import pytest
@@ -62,6 +63,14 @@ DOC = (
     "```py\nx = **1**\n```\n"
 )
 
+
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
 
 @pytest.fixture
 def anchors(agents_service):
@@ -179,9 +188,15 @@ async def test_a_plain_ask_agent_edit_does_not_mention_the_tools(edit_mod):
 # ---------------------------------------------------------------------------
 # Who gets the tools
 # ---------------------------------------------------------------------------
+def _files(conversation_id="c1", run_id=None):
+    """The run's conversation files as the comment tools read them: whose, and which run."""
+    return SimpleNamespace(user_id="u1", conversation_id=conversation_id, run_id=run_id, store=None)
+
+
 def _ctx(registry, tool_mod, **overrides):
     fields = {"user_id": "u1", "agent_slug": "omni", "conversation_id": "c1", "use_memory": False,
-              "has_canvas_documents": True, "comment_writes": tool_mod.CommentWriteBudget()} | overrides
+              "has_canvas_documents": True, "comment_writes": tool_mod.CommentWriteBudget(),
+              "files": _files()} | overrides
     return registry.NativeToolContext(**fields)
 
 
@@ -252,13 +267,13 @@ async def test_the_prompt_explains_comments_only_with_the_tools(agents_service):
 
 
 async def test_a_tool_refuses_bad_arguments_without_a_write(tool_mod, monkeypatch):
-    def no_store():
+    def no_store(*_):
         raise AssertionError("the store must not be reached")
 
     monkeypatch.setattr(tool_mod, "_store", no_store)
     budget = tool_mod.CommentWriteBudget()
-    reply = tool_mod.build_reply_to_comment_tool(user_id="u1", conversation_id="c1", budget=budget)
-    add = tool_mod.build_add_comment_tool(user_id="u1", conversation_id="c1", run_id=None, budget=budget)
+    reply = tool_mod.build_reply_to_comment_tool(files=_files(), budget=budget)
+    add = tool_mod.build_add_comment_tool(files=_files(), budget=budget)
 
     assert "no comment thread" in await reply.ainvoke({"thread_id": "not-an-id", "body": "x"})
     assert "'body' is empty" in await reply.ainvoke({"thread_id": TID, "body": "  "})
@@ -342,11 +357,11 @@ async def test_an_empty_listing_says_so(listing_mod, comments_mod):
 
 
 async def test_list_comments_refuses_a_bad_path_without_reading(listing_mod, monkeypatch):
-    def no_store():
+    def no_store(*_):
         raise AssertionError("the store must not be reached")
 
     monkeypatch.setattr(listing_mod, "_store", no_store)
-    tool = listing_mod.build_list_comments_tool(user_id="u1", conversation_id="c1")
+    tool = listing_mod.build_list_comments_tool(files=_files())
 
     assert await tool.ainvoke({"path": "/conversation/input/a.md"}) == (
         "Could not list comments: a canvas document is a .md file under /conversation/output/.")
@@ -387,12 +402,12 @@ async def pg_pool(agents_service):
 async def store(pg_pool, tool_mod, monkeypatch):
     """A comment store on the scratch database, behind the tools and the routes; brief.md has v1."""
     comments = importlib.import_module("harness.conversation_files.comments").DocumentCommentStore(
-        pg_pool, importlib.import_module("harness.conversation_files.cipher").FileCipher(None))
+        pg_pool, importlib.import_module("harness.conversation_files.cipher").FileCipher(None), branch="b1")
     await comments.setup()
-    monkeypatch.setattr(tool_mod, "_store", lambda: comments)
+    monkeypatch.setattr(tool_mod, "_store", lambda *_: comments)
     monkeypatch.setattr(importlib.import_module("harness.tools.canvas_comments.listing"), "_store",
-                        lambda: comments)
-    monkeypatch.setattr(importlib.import_module("utils.document_comments"), "_store", lambda: comments)
+                        lambda *_: comments)
+    monkeypatch.setattr(importlib.import_module("utils.document_comments"), "_store", lambda *_: comments)
     await comments.create("u1", "c1", BRIEF, DOC.encode(), agent_slug="omni")
     await comments.capture("u1", "c1", [BRIEF], run_id=None)
     return comments
@@ -401,9 +416,8 @@ async def store(pg_pool, tool_mod, monkeypatch):
 def _tools(tool_mod, budget=None, conversation_id="c1"):
     budget = budget or tool_mod.CommentWriteBudget()
     return (
-        tool_mod.build_reply_to_comment_tool(user_id="u1", conversation_id=conversation_id, budget=budget),
-        tool_mod.build_add_comment_tool(user_id="u1", conversation_id=conversation_id, run_id="run-1",
-                                        budget=budget),
+        tool_mod.build_reply_to_comment_tool(files=_files(conversation_id), budget=budget),
+        tool_mod.build_add_comment_tool(files=_files(conversation_id, "run-1"), budget=budget),
     )
 
 
@@ -501,7 +515,7 @@ async def test_the_store_limits_hold_for_the_agent(store, tool_mod, monkeypatch)
 
 def _list_tool(conversation_id="c1"):
     listing = importlib.import_module("harness.tools.canvas_comments.listing")
-    return listing.build_list_comments_tool(user_id="u1", conversation_id=conversation_id)
+    return listing.build_list_comments_tool(files=_files(conversation_id))
 
 
 async def test_list_comments_reads_open_resolved_and_all(store):
@@ -565,7 +579,9 @@ async def test_list_comments_reads_in_one_statement(store, monkeypatch):
     monkeypatch.setattr(psycopg.AsyncConnection, "execute", counting)
     text = await _list_tool().ainvoke({"status": "all"})
 
-    assert len(statements) == 1
+    # One read; the other statement is the lookup that the branch has its files.
+    assert [q for q in statements if "conversation_file_branches" not in q] == statements[-1:]
+    assert len(statements) == 2
     assert text.count("[thread ") == 2 and "  ↳ user: r2" in text
 
 
@@ -594,6 +610,8 @@ async def test_the_build_probe_sees_the_conversations_documents(store, monkeypat
         def __init__(self, context, async_task_id=None):
             self.context = context
             self.async_task_id = async_task_id
+            # The run's files, on its branch: what the probe reads the documents of.
+            self.conversation_files = SimpleNamespace(store=store)
 
     probe = deep_agent.DeepAgent._probe_canvas_documents
     assert await probe(_Probe({"user_id": "u1", "conversation_id": "c1"})) is True

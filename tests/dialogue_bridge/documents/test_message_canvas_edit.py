@@ -197,7 +197,9 @@ async def test_a_send_checks_the_document_and_stores_the_edit(
         )
 
     [call] = agents_service.called("GET", _versions_path(seeded_user.id, conversation_id))
-    assert dict(call.url.params) == {"path": BRIEF, "limit": "1"}
+    assert {key: call.url.params[key] for key in ("path", "limit")} == {"path": BRIEF, "limit": "1"}
+    # Checked on the branch the message is sent on.
+    assert "branch_thread_id" in call.url.params
     assert call.headers.get("x-internal-proxy-secret")
     user_message = await _user_message_of(session_factory, response.message.id)
     assert user_message.canvas_edit == _edit()

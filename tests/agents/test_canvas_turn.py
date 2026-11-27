@@ -51,6 +51,14 @@ def _edit(**overrides):
     return raw
 
 
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
+
 @pytest.fixture
 def canvas(agents_service):
     return importlib.import_module("harness.canvas")
@@ -243,10 +251,10 @@ async def test_a_canvas_edit_for_an_agent_without_documents_is_refused(agents_se
     canvas_turn = importlib.import_module("utils.canvas_turn")
     with pytest.raises(canvas_turn.CanvasEditRefused):
         await canvas_turn.prepare_canvas_turn([{"role": "user", "content": "x"}],
-                                              {"canvas_edit": _edit()}, deep_agent=False)
+                                              {"canvas_edit": _edit()}, deep_agent=False, branch="b1")
     # Without one, a langgraph agent's turn is untouched.
     messages = [{"role": "user", "content": "x"}]
-    assert await canvas_turn.prepare_canvas_turn(messages, {}, deep_agent=False) is messages
+    assert await canvas_turn.prepare_canvas_turn(messages, {}, deep_agent=False, branch="b1") is messages
 
 
 async def test_without_a_database_the_turn_still_gets_its_instruction(agents_service, monkeypatch):
@@ -254,7 +262,7 @@ async def test_without_a_database_the_turn_still_gets_its_instruction(agents_ser
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: False)
     out = await canvas_turn.prepare_canvas_turn(
         [{"role": "user", "content": "Make it shorter"}],
-        {"user_id": "u1", "conversation_id": "c1", "canvas_edit": _edit()}, deep_agent=True,
+        {"user_id": "u1", "conversation_id": "c1", "canvas_edit": _edit()}, deep_agent=True, branch="b1",
     )
     assert out[0]["content"].startswith("The user selected a passage in the canvas document `brief.md`")
 
@@ -267,10 +275,10 @@ async def test_a_failing_database_is_a_turn_without_a_note(agents_service, monke
             raise RuntimeError("database down")
 
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: True)
-    monkeypatch.setattr(canvas_turn, "_seen_store", lambda: Broken())
+    monkeypatch.setattr(canvas_turn, "_seen_store", lambda *_: Broken())
     messages = [{"role": "user", "content": "hello"}]
     assert await canvas_turn.prepare_canvas_turn(
-        messages, {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True
+        messages, {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True, branch="b1"
     ) == messages
 
 
@@ -342,17 +350,17 @@ async def pg_pool(agents_service):
 async def seen(pg_pool, agents_service, monkeypatch):
     """A DocumentSeenStore on the scratch database, behind the capture route and the turn."""
     cipher = importlib.import_module("harness.conversation_files.cipher").FileCipher(None)
-    store = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, cipher)
+    store = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(pg_pool, cipher, branch="b1")
     await store.setup()
     await store.setup()  # idempotent: every boot runs it
     documents = importlib.import_module("utils.documents")
-    monkeypatch.setattr(documents, "_store", lambda: store)
-    monkeypatch.setattr(documents, "_seen_store", lambda: store)
+    monkeypatch.setattr(documents, "_store", lambda *_: store)
+    monkeypatch.setattr(documents, "_seen_store", lambda *_: store)
     canvas_turn = importlib.import_module("utils.canvas_turn")
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: True)
-    monkeypatch.setattr(canvas_turn, "_seen_store", lambda: store)
-    comments = importlib.import_module("harness.conversation_files.comments").DocumentCommentStore(pg_pool, cipher)
-    monkeypatch.setattr(canvas_turn, "_comment_store", lambda: comments)
+    monkeypatch.setattr(canvas_turn, "_seen_store", lambda *_: store)
+    comments = importlib.import_module("harness.conversation_files.comments").DocumentCommentStore(pg_pool, cipher, branch="b1")
+    monkeypatch.setattr(canvas_turn, "_comment_store", lambda *_: comments)
     return store
 
 
@@ -370,7 +378,7 @@ async def _turn(messages=None, **context):
     canvas_turn = importlib.import_module("utils.canvas_turn")
     return await canvas_turn.prepare_canvas_turn(
         messages or [{"role": "user", "content": "hello"}],
-        {"user_id": "u1", "conversation_id": "c1", **context}, deep_agent=True,
+        {"user_id": "u1", "conversation_id": "c1", **context}, deep_agent=True, branch="b1",
     )
 
 
@@ -478,7 +486,7 @@ async def test_another_users_conversation_is_never_read(seen):
 async def test_a_fork_copies_the_markers_and_a_reap_and_a_purge_drop_them(seen, pg_pool):
     await _document(seen)
     await _turn()
-    await seen.copy_conversation("u1", "c1", "fork")
+    await seen.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])
     assert await seen.seen_versions("u1", "fork") == {BRIEF: 1}
 
     await seen.delete_conversation("u1", "c1")
@@ -486,5 +494,6 @@ async def test_a_fork_copies_the_markers_and_a_reap_and_a_purge_drop_them(seen, 
     assert await seen.seen_versions("u1", "fork") == {BRIEF: 1}
 
     counts = await seen.purge_user("u1")
-    assert counts["conversation_file_seen"] == 1
+    # The fork's rows sit in its legacy bucket and in the branch that read them.
+    assert counts["conversation_file_seen"] == 2
     assert await _count(pg_pool, "conversation_file_seen") == 0

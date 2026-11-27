@@ -18,6 +18,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from core.security.internal_trust import require_internal_caller
+from utils.file_branch import FileBranch, file_branch
 from harness.conversation_files.versions import DocumentNotFound, InvalidDocumentPath
 from harness.conversions import (
     MAX_INPUT_BYTES,
@@ -48,10 +49,13 @@ def _conversion_error(exc: Exception) -> HTTPException:
 
 
 @router.post("/documents/export")
-async def export_canvas_document(user_id: str, conversation_id: str, payload: ExportDocumentRequest) -> Response:
-    """One version of a document as docx / pdf (through the box) or md (as stored)."""
+async def export_canvas_document(
+    user_id: str, conversation_id: str, payload: ExportDocumentRequest, branch: FileBranch = Depends(file_branch)
+) -> Response:
+    """One version of a branch's document as docx / pdf (through the box) or md (as stored)."""
     try:
-        exported = await export_document(user_id, conversation_id, payload.path, payload.version, payload.format)
+        exported = await export_document(user_id, conversation_id, payload.path, payload.version, payload.format,
+                                         branch=branch)
     except InvalidDocumentPath as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT,
                             "A canvas document is a .md file under /conversation/output/.") from exc

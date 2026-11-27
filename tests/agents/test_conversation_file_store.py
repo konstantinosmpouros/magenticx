@@ -77,7 +77,7 @@ async def pg_pool(agents_service):
 
 @pytest_asyncio.fixture
 async def pg_store(pg_pool):
-    store = importlib.import_module("harness.conversation_files.store").ConversationFileStore(pg_pool, _cipher(KEY))
+    store = importlib.import_module("harness.conversation_files.store").ConversationFileStore(pg_pool, _cipher(KEY), branch="b1")
     await store.setup()
     await store.setup()  # idempotent: every boot runs it
     return store
@@ -179,8 +179,8 @@ async def test_listing_is_by_prefix_and_never_crosses_users_or_conversations(sto
 async def test_a_fork_gets_the_files_and_a_delete_takes_only_its_own(store):
     await store.create("u1", "c1", "/conversation/output/a.md", b"shared", agent_slug="omni")
 
-    assert await store.copy_conversation("u1", "c1", "fork") == 1
-    assert await store.copy_conversation("u1", "c1", "fork") == 0  # a retried copy changes nothing
+    assert await store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[]) == 1
+    assert await store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[]) == 0  # a retried copy changes nothing
     assert await store.delete_conversation("u1", "c1") == (1, 6)
 
     assert await store.read("u1", "fork", "/conversation/output/a.md") == b"shared"
@@ -192,7 +192,8 @@ async def test_an_account_purge_takes_every_file_of_that_user_only(store):
     await store.create("u2", "c3", "/conversation/c.md", b"c", agent_slug="omni")
 
     assert await store.purge_user("u1") == {
-        "conversation_files": 2, "conversation_file_versions": 0, "conversation_file_seen": 0,
+        "conversation_files": 2, "conversation_file_writes": 2, "conversation_file_branches": 2,
+        "conversation_file_versions": 0, "conversation_file_seen": 0,
         "conversation_file_comments": 0, "conversation_file_suggestions": 0, "conversation_file_blobs": 2,
     }
     assert await store.read("u2", "c3", "/conversation/c.md") == b"c"
@@ -214,7 +215,7 @@ async def test_a_fork_copies_rows_not_bytes(pg_store, pg_pool):
     for index in range(3):
         await pg_store.create("u1", "c1", f"/conversation/output/f{index}.bin", bytes([index]) * 1000, agent_slug="o")
 
-    await pg_store.copy_conversation("u1", "c1", "fork")
+    await pg_store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])
 
     assert await _count(pg_pool, "conversation_files") == 6
     assert await _count(pg_pool, "conversation_file_blobs") == 3  # the same three blobs, named twice
@@ -231,13 +232,14 @@ async def test_identical_content_is_stored_once_per_user(pg_store, pg_pool):
 
 async def test_a_blob_goes_with_the_last_row_that_names_it(pg_store, pg_pool):
     await pg_store.create("u1", "c1", "/conversation/output/a.md", b"v1", agent_slug="o")
-    await pg_store.copy_conversation("u1", "c1", "fork")
+    await pg_store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])
 
     await pg_store.edit("u1", "c1", "/conversation/output/a.md", lambda b: b"v2", agent_slug="o")
     assert await _count(pg_pool, "conversation_file_blobs") == 2  # v1 still named by the fork
 
     await pg_store.delete_conversation("u1", "fork")
-    assert await _count(pg_pool, "conversation_file_blobs") == 1  # v1 had no name left
+    # v1 is still named by c1's write log (a later fork of c1 may cut before v2).
+    assert await _count(pg_pool, "conversation_file_blobs") == 2
 
     await pg_store.replace("u1", "c1", "/conversation/output/a.md", b"v3", agent_slug="o")
     await pg_store.delete_conversation("u1", "c1")

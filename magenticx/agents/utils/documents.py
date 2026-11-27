@@ -17,7 +17,7 @@ from harness.conversation_files.versions import (
     InvalidDocumentPath,
     document_path,
 )
-from harness.memory import get_memory_pool
+from utils.file_branch import FileBranch
 from schema import (
     CapturedDocument,
     CaptureDocumentsResponse,
@@ -32,12 +32,12 @@ from schema import (
 logger = get_logger(__name__)
 
 
-def _store() -> DocumentVersionStore:
-    return DocumentVersionStore(get_memory_pool())
+def _store(branch: FileBranch) -> DocumentVersionStore:
+    return branch.store(DocumentVersionStore)
 
 
-def _seen_store() -> DocumentSeenStore:
-    return DocumentSeenStore(get_memory_pool())
+def _seen_store(branch: FileBranch) -> DocumentSeenStore:
+    return branch.store(DocumentSeenStore)
 
 
 def _content(version: DocumentVersion) -> DocumentVersionContent:
@@ -53,9 +53,11 @@ def _content(version: DocumentVersion) -> DocumentVersionContent:
     )
 
 
-async def list_documents(user_id: str, conversation_id: str, limit: int) -> DocumentListResponse:
-    """The conversation's documents, each at its latest version, newest first."""
-    rows = await _store().list_documents(user_id, conversation_id, limit=limit)
+async def list_documents(
+    user_id: str, conversation_id: str, limit: int, *, branch: FileBranch
+) -> DocumentListResponse:
+    """The branch's documents, each at its latest version, newest first."""
+    rows = await _store(branch).list_documents(user_id, conversation_id, limit=limit)
     return DocumentListResponse(documents=[
         DocumentSummary(path=row.path, name=row.name, version=row.version, author=row.author,
                         updated_at=row.created_at, size_bytes=row.size_bytes)
@@ -63,19 +65,21 @@ async def list_documents(user_id: str, conversation_id: str, limit: int) -> Docu
     ])
 
 
-async def latest_document(user_id: str, conversation_id: str, path: str) -> DocumentVersionContent:
+async def latest_document(
+    user_id: str, conversation_id: str, path: str, *, branch: FileBranch
+) -> DocumentVersionContent:
     """The latest version with its text (v1 recorded first for an older document)."""
     canonical = document_path(path)  # before the store: a bad path never reaches SQL
-    return _content(await _store().latest(user_id, conversation_id, canonical))
+    return _content(await _store(branch).latest(user_id, conversation_id, canonical))
 
 
 async def list_document_versions(
-    user_id: str, conversation_id: str, path: str, limit: int
+    user_id: str, conversation_id: str, path: str, limit: int, *, branch: FileBranch
 ) -> DocumentVersionsResponse:
     """A document's history without text, newest first. An empty list is not an error:
     the UI asks after it opened the document, which already recorded v1."""
     canonical = document_path(path)
-    rows = await _store().list_versions(user_id, conversation_id, canonical, limit=limit)
+    rows = await _store(branch).list_versions(user_id, conversation_id, canonical, limit=limit)
     return DocumentVersionsResponse(path=canonical, versions=[
         DocumentVersionSummary(version=row.version, author=row.author, base_version=row.base_version,
                                created_at=row.created_at, size_bytes=row.size_bytes)
@@ -84,26 +88,26 @@ async def list_document_versions(
 
 
 async def get_document_version(
-    user_id: str, conversation_id: str, path: str, version: int
+    user_id: str, conversation_id: str, path: str, version: int, *, branch: FileBranch
 ) -> DocumentVersionContent:
     """One version with its text; the store raises ``DocumentNotFound`` when absent."""
     canonical = document_path(path)
-    return _content(await _store().get_version(user_id, conversation_id, canonical, version))
+    return _content(await _store(branch).get_version(user_id, conversation_id, canonical, version))
 
 
 async def save_document_version(
-    user_id: str, conversation_id: str, path: str, base_version: int, content: str
+    user_id: str, conversation_id: str, path: str, base_version: int, content: str, *, branch: FileBranch
 ) -> SaveDocumentVersionResponse:
     """The user's save as the next version; ``StaleBase`` when ``base_version`` is not the latest."""
     canonical = document_path(path)
-    saved = await _store().save_user_version(
+    saved = await _store(branch).save_user_version(
         user_id, conversation_id, canonical, base_version=base_version, content=content
     )
     return SaveDocumentVersionResponse(path=saved.path, version=saved.version, created_at=saved.created_at)
 
 
 async def capture_documents(
-    user_id: str, conversation_id: str, paths: list[str], source_run_id: str | None
+    user_id: str, conversation_id: str, paths: list[str], source_run_id: str | None, *, branch: FileBranch
 ) -> CaptureDocumentsResponse:
     """Run end: record the documents the run changed as agent versions, then mark them seen.
 
@@ -130,7 +134,7 @@ async def capture_documents(
             continue
         if canonical not in presented:
             presented.append(canonical)
-    store = _seen_store()
+    store = _seen_store(branch)
     existing = [p for p in await store.document_paths(user_id, conversation_id, limit=MAX_TURN_DOCUMENTS)
                 if p not in presented]
     results = await store.capture(user_id, conversation_id, presented + existing, run_id=source_run_id)

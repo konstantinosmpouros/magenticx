@@ -15,8 +15,8 @@
    shape — .composer-glow clips and blurs it into the halo, .composer-ring masks
    it to the 1px hairline. Turning a layer is compositor work, so nothing is
    repainted per frame (animating the gradient's angle repainted it, blur
-   included, on the main thread every frame). It turns only while the composer
-   is focused or busy; otherwise it holds where it stopped. */
+   included, on the main thread every frame). Being that cheap, it always
+   turns: slowly at rest, faster while the agent works. */
 
 .composer-shell {
   --composer-orbit-duration: 6s;
@@ -101,7 +101,7 @@
   width: var(--composer-light-side);
   height: var(--composer-light-side);
   background: conic-gradient(from 0deg, var(--composer-light-stops));
-  animation: composer-orbit var(--composer-orbit-duration) linear infinite paused;
+  animation: composer-orbit var(--composer-orbit-duration) linear infinite;
 }
 
 @supports (width: hypot(1px, 1px)) {
@@ -109,11 +109,6 @@
   .composer-ring::before {
     --composer-light-side: calc(hypot(100cqw, 100cqh) + 6px);
   }
-}
-
-.composer-shell:focus-within :is(.composer-glow, .composer-ring)::before,
-.composer-shell[data-busy="true"] :is(.composer-glow, .composer-ring)::before {
-  animation-play-state: running;
 }
 
 .composer-shell:focus-within .composer-ring,

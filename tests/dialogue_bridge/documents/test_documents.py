@@ -35,6 +35,7 @@ import engine.inference.output_capture as oc
 from core.auth.session import require_csrf_protection
 from core.database import AttachmentTable, ConversationTable, MessageTable
 from core.settings import settings
+from engine.conversations.file_branches import FileBranch, document_branch
 from schema import AttachmentOut
 from engine.conversations.conversations import clone_branch_to_conversation
 from engine.inference.runs.runtime import InferenceRunRuntime
@@ -61,6 +62,16 @@ async def _conversation(session_factory, user_id: str, agent, *, is_trial: bool 
         await s.commit()
         return conv.id
 
+
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Document routes resolve the branch from a message of the conversation;
+    these tests are about the pass-through, so the branch is given: one of
+    its answers on thread b1."""
+    if "app" in request.fixturenames or "client" in request.fixturenames:
+        app = request.getfixturevalue("app")
+        app.dependency_overrides[document_branch] = lambda: FileBranch(thread_id="b1", message_id="m1")
 
 @pytest.fixture
 async def conv(session_factory, seeded_user, seeded_agent):
@@ -193,6 +204,32 @@ async def test_a_bad_request_never_goes_upstream(client, agents_service, seeded_
     assert agents_service.calls == []
 
 
+async def test_the_documents_are_those_of_the_branch_on_screen(
+    app, client, agents_service, session_factory, seeded_user, conv
+):
+    """The UI names a message; the bridge sends the agents service that message's branch."""
+    app.dependency_overrides.pop(document_branch)
+    async with session_factory() as s:
+        question = MessageTable(conversation_id=conv, sender="user", content="q")
+        s.add(question)
+        await s.flush()
+        answer = MessageTable(conversation_id=conv, sender="ai", content="a",
+                              parent_message_id=question.id, checkpoint_thread_id="thread-1")
+        s.add(answer)
+        await s.commit()
+        answer_id = answer.id
+    agents_service.on("GET", _upstream(seeded_user.id, conv), httpx.Response(200, json={"documents": []}))
+
+    listed = await client.get(_route(seeded_user.id, conv), params={"messageId": answer_id})
+    unnamed = await client.get(_route(seeded_user.id, conv))
+    elsewhere = await client.get(_route(seeded_user.id, conv), params={"messageId": "not-in-this-conversation"})
+
+    assert listed.status_code == 200
+    [call] = agents_service.called("GET", _upstream(seeded_user.id, conv))
+    assert (call.url.params["branch_thread_id"], call.url.params["message_id"]) == ("thread-1", answer_id)
+    assert (unnamed.status_code, elsewhere.status_code) == (422, 404)
+
+
 async def test_a_save_needs_the_csrf_token(app, client, agents_service, seeded_user, conv):
     app.dependency_overrides.pop(require_csrf_protection)
 
@@ -212,7 +249,7 @@ class _Files:
     def __init__(self, files: dict[str, bytes]):
         self.files = files
 
-    async def fetch(self, url, paths):
+    async def fetch(self, url, paths, branch):
         return [{"path": p, "filename": p.rsplit("/", 1)[-1], "mime": "text/markdown", "size": len(self.files[p]),
                  "base64": base64.b64encode(self.files[p]).decode()} for p in paths if p in self.files]
 

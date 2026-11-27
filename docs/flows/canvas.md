@@ -2,14 +2,16 @@
 
 A **canvas document** is a markdown file the agent wrote under `/conversation/output/` and presented with `present_artifact` (plan 44). Only such files are documents: Office files and PDFs stay previews. Plan 36 keeps one row per path in `agent_runtime.conversation_files`, so an overwrite used to lose the old text; Phase 4.1 adds the history. Every version of a document is a row in `conversation_file_versions` naming the same encrypted, content-addressed blob a file does, and records its author (the agent or the user) and the version it was based on. The agents service owns the versions and their rules; the dialogue_bridge passes them through to the conversation's owner and, at the end of every run, asks the agents service to record what the agent presented. Phase 4.1 shipped the storage, the routes and a read-only canvas; Phase 4.2 makes the canvas an editor whose saves are the user's versions, with a conflict dialog, history, compare and restore; Phase 4.3 closes the loop with the agent: it is told what the user changed since its last turn, and **Ask agent** on a selection asks it to change only that passage; Phase 4.4 adds **comments** — threads on a passage, with replies — that the agent reads, open ones only, in the same per-turn note; Phase 4.6 adds **Suggesting mode**, where the user's own edits become suggestions (tracked changes) that leave the document as it is until accepted — the agent's edits always apply directly (UI: Phase 8; storage, routes and what the agent is told: Phase 10).
 
+**Documents are kept per branch.** A conversation's files, and with them its documents' versions, comments, suggestions and seen markers, belong to one branch of the conversation: its checkpoint thread. Every canvas call names a message of the branch on screen (`messageId`, the last saved message of the visible path); the bridge resolves the branch from it (`engine/conversations/file_branches.py`: the nearest answer at or above that message with a `checkpoint_thread_id`) and sends `branch_thread_id` (and, for a save, the answer as `message_id`) to the agents service. An edit or a retry gives the new branch the documents as they were at the fork point: the versions made by the answers up to there, the comments on those versions, the suggestions whose base came, and the seen marker clamped to them. Switching branches in the chat re-reads the canvas, since the message is in every query key (`features/canvas/lib/queryKeys.ts`); a document the other branch does not have shows as no longer available. Full storage rules: [database-schema](../architecture/database-schema.md#conversation_files--conversation_file_blobs).
+
 ---
 
 ## Services Involved
 
 ```mermaid
 flowchart LR
-    UI["agentic_ui (canvas)"] -->|"/api/v1/conversations/{uid}/{cid}/documents…"| BR["dialogue_bridge<br/>router/documents/documents.py"]
-    BR -->|"owner check · rate limit · CSRF<br/>internal secret + mTLS"| AG["agents<br/>router/documents.py"]
+    UI["agentic_ui (canvas)"] -->|"/api/v1/conversations/{uid}/{cid}/documents…?messageId="| BR["dialogue_bridge<br/>router/documents/documents.py"]
+    BR -->|"owner check · rate limit · CSRF · branch from messageId<br/>internal secret + mTLS"| AG["agents<br/>router/documents.py"]
     AG --> PG[("agent_runtime<br/>conversation_file_versions · conversation_file_seen<br/>conversation_file_comments · conversation_file_suggestions<br/>conversation_files · conversation_file_blobs")]
     BR -->|"run finalize: POST …/documents/capture"| AG
 ```
@@ -28,12 +30,12 @@ sequenceDiagram
     participant PG as agent_runtime
 
     Note over BR: run ends → _finish_run
-    BR->>AG: GET …/files?paths=… (snapshot, attachments.source_path set)
-    BR->>AG: POST …/documents/capture {paths: [*.md], source_run_id}
-    AG->>PG: lock (conversation, path) → new agent version if the bytes changed
-    UI->>BR: GET …/documents/latest?path=/conversation/output/brief.md
-    BR->>BR: validate_userId → rate limit → validate_convId (404 if not the owner)
-    BR->>AG: GET …/documents/latest?path=…
+    BR->>AG: GET …/files?paths=…&branch_thread_id=<run's thread> (snapshot, attachments.source_path set)
+    BR->>AG: POST …/documents/capture?branch_thread_id=… {paths: [*.md], source_run_id}
+    AG->>PG: lock (conversation, branch, path) → new agent version if the bytes changed
+    UI->>BR: GET …/documents/latest?messageId=…&path=/conversation/output/brief.md
+    BR->>BR: validate_userId → rate limit → validate_convId (404 if not the owner) → the message's branch
+    BR->>AG: GET …/documents/latest?branch_thread_id=…&message_id=…&path=…
     AG-->>BR: {path, name, version, author, base_version, created_at, size_bytes, content}
     BR-->>UI: same JSON, re-validated
     UI->>BR: POST …/documents/versions {path, base_version, content} (CSRF)
@@ -52,7 +54,8 @@ The bridge already snapshots every presented file at finalize (`capture_presente
 | --- | --- |
 | Eligible path | normalised, under `/conversation/output/`, ending `.md` (also a CHECK on the table) |
 | Skipped silently | ineligible paths, missing files, files over 1 MiB |
-| Per path | one transaction under `pg_advisory_xact_lock(hashtextextended('conversation_file_versions\n<cid>\n<path>', 0))` |
+| Per path | one transaction under `pg_advisory_xact_lock(hashtextextended('conversation_file_versions\n<cid>\n<branch>\n<path>', 0))` |
+| Branch | the run's own thread (`run_file_branch`); the version records the run as its `message_id` |
 | Attachment | `attachments.source_path` = the presented path (migration `0049`), so the card knows which document it is |
 
 ---

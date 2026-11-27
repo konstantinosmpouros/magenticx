@@ -35,6 +35,28 @@ def nearest_committed_ai(messages: list[MessageTable], start_message_id: str | N
     return None
 
 
+def answers_up_to(messages: list[MessageTable], message_id: str) -> list[str]:
+    """The ids of the AI answers on the path from the root to ``message_id`` (inclusive), root first.
+
+    What a fork sends the agents service with ``fork_from`` (as ``messages``):
+    the new branch gets each conversation file as of the latest write one of
+    these answers made, so what the source branch wrote after the fork point
+    does not come along. Empty when the message is not in the conversation.
+    """
+    lookup = {message.id: message for message in messages}
+    current = lookup.get(message_id)
+    answers: list[str] = []
+    seen: set[str] = set()
+    while current is not None and current.id not in seen:
+        seen.add(current.id)
+        if current.sender == "ai":
+            answers.append(current.id)
+        parent_id = current.parent_message_id
+        current = lookup.get(parent_id) if parent_id else None
+    answers.reverse()
+    return answers
+
+
 def build_path_to_message(messages: list[MessageTable], message_id: str) -> list[MessageTable]:
     """Return the parent-linked lineage ending at a message in this conversation."""
     lookup = {message.id: message for message in messages}

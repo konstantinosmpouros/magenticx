@@ -5,6 +5,7 @@ import { triggerBrowserDownload } from "@/shared/lib/download";
 import { useToast } from "@/shared/hooks/use-toast";
 import { toastError } from "@/shared/lib/toast";
 import type { CanvasExportFormat } from "@/shared/lib/types";
+import { useCanvasBranchMessage } from "../lib/branch";
 
 /**
  * Export the open document (plan 44, Phase 4.5): one version as Word, PDF or
@@ -26,6 +27,7 @@ export function useCanvasExport({
   /** The document's title: the file's name when the server sends none. */
   title: string;
 }) {
+  const messageId = useCanvasBranchMessage();
   const { toast } = useToast();
   const [pending, setPending] = useState<CanvasExportFormat | null>(null);
   const running = useRef(false);
@@ -39,6 +41,7 @@ export function useCanvasExport({
         const file = await exportDocument(
           userId,
           conversationId,
+          messageId,
           { path, format, ...(version === null ? {} : { version }) },
           `${title || "document"}.${format}`,
         );
@@ -52,7 +55,7 @@ export function useCanvasExport({
         setPending(null);
       }
     },
-    [userId, conversationId, path, title, toast],
+    [userId, conversationId, messageId, path, title, toast],
   );
 
   return { pending, run };

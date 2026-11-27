@@ -62,6 +62,7 @@ function renderCanvas(props: Partial<React.ComponentProps<typeof DocumentCanvas>
         <DocumentCanvas
           userId="user-1"
           conversationId="conv-1"
+          messageId="msg-1"
           path={PATH}
           revision="0"
           compact={false}
@@ -103,7 +104,7 @@ describe("document canvas", () => {
     resolve(version());
 
     expect(await screen.findByRole("heading", { level: 1, name: "The brief" })).toBeInTheDocument();
-    expect(api.getLatestDocument).toHaveBeenCalledWith("user-1", "conv-1", PATH, expect.anything());
+    expect(api.getLatestDocument).toHaveBeenCalledWith("user-1", "conv-1", "msg-1", PATH, expect.anything());
     expect(screen.getByText("versions")).toBeInTheDocument();
     expect(screen.getByLabelText("Written by the agent")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^Version 2, the latest/ })).toBeInTheDocument();
@@ -203,6 +204,7 @@ describe("document canvas", () => {
     expect(api.getDocumentVersion).toHaveBeenCalledWith(
       "user-1",
       "conv-1",
+      "msg-1",
       PATH,
       1,
       expect.anything(),

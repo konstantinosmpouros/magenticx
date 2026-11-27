@@ -49,6 +49,14 @@ PROPOSED = "# Brief\n\nThe plan is very short.\nKeep it.\nA new line.\n"
 # ---------------------------------------------------------------------------
 # No database needed: the note
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _on_one_branch(request):
+    """Every file route names a conversation branch: these tests work on one."""
+    if "client" in request.fixturenames:
+        client = request.getfixturevalue("client")
+        client.params = client.params.merge({"branch_thread_id": "b1"})
+
 @pytest.fixture
 def notes():
     return importlib.import_module("harness.canvas.notes")
@@ -160,7 +168,7 @@ async def test_the_suggestion_routes_are_internal_only(client):
 ])
 async def test_a_bad_shape_is_a_422_before_any_query(client, internal_headers, agents_service, monkeypatch,
                                                      method, kwargs):
-    def no_store():
+    def no_store(*_):
         raise AssertionError("the store must not be reached")
 
     monkeypatch.setattr(importlib.import_module("utils.document_suggestions"), "_store", no_store)
@@ -202,7 +210,8 @@ async def pg_pool(agents_service):
 def _make_store(pg_pool, cipher=None):
     module = importlib.import_module("harness.conversation_files.suggestions")
     return module.DocumentSuggestionStore(
-        pg_pool, cipher or importlib.import_module("harness.conversation_files.cipher").FileCipher(None))
+        pg_pool, cipher or importlib.import_module("harness.conversation_files.cipher").FileCipher(None),
+        branch="b1")
 
 
 @pytest_asyncio.fixture
@@ -211,7 +220,7 @@ async def store(pg_pool, agents_service, monkeypatch):
     suggestions = _make_store(pg_pool)
     await suggestions.setup()
     await suggestions.setup()  # idempotent: every boot runs it
-    monkeypatch.setattr(importlib.import_module("utils.document_suggestions"), "_store", lambda: suggestions)
+    monkeypatch.setattr(importlib.import_module("utils.document_suggestions"), "_store", lambda *_: suggestions)
     await suggestions.create("u1", "c1", BRIEF, BASE.encode(), agent_slug="omni")
     await suggestions.capture("u1", "c1", [BRIEF], run_id=None)
     return suggestions
@@ -326,8 +335,8 @@ async def test_the_text_is_encrypted_at_rest(pg_pool, agents_service):
 async def test_a_fork_copies_the_set_and_a_reap_and_a_purge_drop_it(store, pg_pool):
     await store.put("u1", "c1", BRIEF, base_version=1, content=PROPOSED)
 
-    await store.copy_conversation("u1", "c1", "fork")
-    await store.copy_conversation("u1", "c1", "fork")  # a retried copy changes nothing
+    await store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])
+    await store.copy_conversation("u1", "c1", "fork", source_branch="b1", messages=[])  # a retried copy changes nothing
     fork = await store.get("u1", "fork", BRIEF)
     assert (fork.base_version, fork.content) == (1, PROPOSED)
 
@@ -339,7 +348,8 @@ async def test_a_fork_copies_the_set_and_a_reap_and_a_purge_drop_it(store, pg_po
     await store.capture("u2", "c2", [BRIEF], run_id=None)
     await store.put("u2", "c2", BRIEF, base_version=1, content="theirs")
     counts = await store.purge_user("u1")
-    assert counts["conversation_file_suggestions"] == 1
+    # The fork's rows sit in its legacy bucket and in the branch that read them.
+    assert counts["conversation_file_suggestions"] == 2
     assert (await store.get("u2", "c2", BRIEF)).content == "theirs"
 
 
@@ -350,15 +360,15 @@ async def test_pending_sets_feed_the_turn_note(store, monkeypatch):
     await store.capture("u1", "c1", [BRIEF], run_id="run-1")
     canvas_turn = importlib.import_module("utils.canvas_turn")
     cipher = store._cipher
-    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(store._pool, cipher)
-    comments = importlib.import_module("harness.conversation_files.comments").DocumentCommentStore(store._pool, cipher)
+    seen = importlib.import_module("harness.conversation_files.seen").DocumentSeenStore(store._pool, cipher, branch="b1")
+    comments = importlib.import_module("harness.conversation_files.comments").DocumentCommentStore(store._pool, cipher, branch="b1")
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: True)
-    monkeypatch.setattr(canvas_turn, "_seen_store", lambda: seen)
-    monkeypatch.setattr(canvas_turn, "_comment_store", lambda: comments)
-    monkeypatch.setattr(canvas_turn, "_suggestion_store", lambda: store)
+    monkeypatch.setattr(canvas_turn, "_seen_store", lambda *_: seen)
+    monkeypatch.setattr(canvas_turn, "_comment_store", lambda *_: comments)
+    monkeypatch.setattr(canvas_turn, "_suggestion_store", lambda *_: store)
 
     out = await canvas_turn.prepare_canvas_turn(
-        [{"role": "user", "content": "hello"}], {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True)
+        [{"role": "user", "content": "hello"}], {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True, branch="b1")
 
     text = out[0]["content"]
     assert ("- The user's pending suggestions on `brief.md` (made on v1; the document is now at v2, "
@@ -382,10 +392,10 @@ async def test_a_failing_suggestion_read_is_a_turn_without_that_part(agents_serv
             return []
 
     monkeypatch.setattr(canvas_turn, "has_memory_pool", lambda: True)
-    monkeypatch.setattr(canvas_turn, "_seen_store", lambda: Empty())
-    monkeypatch.setattr(canvas_turn, "_comment_store", lambda: Empty())
-    monkeypatch.setattr(canvas_turn, "_suggestion_store", lambda: Broken())
+    monkeypatch.setattr(canvas_turn, "_seen_store", lambda *_: Empty())
+    monkeypatch.setattr(canvas_turn, "_comment_store", lambda *_: Empty())
+    monkeypatch.setattr(canvas_turn, "_suggestion_store", lambda *_: Broken())
     messages = [{"role": "user", "content": "hello"}]
 
     assert await canvas_turn.prepare_canvas_turn(
-        messages, {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True) == messages
+        messages, {"user_id": "u1", "conversation_id": "c1"}, deep_agent=True, branch="b1") == messages

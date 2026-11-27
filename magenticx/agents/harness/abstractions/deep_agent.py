@@ -278,16 +278,26 @@ class DeepAgent(BaseAgent, ABC):
         ``present_artifact`` share it — the uploads are listed once per run
         however many of them look. ``user_id`` and ``conversation_id`` come
         from ``self.context``, which ``BaseAgent._validate_context_config``
-        guarantees.
+        guarantees. The files are the run's **branch**'s (its checkpoint
+        thread; a task's is its orchestrator's), and each write is logged
+        under the answer the run belongs to, which is what a later fork cuts
+        on.
         """
         if self._conversation_files is None:
             ctx = self.context
+            # A task's run_id is its own; the answer it works for is the orchestrator's.
+            answer_id = ctx.get("branch_message_id") or ctx.get("run_id")
             self._conversation_files = ConversationFiles(
                 user_id=ctx["user_id"],
                 conversation_id=ctx["conversation_id"],
                 agent_slug=self.name,
-                store=ConversationFileStore(get_memory_pool()),
+                store=ConversationFileStore(
+                    get_memory_pool(),
+                    branch=resolve_branch_thread_id(ctx, self.run_config),
+                    message_id=str(answer_id) if answer_id else None,
+                ),
                 run_id=ctx.get("run_id"),
+                branch_message_id=str(answer_id) if answer_id else None,
             )
         return self._conversation_files
 
@@ -1224,7 +1234,8 @@ class DeepAgent(BaseAgent, ABC):
         if not user_id or not conversation_id or self.async_task_id is not None or not has_memory_pool():
             return False
         try:
-            paths = await DocumentVersionStore(get_memory_pool()).document_paths(
+            # The run's branch's documents, like everything else it reads.
+            paths = await self.conversation_files.store.sibling(DocumentVersionStore).document_paths(
                 str(user_id), str(conversation_id), limit=1)
         except Exception:  # like the turn's canvas note: a tool set is never worth a failed build
             logger.warning("canvas_documents_probe_failed",

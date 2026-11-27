@@ -41,48 +41,48 @@ from harness.memory import get_memory_pool, has_memory_pool
 logger = get_logger(__name__)
 
 
-def _seen_store() -> DocumentSeenStore:
-    return DocumentSeenStore(get_memory_pool())
+def _seen_store(branch: str) -> DocumentSeenStore:
+    return DocumentSeenStore(get_memory_pool(), branch=branch)
 
 
-def _comment_store() -> DocumentCommentStore:
-    return DocumentCommentStore(get_memory_pool())
+def _comment_store(branch: str) -> DocumentCommentStore:
+    return DocumentCommentStore(get_memory_pool(), branch=branch)
 
 
-async def _open_comments(user_id: str, conversation_id: str) -> list[DocumentOpenThreads]:
-    """The conversation's open comment threads, or none when they cannot be read (fail-open)."""
+async def _open_comments(user_id: str, conversation_id: str, branch: str) -> list[DocumentOpenThreads]:
+    """The branch's open comment threads, or none when they cannot be read (fail-open)."""
     if not has_memory_pool():
         return []
     try:
-        return await _comment_store().open_threads(user_id, conversation_id)
+        return await _comment_store(branch).open_threads(user_id, conversation_id)
     except Exception:  # a note is never worth a failed run
         logger.warning("canvas_turn_comments_failed", "Could not read the canvas comments for the turn note",
                        exc_info=True)
         return []
 
 
-def _suggestion_store() -> DocumentSuggestionStore:
-    return DocumentSuggestionStore(get_memory_pool())
+def _suggestion_store(branch: str) -> DocumentSuggestionStore:
+    return DocumentSuggestionStore(get_memory_pool(), branch=branch)
 
 
-async def _pending_suggestions(user_id: str, conversation_id: str) -> PendingSuggestions | None:
-    """The conversation's pending suggestion sets, or None when they cannot be read (fail-open)."""
+async def _pending_suggestions(user_id: str, conversation_id: str, branch: str) -> PendingSuggestions | None:
+    """The branch's pending suggestion sets, or None when they cannot be read (fail-open)."""
     if not has_memory_pool():
         return None
     try:
-        return await _suggestion_store().pending(user_id, conversation_id)
+        return await _suggestion_store(branch).pending(user_id, conversation_id)
     except Exception:  # a note is never worth a failed run
         logger.warning("canvas_turn_suggestions_failed",
                        "Could not read the canvas suggestions for the turn note", exc_info=True)
         return None
 
 
-async def _turn_state(user_id: str, conversation_id: str) -> TurnState | None:
-    """The seen markers' view of this turn, or None when it cannot be read (fail-open)."""
+async def _turn_state(user_id: str, conversation_id: str, branch: str) -> TurnState | None:
+    """The seen markers' view of this turn on the branch, or None when it cannot be read (fail-open)."""
     if not has_memory_pool():
         return None
     try:
-        return await _seen_store().turn_state(user_id, conversation_id)
+        return await _seen_store(branch).turn_state(user_id, conversation_id)
     except Exception:  # a note is never worth a failed run
         logger.warning("canvas_turn_state_failed", "Could not read the canvas documents for the turn note",
                        exc_info=True)
@@ -90,9 +90,13 @@ async def _turn_state(user_id: str, conversation_id: str) -> TurnState | None:
 
 
 async def prepare_canvas_turn(
-    messages: list[Any], context: Mapping[str, Any] | None, *, deep_agent: bool
+    messages: list[Any], context: Mapping[str, Any] | None, *, deep_agent: bool, branch: str | None
 ) -> list[Any]:
     """``messages`` with this turn's canvas note and scoped instruction added.
+
+    ``branch`` is the run's branch thread: the documents, comments and
+    suggestions the note reads are that branch's. A run without one gets no
+    note.
 
     Raises :class:`CanvasEditRefused` for an invalid ``canvas_edit``, or one
     sent to an agent that has no canvas documents (not a deep agent).
@@ -107,17 +111,17 @@ async def prepare_canvas_turn(
     state: TurnState | None = None
     comments: list[DocumentOpenThreads] = []
     suggestions: PendingSuggestions | None = None
-    if isinstance(user_id, str) and user_id and isinstance(conversation_id, str) and conversation_id:
-        state, comments, suggestions = await asyncio.gather(_turn_state(user_id, conversation_id),
-                                                            _open_comments(user_id, conversation_id),
-                                                            _pending_suggestions(user_id, conversation_id))
+    if isinstance(user_id, str) and user_id and isinstance(conversation_id, str) and conversation_id and branch:
+        state, comments, suggestions = await asyncio.gather(_turn_state(user_id, conversation_id, branch),
+                                                            _open_comments(user_id, conversation_id, branch),
+                                                            _pending_suggestions(user_id, conversation_id, branch))
     notes = render_edit_notes(state.edits if state is not None else [], comments, suggestions)
     rewritten, users_turn = apply_canvas_turn(messages, notes=notes, edit=edit)
     if edit is not None and not users_turn:
         raise CanvasEditRefused("The canvas edit has no user message to go with.")
     if users_turn and state is not None and state.marks:
         try:
-            marked = await _seen_store().mark_seen(str(user_id), str(conversation_id), state.marks)
+            marked = await _seen_store(str(branch)).mark_seen(str(user_id), str(conversation_id), state.marks)
         except Exception:  # fail-open: at worst the next turn repeats the note
             logger.warning("canvas_turn_mark_failed", "Could not mark the canvas documents seen",
                            exc_info=True)

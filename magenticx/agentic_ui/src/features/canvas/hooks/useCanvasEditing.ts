@@ -22,6 +22,7 @@ import { canvasContentKey, canvasListKey, canvasVersionsKey } from "../lib/query
 import { SaveController } from "../lib/saveController";
 import { SuggestionSaver } from "../lib/suggestionSaver";
 import { normalizeProposed, rebaseProposed } from "../lib/suggestions";
+import { useCanvasBranchMessage } from "../lib/branch";
 
 /** No suggestion set: what a caller that never loads one (and the tests) start from. */
 const NO_SUGGESTIONS: CanvasSuggestionStart = { status: "ready", proposed: null, savedBase: null };
@@ -79,6 +80,7 @@ export function useCanvasEditing({
   /** The document's pending suggestions as opened; nothing starts while they load. */
   suggestions?: CanvasSuggestionStart;
 }) {
+  const messageId = useCanvasBranchMessage();
   const queryClient = useQueryClient();
   const controllerRef = useRef<SaveController | null>(null);
   const saverRef = useRef<SuggestionSaver | null>(null);
@@ -117,8 +119,8 @@ export function useCanvasEditing({
       },
       {
         put: (content, baseVersion) =>
-          putDocumentSuggestion(userId, conversationId, { path, baseVersion, content }),
-        remove: () => deleteDocumentSuggestion(userId, conversationId, path),
+          putDocumentSuggestion(userId, conversationId, messageId, { path, baseVersion, content }),
+        remove: () => deleteDocumentSuggestion(userId, conversationId, messageId, path),
         onState: setSuggestionState,
       },
     );
@@ -131,14 +133,14 @@ export function useCanvasEditing({
       },
       {
         save: (content, baseVersion) =>
-          saveDocumentVersion(userId, conversationId, { path, baseVersion, content }),
+          saveDocumentVersion(userId, conversationId, messageId, { path, baseVersion, content }),
         normalize: normalizeMarkdown,
         onState: setSave,
         onSaved: ({ version, createdAt, content }) => {
           ownVersions.current.add(version);
           const base = latestRef.current;
           queryClient.setQueryData<CanvasDocumentVersion>(
-            canvasContentKey(userId, conversationId, path, "latest"),
+            canvasContentKey(userId, conversationId, messageId, path, "latest"),
             {
               path,
               name: base?.name ?? path.slice(path.lastIndexOf("/") + 1),
@@ -150,9 +152,9 @@ export function useCanvasEditing({
               content,
             },
           );
-          void queryClient.invalidateQueries({ queryKey: canvasListKey(userId, conversationId) });
+          void queryClient.invalidateQueries({ queryKey: canvasListKey(userId, conversationId, messageId) });
           void queryClient.invalidateQueries({
-            queryKey: canvasVersionsKey(userId, conversationId, path),
+            queryKey: canvasVersionsKey(userId, conversationId, messageId, path),
           });
         },
       },

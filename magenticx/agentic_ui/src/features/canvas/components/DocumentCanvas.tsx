@@ -118,10 +118,16 @@ import {
   CanvasStaleSuggestionsBanner,
   CanvasVersionBanner,
 } from "./canvas_parts/CanvasStates";
+import { CanvasBranchContext } from "../lib/branch";
 
 export interface DocumentCanvasProps {
   userId: string;
   conversationId: string;
+  /**
+   * A saved message of the branch on screen: documents are kept per branch,
+   * and every canvas call names it (the bridge resolves the branch).
+   */
+  messageId: string;
   /** The open document's virtual path (`/conversation/output/….md`). */
   path: string;
   /** Changes when the conversation may hold new versions (see `useCanvasDocument`). */
@@ -149,7 +155,13 @@ export interface DocumentCanvasProps {
 }
 
 export default function DocumentCanvas(props: DocumentCanvasProps) {
-  return <DocumentSession key={`${props.conversationId}|${props.path}`} {...props} />;
+  // The branch is read by the canvas hooks; the session is not re-mounted on a
+  // new message of the same branch, so an edit in progress is kept.
+  return (
+    <CanvasBranchContext.Provider value={props.messageId}>
+      <DocumentSession key={`${props.conversationId}|${props.path}`} {...props} />
+    </CanvasBranchContext.Provider>
+  );
 }
 
 function DocumentSession({
