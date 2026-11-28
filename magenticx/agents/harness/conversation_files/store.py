@@ -130,6 +130,33 @@ _BRANCH_MIGRATION = (
     """,
 )
 
+#: The comments' and suggestions' keys to the version they sit on, added after
+#: the tables and the branch migration rather than inside the CREATE TABLEs:
+#: they reference ``conversation_file_versions (…, branch_thread_id, …)``, and
+#: on a database from before branches that column exists only once
+#: ``_BRANCH_MIGRATION`` has run. Created inline, a table new to that database
+#: (the suggestions, on one that never had them) failed its CREATE and the
+#: service could not boot. Each key is added only when missing, so a fresh
+#: database gets both here, a migrated one keeps the ones the migration re-added,
+#: and a second boot changes nothing.
+_VERSION_FOREIGN_KEYS = """
+    DO $$
+    BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_file_comments_version_fk') THEN
+            ALTER TABLE conversation_file_comments ADD CONSTRAINT conversation_file_comments_version_fk
+                FOREIGN KEY (conversation_id, branch_thread_id, path, version)
+                REFERENCES conversation_file_versions (conversation_id, branch_thread_id, path, version)
+                ON DELETE CASCADE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'conversation_file_suggestions_version_fk') THEN
+            ALTER TABLE conversation_file_suggestions ADD CONSTRAINT conversation_file_suggestions_version_fk
+                FOREIGN KEY (conversation_id, branch_thread_id, path, base_version)
+                REFERENCES conversation_file_versions (conversation_id, branch_thread_id, path, version)
+                ON DELETE CASCADE;
+        END IF;
+    END $$
+"""
+
 _DDL = (
     """
     CREATE TABLE IF NOT EXISTS conversation_file_blobs (
@@ -275,10 +302,6 @@ _DDL = (
         CONSTRAINT conversation_file_comments_conversation_id_key UNIQUE (conversation_id, id),
         CONSTRAINT conversation_file_comments_parent_fk FOREIGN KEY (conversation_id, parent_id)
             REFERENCES conversation_file_comments (conversation_id, id) ON DELETE CASCADE,
-        CONSTRAINT conversation_file_comments_version_fk
-            FOREIGN KEY (conversation_id, branch_thread_id, path, version)
-            REFERENCES conversation_file_versions (conversation_id, branch_thread_id, path, version)
-            ON DELETE CASCADE,
         CONSTRAINT conversation_file_comments_author_ck CHECK (author IN ('agent', 'user')),
         CONSTRAINT conversation_file_comments_shape_ck CHECK (
             (parent_id IS NULL) = (anchor IS NOT NULL) AND (parent_id IS NULL) = (status IS NOT NULL)
@@ -314,10 +337,6 @@ _DDL = (
         created_at      timestamptz NOT NULL DEFAULT now(),
         updated_at      timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (conversation_id, branch_thread_id, path),
-        CONSTRAINT conversation_file_suggestions_version_fk
-            FOREIGN KEY (conversation_id, branch_thread_id, path, base_version)
-            REFERENCES conversation_file_versions (conversation_id, branch_thread_id, path, version)
-            ON DELETE CASCADE,
         CONSTRAINT conversation_file_suggestions_path_ck CHECK (path ~ '^/conversation/output/.+[.]md$')
     )
     """,
@@ -325,6 +344,7 @@ _DDL = (
     # The account purge.
     "CREATE INDEX IF NOT EXISTS conversation_file_suggestions_user_idx ON conversation_file_suggestions (user_id)",
     *_BRANCH_MIGRATION,
+    _VERSION_FOREIGN_KEYS,
 )
 
 _COMMENTS = (

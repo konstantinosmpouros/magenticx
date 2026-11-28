@@ -221,9 +221,13 @@ OLD_SHAPE = (
 )
 
 
-async def test_the_boot_moves_tables_of_the_old_shape_onto_branches(pg_pool, stores):
+@pytest.mark.parametrize("had_suggestions", [True, False], ids=["with-suggestions", "before-suggestions"])
+async def test_the_boot_moves_tables_of_the_old_shape_onto_branches(pg_pool, stores, had_suggestions):
+    """Also from a database older than the suggestions table (Dennis on 2026-11-28):
+    that table is new to it, and its key to the versions must not be created before
+    the versions have the branch column, or the boot fails and the service never starts."""
     async with pg_pool.connection() as conn:
-        for statement in OLD_SHAPE:
+        for statement in OLD_SHAPE if had_suggestions else OLD_SHAPE[:-1]:
             await conn.execute(statement)
         await conn.execute("INSERT INTO conversation_file_blobs VALUES ('u1', 'sha', 3, 'none', 'old')")
         await conn.execute("INSERT INTO conversation_files (conversation_id, path, user_id, sha256, size_bytes, "
@@ -241,5 +245,13 @@ async def test_the_boot_moves_tables_of_the_old_shape_onto_branches(pg_pool, sto
         assert {row["attname"] for row in await cur.fetchall()} == {"conversation_id", "branch_thread_id", "path"}
         cur = await conn.execute("SELECT branch_thread_id FROM conversation_files")
         assert [row["branch_thread_id"] for row in await cur.fetchall()] == [""]
+        # Both version keys, on the branch column, whichever shape the boot started from.
+        cur = await conn.execute(
+            "SELECT c.conname, array_agg(a.attname::text ORDER BY a.attname) AS cols FROM pg_constraint c "
+            "JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey) "
+            "WHERE c.conname LIKE 'conversation_file_%version_fk' GROUP BY c.conname ORDER BY c.conname")
+        keys = {row["conname"]: row["cols"] for row in await cur.fetchall()}
+        assert set(keys) == {"conversation_file_comments_version_fk", "conversation_file_suggestions_version_fk"}
+        assert all("branch_thread_id" in cols for cols in keys.values())
     assert await store.read("u1", "c1", REPORT) == b"old"
     assert (await store.latest("u1", "c1", REPORT)).version == 1

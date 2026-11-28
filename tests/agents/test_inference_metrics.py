@@ -54,6 +54,7 @@ from harness.middlewares import (
     UsageMetricsMiddleware,
 )
 from harness.middlewares.first_token import first_token_scope, is_first_token
+from harness.middlewares import tool_metrics as tool_metrics_module
 from harness.middlewares.tool_metrics import TOOL_METRICS_KEY, content_chars
 from harness.middlewares.usage_metrics import METRICS_KEY
 
@@ -266,15 +267,21 @@ def _compose(stack: list[Any]):
     return chain
 
 
-def test_a_tool_result_is_stamped_with_its_metrics():
+def test_a_tool_result_is_stamped_with_its_metrics(monkeypatch):
+    # A fake clock, not a real sleep: asyncio wakes a timer up to one clock tick
+    # early, and Windows' monotonic clock ticks every ~15.6 ms, so a 20 ms sleep
+    # was sometimes measured as less than 15 ms and the test flaked.
+    # Only the middleware's own reference: asyncio keeps the real clock.
+    ticks = iter([100.0, 100.0205])
+    monkeypatch.setattr(tool_metrics_module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+
     async def handler(request):
-        await asyncio.sleep(0.02)
         return ToolMessage(content="twelve chars", tool_call_id="c1", name="search")
 
     result = asyncio.run(ToolMetricsMiddleware().awrap_tool_call(_request(), handler))
     stamp = result.response_metadata[TOOL_METRICS_KEY]
     assert stamp["tool_name"] == "search" and stamp["status"] == "ok"
-    assert stamp["output_chars"] == 12 and stamp["duration_ms"] >= 15
+    assert stamp["output_chars"] == 12 and stamp["duration_ms"] == 20
 
 
 def test_a_tool_that_raised_is_counted_as_an_error():

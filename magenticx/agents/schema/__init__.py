@@ -6,6 +6,7 @@ keep the stable ``from schema import ...`` import surface regardless of which
 module a DTO lives in.
 """
 from schema.account import PurgeThreadsRequest, PurgeThreadsResponse, PurgeUserResponse
+from schema.scratch_import import LegacyScratchImportRequest, LegacyScratchImportResponse
 from schema.agent_protocol import RunCreateIn, RunOut, ThreadCreateIn, ThreadOut
 from schema.agent_tools import AgentModelResponse, AgentToolRow, AgentToolsResponse
 from schema.async_tasks import (
@@ -136,6 +137,8 @@ __all__ = [
     "PurgeThreadsRequest",
     "PurgeThreadsResponse",
     "PurgeUserResponse",
+    "LegacyScratchImportRequest",
+    "LegacyScratchImportResponse",
     "AgentDefinition",
     "AgentFile",
     "AgentIssue",

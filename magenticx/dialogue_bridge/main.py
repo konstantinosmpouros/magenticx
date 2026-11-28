@@ -20,6 +20,8 @@ from engine.account.deletion import run_account_purger
 from engine.agents.trials import run_trial_sweeper
 from engine.conversations.embeddings import run_embedding_sweeper
 from engine.conversations.runtime_reaps import drain_runtime_reaps
+# One-shot (plan 41 §3.7): delete with the agents service's scratch_migration.
+from engine.conversations.legacy_scratch_import import run_legacy_scratch_import
 from engine.automation.workflow_runs import cleanup_orphaned_workflow_runs, run_workflow_watchdog
 # Importing task_consumers also registers the run-end hook of engine.inference.tasks.wakeups
 # (queued composer message, wake-up safety net) with the run manager.
@@ -178,14 +180,19 @@ async def lifespan(app: FastAPI):
     # Workflow watchdog (plan 38): fails stalled legs, expires unanswered approvals.
     workflow_stop_event = asyncio.Event()
     workflow_task = asyncio.create_task(run_workflow_watchdog(workflow_stop_event))
+    # One-shot (plan 41 §3.7): the agents service imports every branch's legacy
+    # checkpoint scratch files. In the background, retrying until it is up.
+    scratch_import_stop_event = asyncio.Event()
+    scratch_import_task = asyncio.create_task(run_legacy_scratch_import(scratch_import_stop_event))
     yield
     embedding_stop_event.set()
     purger_stop_event.set()
     trial_stop_event.set()
     workflow_stop_event.set()
+    scratch_import_stop_event.set()
     await scheduler.stop()
     await task_consumers.stop()
-    for task in (embedding_task, purger_task, reap_task, trial_task, workflow_task):
+    for task in (embedding_task, purger_task, reap_task, trial_task, workflow_task, scratch_import_task):
         try:
             await asyncio.wait_for(task, timeout=10)
         except asyncio.TimeoutError:

@@ -5,12 +5,13 @@
 - Add as services in denis: n8n, penpot, appflowy, and other open source tools that can be used by the agents and the users.
 - Make it a platform with org level and user-level permissions, so that users can have their own workspaces and agents, and orgs can have their own workspaces and agents along with admins.
 - Review how scheduling runs end to end (scheduled tasks and workflow schedules in the bridge's scheduler) and decide whether it is production-grade architecture or needs a dedicated scheduler / job queue: runs missed while the bridge was down, runs in flight during a restart or deploy, and Grafana alerting when something did not run.
-- **Each user's own OpenAI key in the OCI Vault** — planned in [plan 31](../plans/31-user-openai-keys-in-oci-vault.md). The admin adds a person to the Entra group; they sign in and save their own OpenAI key under Settings → API keys (write-only, validated, stored as one OCI Vault secret per user); every OpenAI call made for them uses their key; no key = blocked. The shared `magenticx_openai_api_key` is retired.
+- **Each user's own OpenAI key** — planned in [plan 31](../plans/31-user-openai-keys.md); where the keys are stored is still to be decided. The admin adds a person to the Entra group; they sign in and save their own OpenAI key under Settings → API keys (write-only, validated, encrypted at rest); every OpenAI call made for them uses their key; no key = blocked. The shared `magenticx_openai_api_key` is retired.
 - Check Postgres `tsvector` for full-text search.
 - Check Postgres `LISTEN` / `NOTIFY` for live updates between services.
 - Check `pg_cron` for scheduled jobs.
 - Add a header button that opens a conversation overview panel: the files the agent produced (with previews), the files the user attached, and what the run used (web searches with their sources, memory reads, other tools), grouped and counted.
 - SSE streams and steering ([change plan](../docs/draft/sse-streaming-and-steering-change-plan.md)). Done and released: every phase (SSE only, WebSockets removed; steering, saved as its own message; live thinking; Send now; a queue of up to 5 messages, sent stacked), with migrations `0052`, `0053`. Remains: the §6 acceptance test through Cloudflare on agents.magenticx.com.
+- Once agents `v1.23.26`+ has run on Dennis, delete the one-shot legacy scratch import: agents `harness/filesystem/scratch_migration.py`, `router/scratch_import.py`, `schema/scratch_import.py`, `BranchScratchStore.is_imported` / `import_legacy` / `_BACKFILL` and the `branch_scratch_imports` table (drop it), the lazy import call in `scratch_backend.py`; bridge `engine/conversations/legacy_scratch_import.py` and its start in `main.py`; their tests.
 
 ## New Features
 

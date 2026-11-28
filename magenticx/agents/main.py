@@ -48,6 +48,8 @@ from router.agent_tools import router as agent_tools_router
 from router.user_agents import router as user_agents_router
 from router.voice import router as voice_router
 from router.workflows import router as workflows_router
+# One-shot (plan 41 §3.7): remove with harness/filesystem/scratch_migration.py.
+from router.scratch_import import router as scratch_import_router
 
 
 configure_logging()
@@ -169,3 +171,4 @@ app.include_router(agent_tools_router)
 app.include_router(user_agents_router)
 app.include_router(voice_router)
 app.include_router(workflows_router)
+app.include_router(scratch_import_router)
