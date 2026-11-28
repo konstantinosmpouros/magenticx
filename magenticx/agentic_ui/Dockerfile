@@ -31,11 +31,11 @@ RUN find dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' -o -name
 
 
 # 2) Runtime stage
-# nginx 1.28 is the supported stable line (1.25 sat on Alpine 3.19, past end of
-# life, carrying fixable CRITICAL CVEs that CD's Trivy gate rejects). The
-# `apk upgrade` picks up Alpine security fixes published after the base image
-# was cut — without it even 1.28 fails the gate on OpenSSL.
-FROM nginx:1.28-alpine
+# nginx 1.30 is the supported stable line. Move with it: an old line stops
+# getting rebuilt (1.28-alpine froze at 1.28.3-r1 with five fixable CRITICAL
+# nginx CVEs, so CD's Trivy gate rejected every UI release). The `apk upgrade`
+# picks up Alpine security fixes published after the base image was cut.
+FROM nginx:1.30-alpine
 
 RUN apk upgrade --no-cache
 
