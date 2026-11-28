@@ -4,7 +4,8 @@ Pinned here:
 
 * the **store contract** — last-write-wins ``put``, a compare-and-set that
   refuses a stale version, scoping by (user, conversation, branch),
-  copy-on-fork, deletion by conversation and by user, the one-shot import —
+  copy-on-fork cut at the fork point by the write log, deletion by
+  conversation and by user, the one-shot import —
   run against an in-memory twin *and* Postgres, so the two cannot drift;
 * the **backend**: two backends on one branch (an orchestrator and its task,
   on different threads) see each other's writes live; another branch does
@@ -80,8 +81,11 @@ class MemoryScratchStore:
     def __init__(self) -> None:
         self._m = _mod("harness.filesystem.scratch_store")
         self.rows: dict[tuple[str, str, str], dict] = {}
+        # (conversation, branch, path, answer) -> that answer's latest write, with its seq.
+        self.writes: dict[tuple[str, str, str, str], dict] = {}
         self.imported: dict[tuple[str, str], str] = {}
         self.setups = 0
+        self._seq = 0
 
     async def ensure_setup(self):
         self.setups += 1
@@ -113,7 +117,11 @@ class MemoryScratchStore:
         rows = self._in_scope(scope)
         return {p: self._m.ScratchFile(self._entry(p, rows[p]), rows[p]["data"]) for p in file_paths if p in rows}
 
-    def _write(self, scope, path, data, encoding, agent_slug):
+    def _log(self, conv, branch, path, message_id, row):
+        self._seq += 1
+        self.writes[(conv, branch, path, message_id or "")] = {**row, "seq": self._seq}
+
+    def _write(self, scope, path, data, encoding, agent_slug, message_id=None):
         key = (scope.conversation_id, scope.branch_thread_id, path)
         now = datetime.now(UTC)
         previous = self.rows.get(key)
@@ -122,36 +130,53 @@ class MemoryScratchStore:
             "sha256": hashlib.sha256(data).hexdigest(), "agent_slug": agent_slug,
             "created_at": previous["created_at"] if previous else now, "updated_at": now,
         }
+        self._log(*key, message_id, self.rows[key])
         return self.rows[key]["sha256"]
 
-    async def put(self, scope, path, data, *, encoding, agent_slug):
+    async def put(self, scope, path, data, *, encoding, agent_slug, message_id=None):
         self._checked(data, encoding)
         existing = self.rows.get((scope.conversation_id, scope.branch_thread_id, path))
         if existing is not None and existing["user_id"] != scope.user_id:
             return None
-        return self._write(scope, path, data, encoding, agent_slug)
+        return self._write(scope, path, data, encoding, agent_slug, message_id)
 
-    async def compare_and_set(self, scope, path, expected_sha256, data, *, encoding, agent_slug):
+    async def compare_and_set(self, scope, path, expected_sha256, data, *, encoding, agent_slug, message_id=None):
         self._checked(data, encoding)
         current = self._in_scope(scope).get(path)
         if current is None or current["sha256"] != expected_sha256:
             return None
-        return self._write(scope, path, data, encoding, agent_slug)
+        return self._write(scope, path, data, encoding, agent_slug, message_id)
 
-    async def copy_branch(self, source_thread_id, target_thread_id):
+    async def copy_branch(self, source_thread_id, target_thread_id, messages=None):
         if not source_thread_id or not target_thread_id or source_thread_id == target_thread_id:
             return 0
+        latest: dict[tuple[str, str], tuple[str, dict]] = {}
+        for (conv, branch, path, answer), row in self.writes.items():
+            if branch != source_thread_id:
+                continue
+            if messages is not None and answer and answer not in messages:
+                continue
+            if messages is None and (conv, branch, path) not in self.rows:
+                continue
+            best = latest.get((conv, path))
+            if best is None or row["seq"] > best[1]["seq"]:
+                latest[(conv, path)] = (answer, row)
         copied = 0
-        for (conv, branch, path), row in list(self.rows.items()):
-            if branch == source_thread_id and (conv, target_thread_id, path) not in self.rows:
-                self.rows[(conv, target_thread_id, path)] = dict(row)
-                copied += 1
+        for (conv, path), (answer, row) in sorted(latest.items()):
+            if (conv, target_thread_id, path) in self.rows:
+                continue
+            copy = {k: v for k, v in row.items() if k != "seq"}
+            self.rows[(conv, target_thread_id, path)] = copy
+            self._log(conv, target_thread_id, path, answer, copy)
+            copied += 1
         return copied
 
     async def delete_conversation(self, user_id, conversation_id):
         doomed = [k for k, r in self.rows.items() if k[0] == conversation_id and r["user_id"] == user_id]
         for key in doomed:
             del self.rows[key]
+        for key in [k for k, r in self.writes.items() if k[0] == conversation_id and r["user_id"] == user_id]:
+            del self.writes[key]
         for key in [k for k, u in self.imported.items() if k[0] == conversation_id and u == user_id]:
             del self.imported[key]
         return len(doomed)
@@ -160,6 +185,8 @@ class MemoryScratchStore:
         doomed = [k for k, r in self.rows.items() if r["user_id"] == user_id]
         for key in doomed:
             del self.rows[key]
+        for key in [k for k, r in self.writes.items() if r["user_id"] == user_id]:
+            del self.writes[key]
         for key in [k for k, u in self.imported.items() if u == user_id]:
             del self.imported[key]
         return {"branch_scratch_files": len(doomed)}
@@ -302,6 +329,54 @@ async def test_copy_branch_gives_the_fork_the_files_and_then_they_diverge(store)
     assert (await store.get(fork, "/bin.dat")).entry.encoding == "base64"
 
 
+async def test_a_fork_gets_each_file_as_it_was_at_the_fork_point(store):
+    """Answer a1, then a2, wrote on b1. A retry of a2 forks after a1: the fork
+    gets a1's content, not a2's, and nothing a2 alone created."""
+    source = _scope(branch="b1")
+    await store.put(source, "/plan.md", b"plan by a1", encoding="utf-8", agent_slug="o", message_id="a1")
+    await store.put(source, "/plan.md", b"plan by a2", encoding="utf-8", agent_slug="o", message_id="a2")
+    await store.put(source, "/only-a2.md", b"x", encoding="utf-8", agent_slug="o", message_id="a2")
+    old = await store.put(source, "/edited.md", b"v1", encoding="utf-8", agent_slug="o", message_id="a1")
+    await store.compare_and_set(source, "/edited.md", old, b"v2 by a1", encoding="utf-8", agent_slug="o",
+                                message_id="a1")
+    await store.put(source, "/no-answer.md", b"before the log", encoding="utf-8", agent_slug="o")
+
+    assert await store.copy_branch("b1", "b2", ["a1"]) == 3
+    fork = _scope(branch="b2")
+    assert (await store.get(fork, "/plan.md")).data == b"plan by a1"
+    assert (await store.get(fork, "/edited.md")).data == b"v2 by a1"  # a1's last write, not its first
+    assert (await store.get(fork, "/no-answer.md")).data == b"before the log"
+    assert await store.get(fork, "/only-a2.md") is None
+    # The source is untouched.
+    assert (await store.get(source, "/plan.md")).data == b"plan by a2"
+    # The whole path: everything, at its latest.
+    assert await store.copy_branch("b1", "b3", ["a1", "a2"]) == 4
+    assert (await store.get(_scope(branch="b3"), "/plan.md")).data == b"plan by a2"
+
+
+async def test_a_fork_of_a_fork_cuts_on_the_answers_it_was_given(store):
+    """b2 forked from b1 after a1 and then wrote a3; a fork of b2 after a1
+    gets a1's file (carried into b2's log with its answer), not a3's."""
+    await store.put(_scope(branch="b1"), "/n.md", b"a1", encoding="utf-8", agent_slug="o", message_id="a1")
+    await store.put(_scope(branch="b1"), "/n.md", b"a2", encoding="utf-8", agent_slug="o", message_id="a2")
+    await store.copy_branch("b1", "b2", ["a1"])
+    await store.put(_scope(branch="b2"), "/n.md", b"a3", encoding="utf-8", agent_slug="o", message_id="a3")
+
+    await store.copy_branch("b2", "b4", ["a1"])
+    await store.copy_branch("b2", "b5", ["a1", "a3"])
+
+    assert (await store.get(_scope(branch="b4"), "/n.md")).data == b"a1"
+    assert (await store.get(_scope(branch="b5"), "/n.md")).data == b"a3"
+
+
+async def test_a_fork_with_no_answers_takes_only_what_no_answer_wrote(store):
+    await store.put(_scope(), "/old.md", b"old", encoding="utf-8", agent_slug="o")
+    await store.put(_scope(), "/new.md", b"new", encoding="utf-8", agent_slug="o", message_id="a1")
+
+    assert await store.copy_branch("b1", "b2", []) == 1
+    assert await store.get(_scope(branch="b2"), "/new.md") is None
+
+
 async def test_conversation_delete_and_account_purge_take_only_their_own(store):
     await store.put(_scope(branch="b1"), "/a.md", b"a", encoding="utf-8", agent_slug="o")
     await store.put(_scope(branch="b2"), "/b.md", b"b", encoding="utf-8", agent_slug="o")
@@ -352,6 +427,54 @@ async def test_bytes_are_encrypted_at_rest_and_copied_as_ciphertext(pg_store, pg
     assert [row["cipher"] for row in rows] == ["aes", "aes"]
     assert all(b"quarterly" not in bytes(row["data"]) for row in rows)
     assert (await pg_store.get(_scope(branch="b2"), "/secret.md")).data == b"quarterly numbers"
+
+
+async def test_the_log_keeps_one_row_per_answer_and_path(pg_store, pg_pool):
+    scope = _scope()
+    for n in range(5):
+        await pg_store.put(scope, "/a.md", f"v{n}".encode(), encoding="utf-8", agent_slug="o", message_id="a1")
+    await pg_store.put(scope, "/a.md", b"by a2", encoding="utf-8", agent_slug="o", message_id="a2")
+
+    async with pg_pool.connection() as conn:
+        cur = await conn.execute("SELECT message_id, cipher, data FROM branch_scratch_writes ORDER BY seq")
+        rows = await cur.fetchall()
+
+    assert [row["message_id"] for row in rows] == ["a1", "a2"]
+    assert all(row["cipher"] == "aes" and b"by a2" not in bytes(row["data"]) for row in rows)
+    await pg_store.copy_branch("b1", "b2", ["a1"])
+    assert (await pg_store.get(_scope(branch="b2"), "/a.md")).data == b"v4"
+
+
+async def test_setup_backfills_files_written_before_the_log(pg_store, pg_pool):
+    await pg_store.put(_scope(), "/pre-log.md", b"old", encoding="utf-8", agent_slug="o", message_id="a1")
+    await pg_store.put(_scope(), "/logged.md", b"new", encoding="utf-8", agent_slug="o", message_id="a9")
+    async with pg_pool.connection() as conn:  # as if /pre-log.md was written before the log existed
+        await conn.execute("DELETE FROM branch_scratch_writes WHERE path = '/pre-log.md'")
+
+    await pg_store.setup()
+    await pg_store.setup()  # a rerun adds nothing
+
+    async with pg_pool.connection() as conn:
+        cur = await conn.execute("SELECT path, message_id FROM branch_scratch_writes ORDER BY path")
+        assert [(r["path"], r["message_id"]) for r in await cur.fetchall()] == [
+            ("/logged.md", "a9"), ("/pre-log.md", ""),
+        ]
+    await pg_store.copy_branch("b1", "b2", ["a1"])
+    assert (await pg_store.get(_scope(branch="b2"), "/pre-log.md")).data == b"old"
+    assert await pg_store.get(_scope(branch="b2"), "/logged.md") is None
+
+
+async def test_reap_and_purge_take_the_log_too(pg_store, pg_pool):
+    await pg_store.put(_scope(), "/a.md", b"a", encoding="utf-8", agent_slug="o", message_id="a1")
+    await pg_store.put(_scope(user="u2", conversation="c2"), "/b.md", b"b", encoding="utf-8", agent_slug="o",
+                       message_id="a1")
+
+    await pg_store.delete_conversation("u1", "c1")
+    await pg_store.purge_user("u2")
+
+    async with pg_pool.connection() as conn:
+        cur = await conn.execute("SELECT count(*) AS n FROM branch_scratch_writes")
+        assert (await cur.fetchone())["n"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +587,19 @@ async def test_edit_without_a_prior_read_and_binary_files(memory_store):
     assert "binary" in (await backend.aedit("/img.bin", "PNG", "JPG")).error
     [download] = await other.adownload_files(["/img.bin"])
     assert download.content == b"\x89PNG\x00\xff"
+
+
+async def test_the_backend_logs_its_writes_under_its_answer(memory_store):
+    backend = _mod("harness.filesystem.scratch_backend").BranchScratchBackend(
+        store=memory_store, user_id="u1", conversation_id="c1", agent_slug="omni", branch_thread_id="b1",
+        message_id="a7",
+    )
+    await backend.awrite("/a.md", "one\n")
+    await backend.aedit("/a.md", "one", "two")
+    await backend.aupload_files([("/b.bin", b"\x00")])
+
+    assert sorted(key[2:] for key in memory_store.writes) == [("/a.md", "a7"), ("/b.bin", "a7")]
+    assert memory_store.writes[("c1", "b1", "/a.md", "a7")]["data"] == b"two\n"
 
 
 async def test_invalid_paths_never_reach_the_store(memory_store):
@@ -639,6 +775,21 @@ async def test_a_fork_copies_the_source_branchs_scratch(memory_store, monkeypatc
     assert (await memory_store.get(_scope(branch="new"), "/later.md")).data == b"later"
 
 
+async def test_the_seed_cuts_the_scratch_at_the_answers_it_is_given(memory_store, monkeypatch):
+    fork = _mod("harness.checkpointer.fork")
+    monkeypatch.setattr(fork, "BranchScratchStore", lambda: memory_store)
+    src = _scope(branch="src")
+    await memory_store.put(src, "/notes.md", b"by a1", encoding="utf-8", agent_slug="o", message_id="a1")
+    await memory_store.put(src, "/notes.md", b"by a2", encoding="utf-8", agent_slug="o", message_id="a2")
+    graph = _ForkGraph({("src", "cp-1"): SimpleNamespace(values={"messages": ["m"]})})
+
+    assert await fork.seed_thread_from_checkpoint(
+        graph=graph, source_thread_id="src", source_checkpoint_id="cp-1", target_thread_id="new",
+        messages=["a1"],
+    )
+    assert (await memory_store.get(_scope(branch="new"), "/notes.md")).data == b"by a1"
+
+
 async def test_a_fork_against_postgres(pg_store, pg_pool, monkeypatch):
     fork = _mod("harness.checkpointer.fork")
     monkeypatch.setattr(fork, "BranchScratchStore", lambda: pg_store)
@@ -680,6 +831,15 @@ async def test_the_workspace_default_is_the_branch_scratch_store(agents_service,
     assert type(default) is workspace.BranchScratchBackend
     assert not isinstance(default, SandboxBackendProtocol)
     assert (default._user_id, default._conversation_id, default._branch) == ("u1", "c1", "orch")
+    assert default._message_id is None  # these files carry no answer
+
+    package = _mod("harness.conversation_files")
+    answered = package.ConversationFiles(user_id="u1", conversation_id="c1", agent_slug="omni",
+                                         store=package.ConversationFileStore(object()), branch_message_id="a1")
+    with_answer = workspace.build_workspace_backend(
+        user_id="u1", agent_slug="omni", files=answered, use_memory=False, branch_thread_id="orch"
+    )(None)
+    assert with_answer.default._message_id == "a1"
 
 
 class _Runner:

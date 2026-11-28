@@ -212,8 +212,8 @@ class RemoteSandboxBackend(BranchScratchBackend, SandboxBackendProtocol):
     workspace always passes both; leaving them out sends no files (and is what
     the sync path does when there is no service loop to bridge onto).
 
-    ``scratch_store`` / ``branch_thread_id`` / ``loop`` are the default
-    route's, passed through to :class:`BranchScratchBackend` — the workspace
+    ``scratch_store`` / ``branch_thread_id`` / ``message_id`` / ``loop`` are
+    the default route's, passed through to :class:`BranchScratchBackend` — the workspace
     hands both backends the same store, so either sees the other's writes.
 
     ``transport`` / ``async_transport`` exist for tests (an ``httpx``
@@ -231,6 +231,7 @@ class RemoteSandboxBackend(BranchScratchBackend, SandboxBackendProtocol):
         conversation_mount: ConversationFilesBackend | None = None,
         scratch_store: BranchScratchStore | None = None,
         branch_thread_id: str | None = None,
+        message_id: str | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
         runner_url: str | None = None,
         transport: httpx.BaseTransport | None = None,
@@ -246,6 +247,7 @@ class RemoteSandboxBackend(BranchScratchBackend, SandboxBackendProtocol):
             conversation_id=checked_conversation,
             agent_slug=checked_agent,
             branch_thread_id=branch_thread_id,
+            message_id=message_id,
             loop=loop,
         )
         self._user_id = checked_user

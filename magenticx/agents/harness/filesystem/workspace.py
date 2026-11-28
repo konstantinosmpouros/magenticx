@@ -202,12 +202,15 @@ def build_workspace_backend(
         # it, the same path the agent's own file tools take.
         conversation_mount = ConversationFilesBackend(files, CONVERSATION_ROOT, loop=loop)
         # The default route: this branch's scratch rows. Scoped to the same
-        # (user, conversation) as `/conversation/`; minting it does no I/O.
+        # (user, conversation) as `/conversation/`, and its writes logged
+        # under the same answer, so a fork cuts both at one point. Minting it
+        # does no I/O.
         scratch = {
             "user_id": user_id,
             "agent_slug": agent_slug,
             "conversation_id": files.conversation_id,
             "branch_thread_id": branch_thread_id,
+            "message_id": files.branch_message_id,
             "loop": loop,
         }
         default_backend = (

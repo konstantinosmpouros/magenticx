@@ -185,7 +185,9 @@ class BranchScratchBackend(StateBackend):
 
     Bound at build time to the run's ``(user_id, conversation_id)`` — the same
     identity its ``/conversation/`` mount uses — and, when the caller knows it,
-    to the branch thread. Minting it does no I/O.
+    to the branch thread. ``message_id`` is the answer the run works for (a
+    task's is its orchestrator's); every write is logged under it, which is
+    what a later fork cuts on. Minting it does no I/O.
     """
 
     def __init__(
@@ -196,10 +198,12 @@ class BranchScratchBackend(StateBackend):
         conversation_id: str,
         agent_slug: str,
         branch_thread_id: str | None = None,
+        message_id: str | None = None,
         loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         super().__init__()
         self._store = store
+        self._message_id = message_id or None
         self._user_id = user_id
         self._conversation_id = conversation_id
         self._agent_slug = agent_slug
@@ -324,7 +328,8 @@ class BranchScratchBackend(StateBackend):
         data = content.encode("utf-8")
         try:
             await self._ready_branch(scope)
-            version = await self._store.put(scope, path, data, encoding="utf-8", agent_slug=self._agent_slug)
+            version = await self._store.put(scope, path, data, encoding="utf-8", agent_slug=self._agent_slug,
+                                            message_id=self._message_id)
         except ScratchFileTooLarge as exc:
             return WriteResult(error=f"Error writing file '{file_path}': {exc}")
         except _STORE_ERRORS as exc:
@@ -372,7 +377,7 @@ class BranchScratchBackend(StateBackend):
             new_content, occurrences = result
             version = await self._store.compare_and_set(
                 scope, path, current.entry.sha256, new_content.encode("utf-8"),
-                encoding="utf-8", agent_slug=self._agent_slug,
+                encoding="utf-8", agent_slug=self._agent_slug, message_id=self._message_id,
             )
         except ScratchFileTooLarge as exc:
             return EditResult(error=f"Error editing file '{file_path}': {exc}")
@@ -478,7 +483,8 @@ class BranchScratchBackend(StateBackend):
                 try:
                     path = self._path(file_path)
                     version = await self._store.put(
-                        scope, path, content, encoding=_encoding_of(content), agent_slug=self._agent_slug
+                        scope, path, content, encoding=_encoding_of(content), agent_slug=self._agent_slug,
+                        message_id=self._message_id,
                     )
                 except (InvalidPath, ScratchFileTooLarge):
                     responses.append(FileUploadResponse(path=file_path, error=INVALID_PATH))

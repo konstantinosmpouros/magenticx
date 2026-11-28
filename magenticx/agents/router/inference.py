@@ -189,6 +189,7 @@ async def stream_agent(agent_slug: str, req: Request):
                         source_thread_id=str(fork_from.get("thread_id") or ""),
                         source_checkpoint_id=fork_from.get("checkpoint_id"),
                         target_thread_id=stream_thread_id,
+                        messages=fork_from.get("messages") if isinstance(fork_from.get("messages"), list) else None,
                     )
                 async for chunk in agent.astream(payload={"messages": messages}):
                     yield chunk

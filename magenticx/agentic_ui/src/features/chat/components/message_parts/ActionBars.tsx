@@ -1,13 +1,12 @@
 ﻿import { Button } from "@/shared/ui/button";
 import { PlanIcon } from "@/shared/ui/plan-icon";
+import { ThumbDownIcon, ThumbUpIcon, ThumbsUpDownIcon } from "@/shared/ui/thumbs-up-down-icon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/shared/ui/tooltip";
 import {
   BookOpen,
   Bot,
   Copy,
   Check,
-  ThumbsUp,
-  ThumbsDown,
   Pencil,
   MoreHorizontal,
 } from "lucide-react";
@@ -143,6 +142,114 @@ const moreMenuItemClass =
   "flex cursor-pointer select-none items-center gap-2 rounded-md px-2.5 py-2 text-sm text-foreground outline-none transition-colors data-[highlighted]:bg-[hsl(var(--hover-surface))] data-[highlighted]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-45";
 const CLOSE_AI_ACTION_MENUS_EVENT = "magenticx:close-ai-action-menus";
 
+const FEEDBACK_OPTIONS = [
+  { value: true, label: "Good response", Icon: ThumbUpIcon },
+  { value: false, label: "Bad response", Icon: ThumbDownIcon },
+] as const;
+
+/**
+ * One Feedback button for an answer: the combined thumbs icon opens a small
+ * menu with Good response / Bad response. Once rated, the button shows the
+ * chosen thumb in the accent colour; picking the chosen option again clears the rating
+ * (onLike / onDislike toggle, as the two separate buttons did).
+ */
+const FeedbackButton = ({
+  message,
+  onLike,
+  onDislike,
+}: {
+  message: MessageOut;
+  onLike: (message: MessageOut) => void;
+  onDislike: (message: MessageOut) => void;
+}) => {
+  const [open, setOpen] = useState(false);
+  const pulse = useAnimationControls();
+  const rating = message.liked;
+  const rated = rating === true || rating === false;
+
+  useEffect(() => {
+    if (!open) return;
+    const handleCloseMenus = () => setOpen(false);
+    window.addEventListener(CLOSE_AI_ACTION_MENUS_EVENT, handleCloseMenus);
+    return () => window.removeEventListener(CLOSE_AI_ACTION_MENUS_EVENT, handleCloseMenus);
+  }, [open]);
+
+  const choose = (value: boolean) => {
+    if (value) onLike(message);
+    else onDislike(message);
+    pulse.start(TAP_PULSE, TAP_PULSE_TRANSITION);
+  };
+
+  const label =
+    rating === true ? "Feedback: good response" : rating === false ? "Feedback: bad response" : "Feedback";
+
+  return (
+    <DropdownMenu.Root modal={false} open={open} onOpenChange={setOpen}>
+      <Tooltip delayDuration={0}>
+        <TooltipTrigger asChild>
+          <DropdownMenu.Trigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-8 w-8 ${INTERACTIVE_SURFACE_QUIET} focus-visible:bg-[hsl(var(--hover-surface-strong))] data-[state=open]:bg-[hsl(var(--hover-surface-strong))] ${
+                rated ? "text-[#de8bff] hover:!text-[#de8bff]" : "text-muted-foreground hover:!text-muted-foreground"
+              }`}
+              onMouseDown={(event) => event.preventDefault()}
+              aria-label={label}
+            >
+              <motion.span animate={pulse} className="inline-flex">
+                {rating === true ? (
+                  <ThumbUpIcon />
+                ) : rating === false ? (
+                  <ThumbDownIcon />
+                ) : (
+                  <ThumbsUpDownIcon />
+                )}
+              </motion.span>
+            </Button>
+          </DropdownMenu.Trigger>
+        </TooltipTrigger>
+        <TooltipContent
+          side="bottom"
+          align="center"
+          className="!opacity-100 bg-background text-foreground border border-border shadow-card px-2 py-1 rounded-md"
+        >
+          <p>Feedback</p>
+        </TooltipContent>
+      </Tooltip>
+
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          align="start"
+          side="bottom"
+          onCloseAutoFocus={returnFocusOnlyForKeyboard}
+          sideOffset={6}
+          collisionPadding={10}
+          className={`z-[70] min-w-[11rem] rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg origin-[--radix-dropdown-menu-content-transform-origin] ${RADIX_MOTION.popover}`}
+        >
+          {FEEDBACK_OPTIONS.map(({ value, label: optionLabel, Icon }) => {
+            const active = rating === value;
+            return (
+              <DropdownMenu.CheckboxItem
+                key={optionLabel}
+                checked={active}
+                className={moreMenuItemClass}
+                onSelect={() => choose(value)}
+              >
+                <Icon className={active ? "text-[#de8bff]" : undefined} />
+                <span className="flex-1">{optionLabel}</span>
+                <DropdownMenu.ItemIndicator>
+                  <Check className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                </DropdownMenu.ItemIndicator>
+              </DropdownMenu.CheckboxItem>
+            );
+          })}
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+};
+
 export const AIActionBar = ({
   message,
   copiedId,
@@ -169,8 +276,6 @@ export const AIActionBar = ({
   showMessageTokenUsage = false,
 }: AIActionBarProps) => {
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
-  const likePulse = useAnimationControls();
-  const dislikePulse = useAnimationControls();
   const isSpeaking = speakingMessageId === message.id;
   const usageVisible =
     showMessageTokenUsage &&
@@ -217,73 +322,9 @@ export const AIActionBar = ({
           />
         </div>
 
-        {!readOnly && message.liked !== false && (
+        {!readOnly && (
           <div className="mt-1">
-            <Tooltip delayDuration={0}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-8 w-8 ${INTERACTIVE_SURFACE_QUIET} focus-visible:bg-[hsl(var(--hover-surface-strong))] ${
-                    message.liked === true
-                      ? "text-[#de8bff] hover:!text-[#de8bff]"
-                      : "text-muted-foreground hover:!text-muted-foreground"
-                  }`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    onLike(message);
-                    likePulse.start(TAP_PULSE, TAP_PULSE_TRANSITION);
-                  }}
-                  aria-label={message.liked === true ? "Unlike" : "Like"}
-                >
-                  <motion.span animate={likePulse} className="inline-flex">
-                    <ThumbsUp className="h-4 w-4" />
-                  </motion.span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent
-                side="bottom"
-                align="center"
-                className="!opacity-100 bg-background text-foreground border border-border shadow-card px-2 py-1 rounded-md"
-              >
-                <p>Like</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
-
-        {!readOnly && message.liked !== true && (
-          <div className="mt-1">
-            <Tooltip delayDuration={0}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className={`h-8 w-8 ${INTERACTIVE_SURFACE_QUIET} focus-visible:bg-[hsl(var(--hover-surface-strong))] ${
-                    message.liked === false
-                      ? "text-[#de8bff] hover:!text-[#de8bff]"
-                      : "text-muted-foreground hover:!text-muted-foreground"
-                  }`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => {
-                    onDislike(message);
-                    dislikePulse.start(TAP_PULSE, TAP_PULSE_TRANSITION);
-                  }}
-                  aria-label={message.liked === false ? "Clear dislike" : "Dislike"}
-                >
-                  <motion.span animate={dislikePulse} className="inline-flex">
-                    <ThumbsDown className="h-4 w-4" />
-                  </motion.span>
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent
-                side="bottom"
-                align="center"
-                className="!opacity-100 bg-background text-foreground border border-border shadow-card px-2 py-1 rounded-md"
-              >
-                <p>Dislike</p>
-              </TooltipContent>
-            </Tooltip>
+            <FeedbackButton message={message} onLike={onLike} onDislike={onDislike} />
           </div>
         )}
 

@@ -1267,18 +1267,19 @@ The web pages a search tool returned in a conversation (plan 42 §3.7), so an in
 - **Primary key** `(user_id, conversation_id, source_id)`; index `conversation_sources_recent_idx (user_id, conversation_id, updated_at DESC)` serves the newest-first list (≤ 500).
 - **Lifecycle:** copied on fork (`POST …/sources/copy`, `ON CONFLICT DO NOTHING`), deleted with the conversation (`/reap` and `DELETE …/sources`), purged with the account (`purge_user` → `conversation_sources` count). Not in the data export in v1.
 
-### `branch_scratch_files` / `branch_scratch_imports`
+### `branch_scratch_files` / `branch_scratch_writes` / `branch_scratch_imports`
 
 The workspace's **default route** (plan 41 §3.7): every path outside a mounted route (`/notes.md`, `/drafts/v2.md`), which used to live in the `files` key of one thread's graph state. Keyed by **branch thread**, so the orchestrator and every async task of its tree read and write the same files, live. Created idempotently by `BranchScratchStore.ensure_setup()` (`harness/filesystem/scratch_store.py`) before the first query.
 
 | Table | Key | Columns |
 | --- | --- | --- |
 | `branch_scratch_files` | `(conversation_id, branch_thread_id, path COLLATE "C")` | `user_id`, `sha256` (of the plaintext — the row's version), `size_bytes`, `encoding` (`utf-8` \| `base64` = binary), `cipher` (`none` \| `aes`), `data` bytea (`STORAGE EXTERNAL`, encrypted with `LANGGRAPH_AES_KEY` like the checkpoints), `agent_slug` (last writer), `created_at`, `updated_at`. Indexes on `user_id` and `branch_thread_id`. CHECK: `path` absolute, `encoding` one of the two |
+| `branch_scratch_writes` | `(conversation_id, branch_thread_id, path COLLATE "C", message_id)` | The write log a fork cuts on: per path and answer, the **latest** content that answer wrote (one row per answer, not per write). `message_id` = the answer message (`''` = a write no answer made: the legacy import, files from before the log), `seq` bigserial (write order; an upsert takes the next value), then the same `user_id` … `updated_at` columns as `branch_scratch_files`, ciphertext included. Indexes on `user_id` and `branch_thread_id`. A one-shot backfill in `setup()` gives every file with no log row a `''` row |
 | `branch_scratch_imports` | `(conversation_id, branch_thread_id)` | `user_id`, `files`, `imported_at`. **One-shot** marker: the branch's legacy checkpoint `files` were imported. Dropped with `harness/filesystem/scratch_migration.py` in the release after plan 41 |
 
 - **Branch id** = the run context's `branch_thread_id` (set by the async-task runner for task runs), else the run's `thread_id` (`resolve_branch_thread_id`).
 - **Concurrency:** `write_file` is an upsert (last write wins); `edit_file` is a compare-and-set on `sha256` — `UPDATE … WHERE sha256 = <version read>` — and fails cleanly when another agent changed the file.
-- **Copy-on-fork:** edit/retry copies the source branch's rows to the new branch (`INSERT … SELECT`, ciphertext copied as stored, existing paths kept), from `harness/checkpointer/fork.py`. They are the source's files *now*; the store keeps no history.
+- **Copy-on-fork, at the fork point:** every write is logged in the same transaction under the run's answer (`branch_message_id`, else `run_id`). Edit/retry gives the new branch, per path, the latest write by an answer in `fork_from.messages` (or by no answer), with its log row (`INSERT … SELECT`, ciphertext copied as stored, existing paths kept), from `harness/checkpointer/fork.py`. What the source wrote after the fork point stays there, as for the conversation files.
 - **Bytes inline, not content-addressed:** scratch notes are small, and sharing `conversation_file_blobs` would tie these rows into that table's garbage collection.
 - **Lifetime** = the conversation's: `delete_conversation` (by `conversation_id`, every branch) and `purge_user` (by `user_id`) remove both tables' rows. One file is capped at `CONVERSATION_FILE_MAX_BYTES`; no quota, as for conversation files.
 
